@@ -46,16 +46,6 @@ Add the following library to the additional dependencies:
 
 - `glfw3dll.lib`
 
-## Preprocessor Definitions
-
-Navigate to:
-
-C/C++ > Preprocessor > Preprocessor Definitions
-
-Add the following definition, preserving existing definitions and inherited values:
-
-- `GLFW_DLL`
-
 ## Build Events
 
 Navigate to:
