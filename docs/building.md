@@ -7,7 +7,7 @@
 ## Dependencies
 
 - Vulkan SDK (Vulkan Software Development Kit)
-- GLFW (Graphics Library Framework)
+- GLFW (OpenGL Framework)
 - GLM (OpenGL Mathematics)
 
 ## Project Configuration
@@ -19,7 +19,7 @@ Select:
 - Configuration: `All Configurations`
 - Platform: `x64`
 
-## Include Directories
+## Compiler Settings
 
 Navigate to:
 
