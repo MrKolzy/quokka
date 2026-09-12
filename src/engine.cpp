@@ -10,7 +10,7 @@
 
 // ***
 
-#include <stdexcept>
+#include <stdexcept> // std::runtime_error
 
 namespace quokka
 {
