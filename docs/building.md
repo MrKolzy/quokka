@@ -29,6 +29,7 @@ Add the following paths, replacing the placeholders with your local paths:
 
 - `<...>\Quokka\include`
 - `<...>\glfw-3.5.1.bin.WIN64\include`
+- `<...>\VulkanSDK\1.4.357.0\Include`
 
 ## Linker Settings
 
@@ -55,3 +56,13 @@ Build Events > Post-Build Event > Command Line
 Add the following command, replacing the placeholder with your local path:
 
 - `copy /Y "<...>\glfw-3.5.1.bin.WIN64\lib-vc2026\glfw3.dll" "$(OutDir)"`
+
+## Preprocessor Definitions
+
+Navigate to:
+
+C/C++ > Preprocessor > Preprocessor Definitions
+
+Add the following definition, preserving existing definitions and inherited values:
+
+- `VULKAN_HPP_NO_CONSTRUCTORS`

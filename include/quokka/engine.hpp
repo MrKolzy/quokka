@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vulkan/vulkan_raii.hpp>
+
 // Forward declaration
 struct GLFWwindow;
 
@@ -23,9 +25,24 @@ namespace quokka
 
 	private:
 		void initialize_window();
+
+		// ***
+
 		void initialize_vulkan();
+
+		void create_instance();
+
+		// ***
+
 		void main_loop();
 
+		// ***
+
 		GLFWwindow* window_ {};
+
+		// Provides access to Vulkan before creating an instance
+		vk::raii::Context context_ {};
+		// Connection between the application and the Vulkan library
+		vk::raii::Instance instance_ { nullptr };
 	};
 }
