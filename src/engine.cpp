@@ -91,6 +91,13 @@ namespace quokka
 			throw std::runtime_error("GLFW could not retrieve the required Vulkan instance extensions");
 		}
 
+		std::println("[Quokka]: Listing Vulkan instance extensions required by GLFW:");
+		for (std::uint32_t i {}; i < required_extension_count; ++i)
+		{
+			std::println("\t- {}", required_extensions[i]);
+		}
+		std::println();
+
 		for (std::uint32_t i {}; i < required_extension_count; ++i)
 		{
 			bool found { false };
