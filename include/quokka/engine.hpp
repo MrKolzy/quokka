@@ -31,6 +31,8 @@ namespace quokka
 
 		void create_instance();
 
+		void setup_debug_messenger();
+
 		// ***
 
 		void main_loop();
@@ -43,5 +45,8 @@ namespace quokka
 		vk::raii::Context context_ {};
 		// Connection between the application and the Vulkan library
 		vk::raii::Instance instance_ { nullptr };
+
+		// Routes validation layer messages to our callback
+		vk::raii::DebugUtilsMessengerEXT debug_messenger_ { nullptr };
 	};
 }
