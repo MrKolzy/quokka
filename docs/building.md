@@ -7,23 +7,32 @@
 ## Dependencies
 
 - Vulkan SDK (Vulkan Software Development Kit)
-- GLFW (OpenGL Framework)
-- GLM (OpenGL Mathematics)
+- GLFW (Graphics Library Framework)
 
 ## Project Configuration
 
-Right-click Quokka and select Properties
+Right-click the **Quokka** project in **Solution Explorer** and select **Properties**.
 
 Select:
 
 - Configuration: `All Configurations`
 - Platform: `x64`
 
-## Compiler Settings
+## Language Standard
 
 Navigate to:
 
-C/C++ > General > Additional Include Directories
+**C/C++ > Language > C++ Language Standard**
+
+Select:
+
+- `Preview - Features from the Latest C++ Working Draft (/std:c++latest)`
+
+## Include Directories
+
+Navigate to:
+
+**C/C++ > General > Additional Include Directories**
 
 Add the following paths, replacing the placeholders with your local paths:
 
@@ -35,15 +44,17 @@ Add the following paths, replacing the placeholders with your local paths:
 
 Navigate to:
 
-Linker > General > Additional Library Directories
+**Linker > General > Additional Library Directories**
 
 Add the following path, replacing the placeholder with your local path:
 
 - `<...>\glfw-3.5.1.bin.WIN64\lib-vc2026`
 
-Linker > Input > Additional Dependencies
+Navigate to:
 
-Add the following library to the additional dependencies:
+**Linker > Input > Additional Dependencies**
+
+Add the following library:
 
 - `glfw3dll.lib`
 
@@ -51,7 +62,7 @@ Add the following library to the additional dependencies:
 
 Navigate to:
 
-Build Events > Post-Build Event > Command Line
+**Build Events > Post-Build Event > Command Line**
 
 Add the following command, replacing the placeholder with your local path:
 
@@ -61,7 +72,7 @@ Add the following command, replacing the placeholder with your local path:
 
 Navigate to:
 
-C/C++ > Preprocessor > Preprocessor Definitions
+**C/C++ > Preprocessor > Preprocessor Definitions**
 
 Add the following definition, preserving existing definitions and inherited values:
 
