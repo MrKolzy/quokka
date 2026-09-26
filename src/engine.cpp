@@ -42,13 +42,13 @@ namespace quokka
 			throw std::runtime_error("Failed to initialize GLFW");
 		}
 
-		// Disable OpenGL context creation
+		// Disable OpenGL context creation, as Vulkan doesn't need one
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
-		// Disable window resizing for now
+		// Disable resizing, as it requires recreating the swapchain
 		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
-		window_ = glfwCreateWindow(constants::width, constants::height, "Quokka", nullptr, nullptr);
+		window_ = glfwCreateWindow(constants::width, constants::height, constants::name, nullptr, nullptr);
 
 		if (!window_)
 		{
@@ -63,41 +63,44 @@ namespace quokka
 
 	void Engine::create_instance()
 	{
-		// Optional information about the application and engine
+		// Application metadata for the driver and the highest Vulkan version to use
 		constexpr vk::ApplicationInfo app_info {
-			.pApplicationName { "Quokka" },
-			.applicationVersion { VK_MAKE_VERSION(1, 0, 0) },
+			.pApplicationName { constants::name },
+			.applicationVersion { vk::makeApiVersion(0, 1, 0, 0) },
 			.pEngineName { "Quokka Engine" },
-			.engineVersion { VK_MAKE_VERSION(1, 0, 0) },
+			.engineVersion { vk::makeApiVersion(0, 1, 0, 0) },
 			.apiVersion { vk::ApiVersion14 }
 		};
 
-		// Retrieve and print all available Vulkan instance extensions
+		// Retrieve all available Vulkan instance extensions
 		const auto available_extensions { context_.enumerateInstanceExtensionProperties() };
 
-		std::println("[Quokka]: Listing all available Vulkan instance extensions:");
+		// Print them for debugging purposes
+		std::println("[Quokka] Available Vulkan instance extensions:");
 		for (const auto& extension : available_extensions)
 		{
 			std::println("\t- {}", extension.extensionName.data());
 		}
 		std::println();
 
-		// Retrieve the Vulkan instance extensions required by GLFW and verify they are supported
+		// Retrieve the Vulkan instance extensions required by GLFW
 		std::uint32_t required_extension_count {};
 		const auto required_extensions { glfwGetRequiredInstanceExtensions(&required_extension_count) };
 
 		if (!required_extensions)
 		{
-			throw std::runtime_error("GLFW could not retrieve the required Vulkan instance extensions");
+			throw std::runtime_error("Failed to get the Vulkan instance extensions required by GLFW");
 		}
 
-		std::println("[Quokka]: Listing Vulkan instance extensions required by GLFW:");
+		// Print them for debugging purposes
+		std::println("[Quokka] Vulkan instance extensions required by GLFW:");
 		for (std::uint32_t i {}; i < required_extension_count; ++i)
 		{
 			std::println("\t- {}", required_extensions[i]);
 		}
 		std::println();
 
+		// Verify that every extension required by GLFW is available
 		for (std::uint32_t i {}; i < required_extension_count; ++i)
 		{
 			bool found { false };
@@ -113,7 +116,7 @@ namespace quokka
 
 			if (!found)
 			{
-				throw std::runtime_error("Vulkan instance extension required by GLFW is not supported: " +
+				throw std::runtime_error("Required Vulkan instance extension is not supported: " +
 					std::string(required_extensions[i]));
 			}
 		}

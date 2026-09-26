@@ -2,20 +2,21 @@
 
 // ***
 
+#include <cstdio> // stderr
 #include <cstdlib> // EXIT_FAILURE, EXIT_SUCCESS
 #include <exception>
-#include <iostream> // std::cerr
+#include <print>
 
 int main()
 {
 	try
 	{
-		quokka::Engine quokka {};
-		quokka.run();
+		quokka::Engine engine {};
+		engine.run();
 	}
 	catch (const std::exception& exception)
 	{
-		std::cerr << exception.what() << '\n';
+		std::println(stderr, "[Quokka] Error: {}", exception.what());
 
 		return EXIT_FAILURE;
 	}

@@ -2,7 +2,8 @@
 
 #include <vulkan/vulkan_raii.hpp>
 
-// Forward declaration
+// ***
+
 struct GLFWwindow;
 
 namespace quokka
@@ -13,11 +14,9 @@ namespace quokka
 		Engine() = default;
 		~Engine();
 
-		// Disable copy constructor and copy assignment operator
 		Engine(const Engine&) = delete;
 		Engine& operator=(const Engine&) = delete;
 
-		// Disable move constructor and move assignment operator
 		Engine(Engine&&) = delete;
 		Engine& operator=(Engine&&) = delete;
 
@@ -40,7 +39,7 @@ namespace quokka
 
 		GLFWwindow* window_ {};
 
-		// Provides access to Vulkan before creating an instance
+		// Loads the Vulkan library and exposes functions that don't require an instance
 		vk::raii::Context context_ {};
 		// Connection between the application and the Vulkan library
 		vk::raii::Instance instance_ { nullptr };
