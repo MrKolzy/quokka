@@ -77,3 +77,14 @@ Navigate to:
 Add the following definition, preserving existing definitions and inherited values:
 
 - `VULKAN_HPP_NO_CONSTRUCTORS`
+
+## Build Configurations
+
+**Solution Configurations**
+
+**Debug** enables the Vulkan validation layers and prints debug output to the console, while **Release** disables both:
+
+- `Debug`
+- `Release`
+
+Controlled by **NDEBUG**, defined automatically by Visual Studio Community in **Release**.
