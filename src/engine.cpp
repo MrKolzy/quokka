@@ -80,42 +80,10 @@ namespace quokka
 
 namespace quokka
 {
-	Engine::~Engine()
-	{
-		if (window_)
-		{
-			glfwDestroyWindow(window_);
-		}
-
-		glfwTerminate();
-	}
-
 	void Engine::run()
 	{
-		initialize_window();
 		initialize_vulkan();
 		main_loop();
-	}
-
-	void Engine::initialize_window()
-	{
-		if (!glfwInit())
-		{
-			throw std::runtime_error("Failed to initialize GLFW");
-		}
-
-		// Disable OpenGL context creation, as Vulkan doesn't need one
-		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-
-		// Disable resizing, as it requires recreating the swapchain
-		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
-
-		window_ = glfwCreateWindow(constants::width, constants::height, constants::name, nullptr, nullptr);
-
-		if (!window_)
-		{
-			throw std::runtime_error("Failed to create GLFW window");
-		}
 	}
 
 	void Engine::initialize_vulkan()
@@ -265,7 +233,7 @@ namespace quokka
 
 	void Engine::main_loop()
 	{
-		while (!glfwWindowShouldClose(window_))
+		while (!glfwWindowShouldClose(window_.handle()))
 		{
 			glfwPollEvents();
 		}

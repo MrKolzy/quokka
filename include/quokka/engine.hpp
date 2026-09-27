@@ -1,18 +1,19 @@
 #pragma once
 
-#include <vulkan/vulkan_raii.hpp>
+#include "quokka/window.hpp"
 
 // ***
 
-struct GLFWwindow;
+#include <vulkan/vulkan_raii.hpp>
 
 namespace quokka
 {
+	// Owns the window and every Vulkan object, and runs the main loop
 	class Engine
 	{
 	public:
 		Engine() = default;
-		~Engine();
+		~Engine() = default;
 
 		Engine(const Engine&) = delete;
 		Engine& operator=(const Engine&) = delete;
@@ -23,10 +24,6 @@ namespace quokka
 		void run();
 
 	private:
-		void initialize_window();
-
-		// ***
-
 		void initialize_vulkan();
 
 		void create_instance();
@@ -39,7 +36,8 @@ namespace quokka
 
 		// ***
 
-		GLFWwindow* window_ {};
+		// Must be declared first so it's destroyed last, after every Vulkan object
+		Window window_ {};
 
 		// Loads the Vulkan library and exposes functions that don't require an instance
 		vk::raii::Context context_ {};
