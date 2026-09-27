@@ -106,17 +106,6 @@ namespace quokka
 		// Retrieve all available Vulkan instance extensions
 		const auto available_extensions { context_.enumerateInstanceExtensionProperties() };
 
-		// Print them for debugging purposes
-		if constexpr (constants::should_print_debug_output)
-		{
-			std::println("[Quokka] Available Vulkan instance extensions:");
-			for (const auto& extension : available_extensions)
-			{
-				std::println("\t- {}", extension.extensionName.data());
-			}
-			std::println();
-		}
-
 		// Extensions required by GLFW, plus debug utils when validation is enabled
 		const auto required_extensions { get_required_extensions() };
 
@@ -155,17 +144,6 @@ namespace quokka
 		// Retrieve all available Vulkan instance layers
 		const auto available_layers { context_.enumerateInstanceLayerProperties() };
 
-		// Print them for debugging purposes
-		if constexpr (constants::should_print_debug_output)
-		{
-			std::println("[Quokka] Available Vulkan instance layers:");
-			for (const auto& layer : available_layers)
-			{
-				std::println("\t- {}", layer.layerName.data());
-			}
-			std::println();
-		}
-
 		// Validation layers to enable (empty in release builds)
 		std::vector<const char*> required_layers {};
 		if constexpr (constants::should_enable_validation_layers)
@@ -182,6 +160,7 @@ namespace quokka
 				std::println("\t- {}", layer);
 			}
 
+			// Happens if validation layers are disabled while debug output is enabled
 			if (required_layers.empty())
 			{
 				std::println("\t- None");
