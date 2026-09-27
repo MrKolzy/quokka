@@ -6,6 +6,10 @@
 
 #include <vulkan/vulkan_raii.hpp>
 
+// ***
+
+#include <cstdint> // std::uint32_t
+
 namespace quokka
 {
 	// Owns the window and every Vulkan object, and runs the main loop
@@ -32,6 +36,8 @@ namespace quokka
 
 		void pick_physical_device();
 
+		void create_logical_device();
+
 		// ***
 
 		void main_loop();
@@ -51,5 +57,12 @@ namespace quokka
 
 		// GPU selected to run the engine, implicitly destroyed with the instance
 		vk::raii::PhysicalDevice physical_device_ { nullptr };
+
+		// Queue family of the selected GPU that executes graphics commands
+		std::uint32_t graphics_queue_family_index_ {};
+		// Logical connection to the selected GPU, used to create most other Vulkan objects
+		vk::raii::Device device_ { nullptr };
+		// Submits graphics commands to the GPU, implicitly destroyed with the device
+		vk::raii::Queue graphics_queue_ { nullptr };
 	};
 }

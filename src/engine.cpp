@@ -14,6 +14,7 @@
 #include <cstdint> // std::uint32_t
 #include <cstdio> // stderr
 #include <cstring> // std::strcmp
+#include <optional>
 #include <print>
 #include <stdexcept> // std::runtime_error
 #include <string>
@@ -82,6 +83,22 @@ namespace quokka
 		// Device extensions every candidate GPU must support
 		constexpr std::array required_device_extensions { vk::KHRSwapchainExtensionName };
 
+		// Index of the first queue family that can execute graphics commands, if any
+		std::optional<std::uint32_t> find_graphics_queue_family_index(const vk::raii::PhysicalDevice& physical_device)
+		{
+			const auto queue_families { physical_device.getQueueFamilyProperties() };
+
+			for (std::uint32_t index { 0 }; index < queue_families.size(); ++index)
+			{
+				if (queue_families[index].queueFlags & vk::QueueFlagBits::eGraphics)
+				{
+					return index;
+				}
+			}
+
+			return std::nullopt;
+		}
+
 		// Checks whether a GPU meets every requirement of the engine
 		bool is_device_suitable(const vk::raii::PhysicalDevice& physical_device)
 		{
@@ -89,18 +106,7 @@ namespace quokka
 			const bool has_vulkan_1_3 { physical_device.getProperties().apiVersion >= vk::ApiVersion13 };
 
 			// At least one queue family must be able to execute graphics commands
-			const auto queue_families { physical_device.getQueueFamilyProperties() };
-
-			bool has_graphics_queue { false };
-
-			for (const auto& queue_family : queue_families)
-			{
-				if (queue_family.queueFlags & vk::QueueFlagBits::eGraphics)
-				{
-					has_graphics_queue = true;
-					break;
-				}
-			}
+			const bool has_graphics_queue { find_graphics_queue_family_index(physical_device).has_value() };
 
 			// Every required device extension must be available
 			const auto available_extensions { physical_device.enumerateDeviceExtensionProperties() };
@@ -159,6 +165,7 @@ namespace quokka
 		create_instance();
 		setup_debug_messenger();
 		pick_physical_device();
+		create_logical_device();
 	}
 
 	void Engine::create_instance()
@@ -348,6 +355,48 @@ namespace quokka
 			std::println("\t- {}", physical_device_.getProperties().deviceName.data());
 			std::println();
 		}
+	}
+
+	void Engine::create_logical_device()
+	{
+		// The selected GPU already passed is_device_suitable, so this always has a value
+		graphics_queue_family_index_ = find_graphics_queue_family_index(physical_device_).value();
+
+		// Required by Vulkan even with a single queue, ranges from 0.0 to 1.0
+		constexpr float queue_priority { 0.5f };
+
+		// A single queue from the graphics queue family
+		const vk::DeviceQueueCreateInfo queue_create_info {
+			.queueFamilyIndex { graphics_queue_family_index_ },
+			.queueCount { 1 },
+			.pQueuePriorities { &queue_priority }
+		};
+
+		// Enable the same features checked in is_device_suitable
+		const vk::StructureChain<
+			vk::PhysicalDeviceFeatures2,
+			vk::PhysicalDeviceVulkan11Features,
+			vk::PhysicalDeviceVulkan13Features,
+			vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT> feature_chain {
+			{},
+			{ .shaderDrawParameters { vk::True } },
+			{ .dynamicRendering { vk::True } },
+			{ .extendedDynamicState { vk::True } }
+		};
+
+		// Configuration used to create the logical device
+		const vk::DeviceCreateInfo create_info {
+			.pNext { &feature_chain.get<vk::PhysicalDeviceFeatures2>() },
+			.queueCreateInfoCount { 1 },
+			.pQueueCreateInfos { &queue_create_info },
+			.enabledExtensionCount { static_cast<std::uint32_t>(required_device_extensions.size()) },
+			.ppEnabledExtensionNames { required_device_extensions.data() }
+		};
+
+		device_ = physical_device_.createDevice(create_info);
+
+		// Only one queue was requested from the family, so its index is 0
+		graphics_queue_ = device_.getQueue(graphics_queue_family_index_, 0);
 	}
 
 	void Engine::main_loop()
