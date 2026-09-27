@@ -34,6 +34,8 @@ namespace quokka
 
 		void setup_debug_messenger();
 
+		void create_surface();
+
 		void pick_physical_device();
 
 		void create_logical_device();
@@ -55,14 +57,17 @@ namespace quokka
 		// Routes validation layer messages to our callback
 		vk::raii::DebugUtilsMessengerEXT debug_messenger_ { nullptr };
 
+		// Connection between Vulkan and the window, must be destroyed before the instance
+		vk::raii::SurfaceKHR surface_ { nullptr };
+
 		// GPU selected to run the engine, implicitly destroyed with the instance
 		vk::raii::PhysicalDevice physical_device_ { nullptr };
 
-		// Queue family of the selected GPU that executes graphics commands
-		std::uint32_t graphics_queue_family_index_ {};
+		// Queue family of the selected GPU that executes graphics commands and presents to the surface
+		std::uint32_t queue_family_index_ {};
 		// Logical connection to the selected GPU, used to create most other Vulkan objects
 		vk::raii::Device device_ { nullptr };
-		// Submits graphics commands to the GPU, implicitly destroyed with the device
-		vk::raii::Queue graphics_queue_ { nullptr };
+		// Submits graphics commands and presents images, implicitly destroyed with the device
+		vk::raii::Queue queue_ { nullptr };
 	};
 }

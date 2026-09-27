@@ -83,14 +83,18 @@ namespace quokka
 		// Device extensions every candidate GPU must support
 		constexpr std::array required_device_extensions { vk::KHRSwapchainExtensionName };
 
-		// Index of the first queue family that can execute graphics commands, if any
-		std::optional<std::uint32_t> find_graphics_queue_family_index(const vk::raii::PhysicalDevice& physical_device)
+		// Index of the first queue family that can execute graphics commands and present to the surface, if any
+		std::optional<std::uint32_t> find_queue_family_index(
+			const vk::raii::PhysicalDevice& physical_device,
+			const vk::raii::SurfaceKHR& surface)
 		{
 			const auto queue_families { physical_device.getQueueFamilyProperties() };
 
 			for (std::uint32_t index { 0 }; index < queue_families.size(); ++index)
 			{
-				if (queue_families[index].queueFlags & vk::QueueFlagBits::eGraphics)
+				// Presentation support is only queried if the family can execute graphics commands
+				if ((queue_families[index].queueFlags & vk::QueueFlagBits::eGraphics) &&
+					physical_device.getSurfaceSupportKHR(index, *surface))
 				{
 					return index;
 				}
@@ -100,13 +104,13 @@ namespace quokka
 		}
 
 		// Checks whether a GPU meets every requirement of the engine
-		bool is_device_suitable(const vk::raii::PhysicalDevice& physical_device)
+		bool is_device_suitable(const vk::raii::PhysicalDevice& physical_device, const vk::raii::SurfaceKHR& surface)
 		{
 			// Dynamic rendering and the other features used below are core in Vulkan 1.3
 			const bool has_vulkan_1_3 { physical_device.getProperties().apiVersion >= vk::ApiVersion13 };
 
-			// At least one queue family must be able to execute graphics commands
-			const bool has_graphics_queue { find_graphics_queue_family_index(physical_device).has_value() };
+			// At least one queue family must be able to execute graphics commands and present to the surface
+			const bool has_suitable_queue_family { find_queue_family_index(physical_device, surface).has_value() };
 
 			// Every required device extension must be available
 			const auto available_extensions { physical_device.enumerateDeviceExtensionProperties() };
@@ -147,7 +151,7 @@ namespace quokka
 				features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState
 			};
 
-			return has_vulkan_1_3 && has_graphics_queue && has_required_extensions && has_required_features;
+			return has_vulkan_1_3 && has_suitable_queue_family && has_required_extensions && has_required_features;
 		}
 	}
 }
@@ -164,6 +168,7 @@ namespace quokka
 	{
 		create_instance();
 		setup_debug_messenger();
+		create_surface();
 		pick_physical_device();
 		create_logical_device();
 	}
@@ -286,6 +291,21 @@ namespace quokka
 		}
 	}
 
+	void Engine::create_surface()
+	{
+		// Raw C handle, since GLFW is a C library and doesn't know about vk::raii
+		VkSurfaceKHR raw_surface {};
+
+		// GLFW hides the platform-specific surface creation (Win32, X11, Wayland, ...)
+		if (glfwCreateWindowSurface(*instance_, window_.handle(), nullptr, &raw_surface) != VK_SUCCESS)
+		{
+			throw std::runtime_error("Failed to create window surface");
+		}
+
+		// Take ownership of the raw handle so it's destroyed automatically
+		surface_ = vk::raii::SurfaceKHR(instance_, raw_surface);
+	}
+
 	void Engine::pick_physical_device()
 	{
 		// Retrieve every GPU that supports Vulkan
@@ -323,7 +343,7 @@ namespace quokka
 
 		for (const auto& physical_device : physical_devices)
 		{
-			if (!is_device_suitable(physical_device))
+			if (!is_device_suitable(physical_device, surface_))
 			{
 				continue;
 			}
@@ -360,14 +380,14 @@ namespace quokka
 	void Engine::create_logical_device()
 	{
 		// The selected GPU already passed is_device_suitable, so this always has a value
-		graphics_queue_family_index_ = find_graphics_queue_family_index(physical_device_).value();
+		queue_family_index_ = find_queue_family_index(physical_device_, surface_).value();
 
 		// Required by Vulkan even with a single queue, ranges from 0.0 to 1.0
 		constexpr float queue_priority { 0.5f };
 
-		// A single queue from the graphics queue family
+		// A single queue from the family that executes graphics commands and presents to the surface
 		const vk::DeviceQueueCreateInfo queue_create_info {
-			.queueFamilyIndex { graphics_queue_family_index_ },
+			.queueFamilyIndex { queue_family_index_ },
 			.queueCount { 1 },
 			.pQueuePriorities { &queue_priority }
 		};
@@ -396,7 +416,7 @@ namespace quokka
 		device_ = physical_device_.createDevice(create_info);
 
 		// Only one queue was requested from the family, so its index is 0
-		graphics_queue_ = device_.getQueue(graphics_queue_family_index_, 0);
+		queue_ = device_.getQueue(queue_family_index_, 0);
 	}
 
 	void Engine::main_loop()
