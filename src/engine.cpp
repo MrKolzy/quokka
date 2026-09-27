@@ -39,7 +39,7 @@ namespace quokka
 			std::vector<const char*> extensions(glfw_extensions, glfw_extensions + glfw_extension_count);
 
 			// Needed to receive validation layer messages through a callback
-			if constexpr (constants::enable_validation_layers)
+			if constexpr (constants::should_enable_validation_layers)
 			{
 				extensions.push_back(vk::EXTDebugUtilsExtensionName);
 			}
@@ -107,7 +107,7 @@ namespace quokka
 		const auto available_extensions { context_.enumerateInstanceExtensionProperties() };
 
 		// Print them for debugging purposes
-		if constexpr (constants::enable_debug_output)
+		if constexpr (constants::should_print_debug_output)
 		{
 			std::println("[Quokka] Available Vulkan instance extensions:");
 			for (const auto& extension : available_extensions)
@@ -121,7 +121,7 @@ namespace quokka
 		const auto required_extensions { get_required_extensions() };
 
 		// Print them for debugging purposes
-		if constexpr (constants::enable_debug_output)
+		if constexpr (constants::should_print_debug_output)
 		{
 			std::println("[Quokka] Required Vulkan instance extensions:");
 			for (const auto* extension : required_extensions)
@@ -134,18 +134,18 @@ namespace quokka
 		// Verify that every required extension is available
 		for (const auto* required_extension : required_extensions)
 		{
-			bool found { false };
+			bool is_available { false };
 
 			for (const auto& extension : available_extensions)
 			{
 				if (std::strcmp(extension.extensionName.data(), required_extension) == 0)
 				{
-					found = true;
+					is_available = true;
 					break;
 				}
 			}
 
-			if (!found)
+			if (!is_available)
 			{
 				throw std::runtime_error("Required Vulkan instance extension is not supported: " +
 					std::string(required_extension));
@@ -156,7 +156,7 @@ namespace quokka
 		const auto available_layers { context_.enumerateInstanceLayerProperties() };
 
 		// Print them for debugging purposes
-		if constexpr (constants::enable_debug_output)
+		if constexpr (constants::should_print_debug_output)
 		{
 			std::println("[Quokka] Available Vulkan instance layers:");
 			for (const auto& layer : available_layers)
@@ -168,13 +168,13 @@ namespace quokka
 
 		// Validation layers to enable (empty in release builds)
 		std::vector<const char*> required_layers {};
-		if constexpr (constants::enable_validation_layers)
+		if constexpr (constants::should_enable_validation_layers)
 		{
 			required_layers.assign(constants::validation_layers.begin(), constants::validation_layers.end());
 		}
 
 		// Print them for debugging purposes
-		if constexpr (constants::enable_debug_output)
+		if constexpr (constants::should_print_debug_output)
 		{
 			std::println("[Quokka] Required Vulkan instance layers:");
 			for (const auto* layer : required_layers)
@@ -192,18 +192,18 @@ namespace quokka
 		// Verify that every required layer is available
 		for (const auto* required_layer : required_layers)
 		{
-			bool found { false };
+			bool is_available { false };
 
 			for (const auto& layer : available_layers)
 			{
 				if (std::strcmp(layer.layerName.data(), required_layer) == 0)
 				{
-					found = true;
+					is_available = true;
 					break;
 				}
 			}
 
-			if (!found)
+			if (!is_available)
 			{
 				throw std::runtime_error("Required Vulkan layer is not supported: " + std::string(required_layer));
 			}
@@ -212,7 +212,7 @@ namespace quokka
 		// Configuration used to create the Vulkan instance
 		const vk::InstanceCreateInfo create_info {
 			// Also captures messages from instance creation and destruction
-			.pNext { constants::enable_validation_layers ? &debug_messenger_create_info : nullptr },
+			.pNext { constants::should_enable_validation_layers ? &debug_messenger_create_info : nullptr },
 			.pApplicationInfo { &app_info },
 			.enabledLayerCount { static_cast<std::uint32_t>(required_layers.size()) },
 			.ppEnabledLayerNames { required_layers.data() },
@@ -225,7 +225,7 @@ namespace quokka
 
 	void Engine::setup_debug_messenger()
 	{
-		if constexpr (constants::enable_validation_layers)
+		if constexpr (constants::should_enable_validation_layers)
 		{
 			debug_messenger_ = instance_.createDebugUtilsMessengerEXT(debug_messenger_create_info);
 		}

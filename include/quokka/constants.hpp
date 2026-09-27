@@ -11,10 +11,10 @@ namespace quokka::constants
 	// Validation layers and debug output, only enabled in debug builds
 	inline constexpr std::array<const char*, 1> validation_layers { "VK_LAYER_KHRONOS_validation" };
 #ifdef NDEBUG
-	inline constexpr bool enable_validation_layers { false };
-	inline constexpr bool enable_debug_output { false };
+	inline constexpr bool should_enable_validation_layers { false };
+	inline constexpr bool should_print_debug_output { false };
 #else
-	inline constexpr bool enable_validation_layers { true };
-	inline constexpr bool enable_debug_output { true };
+	inline constexpr bool should_enable_validation_layers { true };
+	inline constexpr bool should_print_debug_output { true };
 #endif
 }
