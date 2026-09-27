@@ -30,6 +30,8 @@ namespace quokka
 
 		void setup_debug_messenger();
 
+		void pick_physical_device();
+
 		// ***
 
 		void main_loop();
@@ -46,5 +48,8 @@ namespace quokka
 
 		// Routes validation layer messages to our callback
 		vk::raii::DebugUtilsMessengerEXT debug_messenger_ { nullptr };
+
+		// GPU selected to run the engine, implicitly destroyed with the instance
+		vk::raii::PhysicalDevice physical_device_ { nullptr };
 	};
 }

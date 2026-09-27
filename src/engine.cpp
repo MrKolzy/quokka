@@ -10,6 +10,7 @@
 
 // ***
 
+#include <array>
 #include <cstdint> // std::uint32_t
 #include <cstdio> // stderr
 #include <cstring> // std::strcmp
@@ -75,6 +76,73 @@ namespace quokka
 			},
 			.pfnUserCallback { &debug_callback }
 		};
+
+		// ***
+
+		// Device extensions every candidate GPU must support
+		constexpr std::array required_device_extensions { vk::KHRSwapchainExtensionName };
+
+		// Checks whether a GPU meets every requirement of the engine
+		bool is_device_suitable(const vk::raii::PhysicalDevice& physical_device)
+		{
+			// Dynamic rendering and the other features used below are core in Vulkan 1.3
+			const bool has_vulkan_1_3 { physical_device.getProperties().apiVersion >= vk::ApiVersion13 };
+
+			// At least one queue family must be able to execute graphics commands
+			const auto queue_families { physical_device.getQueueFamilyProperties() };
+
+			bool has_graphics_queue { false };
+
+			for (const auto& queue_family : queue_families)
+			{
+				if (queue_family.queueFlags & vk::QueueFlagBits::eGraphics)
+				{
+					has_graphics_queue = true;
+					break;
+				}
+			}
+
+			// Every required device extension must be available
+			const auto available_extensions { physical_device.enumerateDeviceExtensionProperties() };
+
+			bool has_required_extensions { true };
+
+			for (const auto* required_extension : required_device_extensions)
+			{
+				bool is_available { false };
+
+				for (const auto& extension : available_extensions)
+				{
+					if (std::strcmp(extension.extensionName.data(), required_extension) == 0)
+					{
+						is_available = true;
+						break;
+					}
+				}
+
+				if (!is_available)
+				{
+					has_required_extensions = false;
+					break;
+				}
+			}
+
+			// Query all the feature structures we need in a single call
+			const auto features { physical_device.getFeatures2<
+				vk::PhysicalDeviceFeatures2,
+				vk::PhysicalDeviceVulkan11Features,
+				vk::PhysicalDeviceVulkan13Features,
+				vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>()
+			};
+
+			const bool has_required_features {
+				features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters &&
+				features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
+				features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState
+			};
+
+			return has_vulkan_1_3 && has_graphics_queue && has_required_extensions && has_required_features;
+		}
 	}
 }
 
@@ -90,6 +158,7 @@ namespace quokka
 	{
 		create_instance();
 		setup_debug_messenger();
+		pick_physical_device();
 	}
 
 	void Engine::create_instance()
@@ -207,6 +276,77 @@ namespace quokka
 		if constexpr (constants::should_enable_validation_layers)
 		{
 			debug_messenger_ = instance_.createDebugUtilsMessengerEXT(debug_messenger_create_info);
+		}
+	}
+
+	void Engine::pick_physical_device()
+	{
+		// Retrieve every GPU that supports Vulkan
+		const auto physical_devices { instance_.enumeratePhysicalDevices() };
+
+		if (physical_devices.empty())
+		{
+			throw std::runtime_error("Failed to find GPUs with Vulkan support");
+		}
+
+		// Print the device extensions every candidate GPU must support for debugging purposes
+		if constexpr (constants::should_print_debug_output)
+		{
+			std::println("[Quokka] Required Vulkan device extensions:");
+			for (const auto* extension : required_device_extensions)
+			{
+				std::println("\t- {}", extension);
+			}
+			std::println();
+		}
+
+		// Print every GPU found for debugging purposes
+		if constexpr (constants::should_print_debug_output)
+		{
+			std::println("[Quokka] Available physical devices:");
+			for (const auto& physical_device : physical_devices)
+			{
+				std::println("\t- {}", physical_device.getProperties().deviceName.data());
+			}
+			std::println();
+		}
+
+		// Prefer a dedicated GPU, otherwise fall back to the first suitable one
+		bool has_suitable_device { false };
+
+		for (const auto& physical_device : physical_devices)
+		{
+			if (!is_device_suitable(physical_device))
+			{
+				continue;
+			}
+
+			// Remember the first suitable GPU in case there's no dedicated one
+			if (!has_suitable_device)
+			{
+				physical_device_ = physical_device;
+				has_suitable_device = true;
+			}
+
+			// A dedicated GPU is the best choice, so stop searching
+			if (physical_device.getProperties().deviceType == vk::PhysicalDeviceType::eDiscreteGpu)
+			{
+				physical_device_ = physical_device;
+				break;
+			}
+		}
+
+		if (!has_suitable_device)
+		{
+			throw std::runtime_error("Failed to find a suitable GPU");
+		}
+
+		// Print the selected GPU for debugging purposes
+		if constexpr (constants::should_print_debug_output)
+		{
+			std::println("[Quokka] Selected physical device:");
+			std::println("\t- {}", physical_device_.getProperties().deviceName.data());
+			std::println();
 		}
 	}
 
