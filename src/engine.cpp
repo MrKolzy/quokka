@@ -220,7 +220,7 @@ namespace quokka
 			.ppEnabledExtensionNames { required_extensions.data() }
 		};
 
-		instance_ = vk::raii::Instance(context_, create_info);
+		instance_ = context_.createInstance(create_info);
 	}
 
 	void Engine::setup_debug_messenger()
