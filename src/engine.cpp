@@ -23,6 +23,30 @@ namespace quokka
 	// Helpers only visible inside this file
 	namespace
 	{
+		// Vulkan instance extensions required by GLFW, plus debug utils when validation is enabled
+		std::vector<const char*> get_required_extensions()
+		{
+			// Retrieve the Vulkan instance extensions required by GLFW
+			std::uint32_t glfw_extension_count {};
+			const auto glfw_extensions { glfwGetRequiredInstanceExtensions(&glfw_extension_count) };
+
+			if (!glfw_extensions)
+			{
+				throw std::runtime_error("Failed to get the Vulkan instance extensions required by GLFW");
+			}
+
+			// Parentheses, not braces: this is the iterator-range constructor
+			std::vector<const char*> extensions(glfw_extensions, glfw_extensions + glfw_extension_count);
+
+			// Needed to receive validation layer messages through a callback
+			if constexpr (constants::enable_validation_layers)
+			{
+				extensions.push_back(vk::EXTDebugUtilsExtensionName);
+			}
+
+			return extensions;
+		}
+
 		// Called by the validation layers whenever they have something to report
 		VKAPI_ATTR vk::Bool32 VKAPI_CALL debug_callback(
 			vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
@@ -51,30 +75,6 @@ namespace quokka
 			},
 			.pfnUserCallback { &debug_callback }
 		};
-
-		// Vulkan instance extensions required by GLFW, plus debug utils when validation is enabled
-		std::vector<const char*> get_required_extensions()
-		{
-			// Retrieve the Vulkan instance extensions required by GLFW
-			std::uint32_t glfw_extension_count {};
-			const auto glfw_extensions { glfwGetRequiredInstanceExtensions(&glfw_extension_count) };
-
-			if (!glfw_extensions)
-			{
-				throw std::runtime_error("Failed to get the Vulkan instance extensions required by GLFW");
-			}
-
-			// Parentheses, not braces: this is the iterator-range constructor
-			std::vector<const char*> extensions(glfw_extensions, glfw_extensions + glfw_extension_count);
-
-			// Needed to receive validation layer messages through a callback
-			if constexpr (constants::enable_validation_layers)
-			{
-				extensions.push_back(vk::EXTDebugUtilsExtensionName);
-			}
-
-			return extensions;
-		}
 	}
 }
 
