@@ -10,10 +10,12 @@
 
 // ***
 
+#include <algorithm> // std::clamp, std::max
 #include <array>
 #include <cstdint> // std::uint32_t
 #include <cstdio> // stderr
 #include <cstring> // std::strcmp
+#include <limits> // std::numeric_limits
 #include <optional>
 #include <print>
 #include <stdexcept> // std::runtime_error
@@ -137,6 +139,12 @@ namespace quokka
 				}
 			}
 
+			// The swapchain needs at least one image format and one presentation mode for the surface
+			const bool has_adequate_swapchain_support {
+				!physical_device.getSurfaceFormatsKHR(*surface).empty() &&
+				!physical_device.getSurfacePresentModesKHR(*surface).empty()
+			};
+
 			// Query all the feature structures we need in a single call
 			const auto features { physical_device.getFeatures2<
 				vk::PhysicalDeviceFeatures2,
@@ -151,7 +159,83 @@ namespace quokka
 				features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState
 			};
 
-			return has_vulkan_1_3 && has_suitable_queue_family && has_required_extensions && has_required_features;
+			return has_vulkan_1_3 && has_suitable_queue_family && has_required_extensions &&
+				has_adequate_swapchain_support && has_required_features;
+		}
+
+		// ***
+
+		// Prefers 8-bit BGRA with sRGB color space, otherwise falls back to the first available format
+		vk::SurfaceFormatKHR choose_swap_surface_format(const std::vector<vk::SurfaceFormatKHR>& available_formats) noexcept
+		{
+			for (const auto& format : available_formats)
+			{
+				if (format.format == vk::Format::eB8G8R8A8Srgb &&
+					format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear)
+				{
+					return format;
+				}
+			}
+
+			// is_device_suitable guarantees at least one available format
+			return available_formats.front();
+		}
+
+		// Prefers mailbox (triple buffering, low latency), otherwise falls back to FIFO (vertical sync)
+		vk::PresentModeKHR choose_swap_present_mode(const std::vector<vk::PresentModeKHR>& available_present_modes) noexcept
+		{
+			for (const auto present_mode : available_present_modes)
+			{
+				if (present_mode == vk::PresentModeKHR::eMailbox)
+				{
+					return present_mode;
+				}
+			}
+
+			// FIFO is the only mode the Vulkan specification guarantees to be available
+			return vk::PresentModeKHR::eFifo;
+		}
+
+		// Requests at least three images so the driver never makes us wait, within the surface limits
+		constexpr std::uint32_t choose_swap_min_image_count(const vk::SurfaceCapabilitiesKHR& capabilities) noexcept
+		{
+			constexpr std::uint32_t preferred_image_count { 3 };
+
+			const std::uint32_t min_image_count { std::max(preferred_image_count, capabilities.minImageCount) };
+
+			// A maximum of 0 means there's no limit
+			if (capabilities.maxImageCount > 0 && capabilities.maxImageCount < min_image_count)
+			{
+				return capabilities.maxImageCount;
+			}
+
+			return min_image_count;
+		}
+
+		// Resolution of the swapchain images in pixels, which may differ from screen coordinates on high DPI displays
+		vk::Extent2D choose_swap_extent(const vk::SurfaceCapabilitiesKHR& capabilities, GLFWwindow* window) noexcept
+		{
+			// The maximum value means the surface lets us choose, otherwise it must match the window
+			if (capabilities.currentExtent.width != std::numeric_limits<std::uint32_t>::max())
+			{
+				return capabilities.currentExtent;
+			}
+
+			// Framebuffer size is in pixels, unlike glfwGetWindowSize, which returns screen coordinates
+			int width {};
+			int height {};
+			glfwGetFramebufferSize(window, &width, &height);
+
+			return {
+				.width {
+					std::clamp(static_cast<std::uint32_t>(width),
+						capabilities.minImageExtent.width, capabilities.maxImageExtent.width)
+				},
+				.height {
+					std::clamp(static_cast<std::uint32_t>(height),
+						capabilities.minImageExtent.height, capabilities.maxImageExtent.height)
+				}
+			};
 		}
 	}
 }
@@ -171,6 +255,7 @@ namespace quokka
 		create_surface();
 		pick_physical_device();
 		create_logical_device();
+		create_swapchain();
 	}
 
 	void Engine::create_instance()
@@ -327,17 +412,6 @@ namespace quokka
 			std::println();
 		}
 
-		// Print every GPU found for debugging purposes
-		if constexpr (constants::should_print_debug_output)
-		{
-			std::println("[Quokka] Available physical devices:");
-			for (const auto& physical_device : physical_devices)
-			{
-				std::println("\t- {}", physical_device.getProperties().deviceName.data());
-			}
-			std::println();
-		}
-
 		// Prefer a dedicated GPU, otherwise fall back to the first suitable one
 		bool has_suitable_device { false };
 
@@ -417,6 +491,61 @@ namespace quokka
 
 		// Only one queue was requested from the family, so its index is 0
 		queue_ = device_.getQueue(queue_family_index_, 0);
+	}
+
+	void Engine::create_swapchain()
+	{
+		// Retrieve what the surface supports on the selected GPU
+		const auto capabilities { physical_device_.getSurfaceCapabilitiesKHR(*surface_) };
+		const auto available_formats { physical_device_.getSurfaceFormatsKHR(*surface_) };
+		const auto available_present_modes { physical_device_.getSurfacePresentModesKHR(*surface_) };
+
+		// Pick the best settings among the supported ones
+		swapchain_surface_format_ = choose_swap_surface_format(available_formats);
+		swapchain_extent_ = choose_swap_extent(capabilities, window_.handle());
+		const auto present_mode { choose_swap_present_mode(available_present_modes) };
+		const auto min_image_count { choose_swap_min_image_count(capabilities) };
+
+		// Configuration used to create the swapchain
+		const vk::SwapchainCreateInfoKHR create_info {
+			.surface { *surface_ },
+			.minImageCount { min_image_count },
+			.imageFormat { swapchain_surface_format_.format },
+			.imageColorSpace { swapchain_surface_format_.colorSpace },
+			.imageExtent { swapchain_extent_ },
+			// Always 1 unless developing a stereoscopic 3D application
+			.imageArrayLayers { 1 },
+			// Images are rendered to directly as color attachments
+			.imageUsage { vk::ImageUsageFlagBits::eColorAttachment },
+			// A single queue family renders and presents, so no ownership sharing is needed
+			.imageSharingMode { vk::SharingMode::eExclusive },
+			// Keep the surface's current transform, so no rotation or flip is applied
+			.preTransform { capabilities.currentTransform },
+			// Ignore the alpha channel when blending with other windows
+			.compositeAlpha { vk::CompositeAlphaFlagBitsKHR::eOpaque },
+			.presentMode { present_mode },
+			// Don't care about the color of pixels hidden behind other windows
+			.clipped { vk::True },
+			// Only needed when recreating the swapchain, for example after a resize
+			.oldSwapchain { nullptr }
+		};
+
+		swapchain_ = device_.createSwapchainKHR(create_info);
+
+		// The implementation may create more images than requested
+		swapchain_images_ = swapchain_.getImages();
+
+		// Print the swapchain configuration for debugging purposes
+		if constexpr (constants::should_print_debug_output)
+		{
+			std::println("[Quokka] Swapchain:");
+			std::println("\t- Format: {}", vk::to_string(swapchain_surface_format_.format));
+			std::println("\t- Color space: {}", vk::to_string(swapchain_surface_format_.colorSpace));
+			std::println("\t- Present mode: {}", vk::to_string(present_mode));
+			std::println("\t- Extent: {}x{}", swapchain_extent_.width, swapchain_extent_.height);
+			std::println("\t- Images: {}", swapchain_images_.size());
+			std::println();
+		}
 	}
 
 	void Engine::main_loop()

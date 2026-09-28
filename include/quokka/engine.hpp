@@ -9,6 +9,7 @@
 // ***
 
 #include <cstdint> // std::uint32_t
+#include <vector>
 
 namespace quokka
 {
@@ -40,6 +41,8 @@ namespace quokka
 
 		void create_logical_device();
 
+		void create_swapchain();
+
 		// ***
 
 		void main_loop();
@@ -69,5 +72,14 @@ namespace quokka
 		vk::raii::Device device_ { nullptr };
 		// Submits graphics commands and presents images, implicitly destroyed with the device
 		vk::raii::Queue queue_ { nullptr };
+
+		// Queue of images presented to the surface, must be destroyed before the device
+		vk::raii::SwapchainKHR swapchain_ { nullptr };
+		// Images owned by the swapchain, implicitly destroyed with it
+		std::vector<vk::Image> swapchain_images_ {};
+		// Pixel format and color space of the swapchain images
+		vk::SurfaceFormatKHR swapchain_surface_format_ {};
+		// Resolution of the swapchain images in pixels
+		vk::Extent2D swapchain_extent_ {};
 	};
 }
