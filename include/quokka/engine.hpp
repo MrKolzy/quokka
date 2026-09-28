@@ -43,6 +43,8 @@ namespace quokka
 
 		void create_swapchain();
 
+		void create_image_views();
+
 		// ***
 
 		void main_loop();
@@ -81,5 +83,8 @@ namespace quokka
 		vk::SurfaceFormatKHR swapchain_surface_format_ {};
 		// Resolution of the swapchain images in pixels
 		vk::Extent2D swapchain_extent_ {};
+
+		// Describe how to access each swapchain image, must be destroyed before the device
+		std::vector<vk::raii::ImageView> swapchain_image_views_ {};
 	};
 }

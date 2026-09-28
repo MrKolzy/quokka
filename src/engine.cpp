@@ -256,6 +256,7 @@ namespace quokka
 		pick_physical_device();
 		create_logical_device();
 		create_swapchain();
+		create_image_views();
 	}
 
 	void Engine::create_instance()
@@ -545,6 +546,34 @@ namespace quokka
 			std::println("\t- Extent: {}x{}", swapchain_extent_.width, swapchain_extent_.height);
 			std::println("\t- Images: {}", swapchain_images_.size());
 			std::println();
+		}
+	}
+
+	void Engine::create_image_views()
+	{
+		// One view per swapchain image, so reserve the exact amount up front
+		swapchain_image_views_.reserve(swapchain_images_.size());
+
+		for (const auto& image : swapchain_images_)
+		{
+			// Configuration used to create the image view
+			const vk::ImageViewCreateInfo create_info {
+				.image { image },
+				// Treat the image as a regular 2D texture
+				.viewType { vk::ImageViewType::e2D },
+				.format { swapchain_surface_format_.format },
+				// Components are left at their default, which maps each channel to itself (identity)
+				// Color target with no mipmapping and a single layer
+				.subresourceRange {
+					.aspectMask { vk::ImageAspectFlagBits::eColor },
+					.baseMipLevel { 0 },
+					.levelCount { 1 },
+					.baseArrayLayer { 0 },
+					.layerCount { 1 }
+				}
+			};
+
+			swapchain_image_views_.push_back(device_.createImageView(create_info));
 		}
 	}
 
