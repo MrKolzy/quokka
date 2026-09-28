@@ -45,6 +45,8 @@ namespace quokka
 
 		void create_image_views();
 
+		void create_graphics_pipeline();
+
 		// ***
 
 		void main_loop();

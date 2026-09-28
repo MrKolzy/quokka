@@ -257,6 +257,7 @@ namespace quokka
 		create_logical_device();
 		create_swapchain();
 		create_image_views();
+		create_graphics_pipeline();
 	}
 
 	void Engine::create_instance()
@@ -575,6 +576,11 @@ namespace quokka
 
 			swapchain_image_views_.push_back(device_.createImageView(create_info));
 		}
+	}
+
+	void Engine::create_graphics_pipeline()
+	{
+		// Vulkan pipelines are almost completely immutable, so any state change requires creating a new one
 	}
 
 	void Engine::main_loop()
