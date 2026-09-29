@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint> // std::uint32_t
 
 namespace quokka::constants
 {
@@ -20,4 +21,8 @@ namespace quokka::constants
 
 	// Compiled SPIR-V shaders, relative to the working directory
 	inline constexpr const char* shader_path { "shaders/shader.spv" };
+
+	// Frames the CPU can record while the GPU is still working on previous ones
+	// Not higher, so the CPU doesn't get too far ahead of the GPU and add latency
+	inline constexpr std::uint32_t max_frames_in_flight { 2 };
 }

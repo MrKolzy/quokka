@@ -23,7 +23,6 @@
 #include <print>
 #include <stdexcept> // std::runtime_error
 #include <string>
-#include <utility> // std::move
 #include <vector>
 
 namespace quokka
@@ -356,7 +355,7 @@ namespace quokka
 		create_image_views();
 		create_graphics_pipeline();
 		create_command_pool();
-		create_command_buffer();
+		create_command_buffers();
 		create_sync_objects();
 	}
 
@@ -810,18 +809,17 @@ namespace quokka
 		command_pool_ = device_.createCommandPool(create_info);
 	}
 
-	void Engine::create_command_buffer()
+	void Engine::create_command_buffers()
 	{
-		// Configuration used to allocate the command buffer
+		// Configuration used to allocate the command buffers
 		const vk::CommandBufferAllocateInfo allocate_info {
 			.commandPool { *command_pool_ },
 			// Primary buffers are submitted directly to a queue, secondary ones are called from primary ones
 			.level { vk::CommandBufferLevel::ePrimary },
-			.commandBufferCount { 1 }
+			.commandBufferCount { constants::max_frames_in_flight }
 		};
 
-		// Allocation always returns a vector, so take ownership of its only command buffer
-		command_buffer_ = std::move(device_.allocateCommandBuffers(allocate_info).front());
+		command_buffers_ = device_.allocateCommandBuffers(allocate_info);
 	}
 
 	void Engine::create_sync_objects()
@@ -829,7 +827,10 @@ namespace quokka
 		// Semaphores have no configuration yet, they start unsignaled
 		constexpr vk::SemaphoreCreateInfo semaphore_info {};
 
-		present_complete_semaphore_ = device_.createSemaphore(semaphore_info);
+		// Created signaled, so the first frames don't wait forever for a submission that never happened
+		constexpr vk::FenceCreateInfo fence_info {
+			.flags { vk::FenceCreateFlagBits::eSignaled }
+		};
 
 		// One per swapchain image, since presentation may still be waiting on it when the next frame is submitted
 		render_finished_semaphores_.reserve(swapchain_images_.size());
@@ -839,12 +840,15 @@ namespace quokka
 			render_finished_semaphores_.push_back(device_.createSemaphore(semaphore_info));
 		}
 
-		// Created signaled, so the first frame doesn't wait forever for a submission that never happened
-		constexpr vk::FenceCreateInfo fence_info {
-			.flags { vk::FenceCreateFlagBits::eSignaled }
-		};
+		// One per frame in flight, so each frame waits only for its own previous submission
+		present_complete_semaphores_.reserve(constants::max_frames_in_flight);
+		in_flight_fences_.reserve(constants::max_frames_in_flight);
 
-		draw_fence_ = device_.createFence(fence_info);
+		for (std::uint32_t index { 0 }; index < constants::max_frames_in_flight; ++index)
+		{
+			present_complete_semaphores_.push_back(device_.createSemaphore(semaphore_info));
+			in_flight_fences_.push_back(device_.createFence(fence_info));
+		}
 	}
 
 	void Engine::main_loop()
@@ -859,23 +863,28 @@ namespace quokka
 		device_.waitIdle();
 	}
 
-	void Engine::draw_frame() const
+	void Engine::draw_frame()
 	{
 		// Wait indefinitely, the timeout is in nanoseconds
 		constexpr auto no_timeout { std::numeric_limits<std::uint64_t>::max() };
 
-		// Wait until the GPU finishes the previous frame, so the command buffer can be recorded again
-		if (device_.waitForFences(*draw_fence_, vk::True, no_timeout) != vk::Result::eSuccess)
+		// Objects owned by the current frame in flight
+		const auto& in_flight_fence { in_flight_fences_[frame_index_] };
+		const auto& present_complete_semaphore { present_complete_semaphores_[frame_index_] };
+		const auto& command_buffer { command_buffers_[frame_index_] };
+
+		// Wait until the GPU finishes this frame's previous submission, so its command buffer can be recorded again
+		if (device_.waitForFences(*in_flight_fence, vk::True, no_timeout) != vk::Result::eSuccess)
 		{
-			throw std::runtime_error("Failed to wait for the draw fence");
+			throw std::runtime_error("Failed to wait for the in flight fence");
 		}
 
 		// Unsignal it manually, so it can be signaled again by this frame's submission
-		device_.resetFences(*draw_fence_);
+		device_.resetFences(*in_flight_fence);
 
 		// The semaphore is signaled once the presentation engine stops reading the image
 		// Suboptimal and out of date results are handled when the swapchain is recreated in a later chapter
-		const auto [acquire_result, image_index] { swapchain_.acquireNextImage(no_timeout, *present_complete_semaphore_, nullptr) };
+		const auto [acquire_result, image_index] { swapchain_.acquireNextImage(no_timeout, *present_complete_semaphore, nullptr) };
 
 		// Beginning the command buffer implicitly resets it, since the pool has the reset flag
 		record_command_buffer(image_index);
@@ -883,20 +892,21 @@ namespace quokka
 		// Only the color writes wait for the image, the earlier stages can run before it's acquired
 		constexpr vk::PipelineStageFlags wait_stage_mask { vk::PipelineStageFlagBits::eColorAttachmentOutput };
 
+		// Indexed by image, not by frame, since it's tied to the presentation of that image
 		const auto& render_finished_semaphore { render_finished_semaphores_[image_index] };
 
 		const vk::SubmitInfo submit_info {
 			.waitSemaphoreCount { 1 },
-			.pWaitSemaphores { &*present_complete_semaphore_ },
+			.pWaitSemaphores { &*present_complete_semaphore },
 			.pWaitDstStageMask { &wait_stage_mask },
 			.commandBufferCount { 1 },
-			.pCommandBuffers { &*command_buffer_ },
+			.pCommandBuffers { &*command_buffer },
 			.signalSemaphoreCount { 1 },
 			.pSignalSemaphores { &*render_finished_semaphore }
 		};
 
 		// The fence is signaled when the GPU finishes executing the command buffer
-		queue_.submit(submit_info, *draw_fence_);
+		queue_.submit(submit_info, *in_flight_fence);
 
 		// Present the image once rendering has finished
 		const vk::PresentInfoKHR present_info {
@@ -909,16 +919,22 @@ namespace quokka
 
 		// Suboptimal results are handled when the swapchain is recreated in a later chapter
 		[[maybe_unused]] const auto present_result { queue_.presentKHR(present_info) };
+
+		// Move on to the next frame in flight, wrapping around after the last one
+		frame_index_ = (frame_index_ + 1) % constants::max_frames_in_flight;
 	}
 
 	void Engine::record_command_buffer(std::uint32_t image_index) const
 	{
+		// Command buffer owned by the current frame in flight
+		const auto& command_buffer { command_buffers_[frame_index_] };
+
 		// No flags needed, the command buffer is recorded and submitted once per frame
-		command_buffer_.begin({});
+		command_buffer.begin({});
 
 		// Nothing to wait for, and the previous contents are discarded, so the old layout can be undefined
 		transition_image_layout(
-			command_buffer_,
+			command_buffer,
 			swapchain_images_[image_index],
 			vk::ImageLayout::eUndefined,
 			vk::ImageLayout::eColorAttachmentOptimal,
@@ -956,9 +972,9 @@ namespace quokka
 			.pColorAttachments { &color_attachment_info }
 		};
 
-		command_buffer_.beginRendering(rendering_info);
+		command_buffer.beginRendering(rendering_info);
 
-		command_buffer_.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphics_pipeline_);
+		command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphics_pipeline_);
 
 		// Viewport and scissor are dynamic states, so they must be set before drawing
 		const vk::Viewport viewport {
@@ -970,17 +986,17 @@ namespace quokka
 			.maxDepth { 1.0f }
 		};
 
-		command_buffer_.setViewport(0, viewport);
-		command_buffer_.setScissor(0, full_image_area);
+		command_buffer.setViewport(0, viewport);
+		command_buffer.setScissor(0, full_image_area);
 
 		// 3 vertices hardcoded in the shader, 1 instance, starting at the first vertex and instance
-		command_buffer_.draw(3, 1, 0, 0);
+		command_buffer.draw(3, 1, 0, 0);
 
-		command_buffer_.endRendering();
+		command_buffer.endRendering();
 
 		// Wait for every color write to finish before the presentation engine reads the image
 		transition_image_layout(
-			command_buffer_,
+			command_buffer,
 			swapchain_images_[image_index],
 			vk::ImageLayout::eColorAttachmentOptimal,
 			vk::ImageLayout::ePresentSrcKHR,
@@ -990,6 +1006,6 @@ namespace quokka
 			vk::PipelineStageFlagBits2::eBottomOfPipe
 		);
 
-		command_buffer_.end();
+		command_buffer.end();
 	}
 }

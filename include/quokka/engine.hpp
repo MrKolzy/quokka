@@ -49,7 +49,7 @@ namespace quokka
 
 		void create_command_pool();
 
-		void create_command_buffer();
+		void create_command_buffers();
 
 		void create_sync_objects();
 
@@ -57,7 +57,7 @@ namespace quokka
 
 		void main_loop();
 
-		void draw_frame() const;
+		void draw_frame();
 
 		void record_command_buffer(std::uint32_t image_index) const;
 
@@ -107,14 +107,17 @@ namespace quokka
 
 		// Allocates the memory of the command buffers, must be destroyed before the device
 		vk::raii::CommandPool command_pool_ { nullptr };
-		// Records the commands submitted to the queue, must be freed before the command pool
-		vk::raii::CommandBuffer command_buffer_ { nullptr };
+		// Record the commands submitted to the queue, one per frame in flight, must be freed before the command pool
+		std::vector<vk::raii::CommandBuffer> command_buffers_ {};
 
-		// Signaled when the acquired swapchain image is ready to be rendered to, must be destroyed before the device
-		vk::raii::Semaphore present_complete_semaphore_ { nullptr };
+		// Signaled when the acquired swapchain image is ready to be rendered to, one per frame in flight, must be destroyed before the device
+		std::vector<vk::raii::Semaphore> present_complete_semaphores_ {};
 		// Signaled when rendering finishes, one per swapchain image, must be destroyed before the device
 		std::vector<vk::raii::Semaphore> render_finished_semaphores_ {};
-		// Signaled when the GPU finishes the submitted commands, so the CPU can record again, must be destroyed before the device
-		vk::raii::Fence draw_fence_ { nullptr };
+		// Signaled when the GPU finishes a frame's commands, one per frame in flight, must be destroyed before the device
+		std::vector<vk::raii::Fence> in_flight_fences_ {};
+
+		// Frame in flight currently being recorded, cycles from 0 to max_frames_in_flight - 1
+		std::uint32_t frame_index_ {};
 	};
 }
