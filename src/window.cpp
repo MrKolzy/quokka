@@ -42,8 +42,8 @@ namespace quokka
 		// Disable OpenGL context creation, as Vulkan doesn't need one
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
-		// Disable resizing, as it requires recreating the swapchain
-		glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+		// Resizing is allowed, the engine recreates the swapchain to match the new size
+		glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
 		window_ = glfwCreateWindow(constants::width, constants::height, constants::name, nullptr, nullptr);
 
@@ -54,6 +54,10 @@ namespace quokka
 
 			throw std::runtime_error("Failed to create GLFW window");
 		}
+
+		// GLFW is a C library and only passes the window handle, so store this object to find it from the callback
+		glfwSetWindowUserPointer(window_, this);
+		glfwSetFramebufferSizeCallback(window_, &framebuffer_size_callback);
 	}
 
 	Window::~Window()
@@ -65,5 +69,22 @@ namespace quokka
 	GLFWwindow* Window::handle() const noexcept
 	{
 		return window_;
+	}
+
+	bool Window::has_resized() const noexcept
+	{
+		return has_resized_;
+	}
+
+	void Window::clear_resized() noexcept
+	{
+		has_resized_ = false;
+	}
+
+	void Window::framebuffer_size_callback(GLFWwindow* window, int /*width*/, int /*height*/) noexcept
+	{
+		// The engine queries the new size itself when recreating the swapchain
+		auto* self { static_cast<Window*>(glfwGetWindowUserPointer(window)) };
+		self->has_resized_ = true;
 	}
 }

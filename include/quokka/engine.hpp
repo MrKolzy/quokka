@@ -53,6 +53,14 @@ namespace quokka
 
 		void create_sync_objects();
 
+		void create_render_finished_semaphores();
+
+		// ***
+
+		void recreate_swapchain();
+
+		void cleanup_swapchain() noexcept;
+
 		// ***
 
 		void main_loop();
@@ -112,7 +120,7 @@ namespace quokka
 
 		// Signaled when the acquired swapchain image is ready to be rendered to, one per frame in flight, must be destroyed before the device
 		std::vector<vk::raii::Semaphore> present_complete_semaphores_ {};
-		// Signaled when rendering finishes, one per swapchain image, must be destroyed before the device
+		// Signaled when rendering finishes, at least one per swapchain image, must be destroyed before the device
 		std::vector<vk::raii::Semaphore> render_finished_semaphores_ {};
 		// Signaled when the GPU finishes a frame's commands, one per frame in flight, must be destroyed before the device
 		std::vector<vk::raii::Fence> in_flight_fences_ {};

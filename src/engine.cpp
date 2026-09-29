@@ -357,6 +357,7 @@ namespace quokka
 		create_command_pool();
 		create_command_buffers();
 		create_sync_objects();
+		create_render_finished_semaphores();
 	}
 
 	void Engine::create_instance()
@@ -832,14 +833,6 @@ namespace quokka
 			.flags { vk::FenceCreateFlagBits::eSignaled }
 		};
 
-		// One per swapchain image, since presentation may still be waiting on it when the next frame is submitted
-		render_finished_semaphores_.reserve(swapchain_images_.size());
-
-		for (std::size_t index { 0 }; index < swapchain_images_.size(); ++index)
-		{
-			render_finished_semaphores_.push_back(device_.createSemaphore(semaphore_info));
-		}
-
 		// One per frame in flight, so each frame waits only for its own previous submission
 		present_complete_semaphores_.reserve(constants::max_frames_in_flight);
 		in_flight_fences_.reserve(constants::max_frames_in_flight);
@@ -849,6 +842,61 @@ namespace quokka
 			present_complete_semaphores_.push_back(device_.createSemaphore(semaphore_info));
 			in_flight_fences_.push_back(device_.createFence(fence_info));
 		}
+	}
+
+	void Engine::create_render_finished_semaphores()
+	{
+		// Semaphores have no configuration yet, they start unsignaled
+		constexpr vk::SemaphoreCreateInfo semaphore_info {};
+
+		// One per swapchain image, since presentation may still be waiting on it when the next frame is submitted
+		// Only the missing ones are created, as a recreated swapchain may have more images than the previous one
+		// Existing ones are kept, since the presentation engine may still be waiting on them
+		render_finished_semaphores_.reserve(swapchain_images_.size());
+
+		while (render_finished_semaphores_.size() < swapchain_images_.size())
+		{
+			render_finished_semaphores_.push_back(device_.createSemaphore(semaphore_info));
+		}
+	}
+
+	void Engine::recreate_swapchain()
+	{
+		// A minimized window has an empty framebuffer, so wait until it's restored
+		int width {};
+		int height {};
+		glfwGetFramebufferSize(window_.handle(), &width, &height);
+
+		while (width == 0 || height == 0)
+		{
+			// The window may be closed while minimized, in which case the main loop exits without recreating anything
+			if (glfwWindowShouldClose(window_.handle()))
+			{
+				return;
+			}
+
+			glfwWaitEvents();
+			glfwGetFramebufferSize(window_.handle(), &width, &height);
+		}
+
+		// The new swapchain queries the current size, so any resize up to this point is already handled
+		window_.clear_resized();
+
+		// Nothing may still be using the old swapchain or its image views
+		device_.waitIdle();
+
+		cleanup_swapchain();
+
+		create_swapchain();
+		create_image_views();
+		create_render_finished_semaphores();
+	}
+
+	void Engine::cleanup_swapchain() noexcept
+	{
+		// Image views must be destroyed before the swapchain that owns their images
+		swapchain_image_views_.clear();
+		swapchain_ = nullptr;
 	}
 
 	void Engine::main_loop()
@@ -879,12 +927,19 @@ namespace quokka
 			throw std::runtime_error("Failed to wait for the in flight fence");
 		}
 
-		// Unsignal it manually, so it can be signaled again by this frame's submission
-		device_.resetFences(*in_flight_fence);
-
 		// The semaphore is signaled once the presentation engine stops reading the image
-		// Suboptimal and out of date results are handled when the swapchain is recreated in a later chapter
 		const auto [acquire_result, image_index] { swapchain_.acquireNextImage(no_timeout, *present_complete_semaphore, nullptr) };
+
+		// The swapchain no longer matches the surface and can't be used, so recreate it and try again next frame
+		// Suboptimal is still usable, so the frame is drawn and the swapchain is recreated after presenting
+		if (acquire_result == vk::Result::eErrorOutOfDateKHR)
+		{
+			recreate_swapchain();
+			return;
+		}
+
+		// Reset only once work is sure to be submitted, otherwise an early return would leave it unsignaled forever
+		device_.resetFences(*in_flight_fence);
 
 		// Beginning the command buffer implicitly resets it, since the pool has the reset flag
 		record_command_buffer(image_index);
@@ -917,8 +972,16 @@ namespace quokka
 			.pImageIndices { &image_index }
 		};
 
-		// Suboptimal results are handled when the swapchain is recreated in a later chapter
-		[[maybe_unused]] const auto present_result { queue_.presentKHR(present_info) };
+		const auto present_result { queue_.presentKHR(present_info) };
+
+		// Recreate after presenting, so the semaphores are left in a consistent state
+		// The resize flag is also checked, since not every driver reports out of date after a resize
+		if (present_result == vk::Result::eErrorOutOfDateKHR ||
+			present_result == vk::Result::eSuboptimalKHR ||
+			window_.has_resized())
+		{
+			recreate_swapchain();
+		}
 
 		// Move on to the next frame in flight, wrapping around after the last one
 		frame_index_ = (frame_index_ + 1) % constants::max_frames_in_flight;

@@ -19,7 +19,18 @@ namespace quokka
 
 		GLFWwindow* handle() const noexcept;
 
+		// Whether the framebuffer was resized since the last clear, so the swapchain must be recreated
+		bool has_resized() const noexcept;
+
+		void clear_resized() noexcept;
+
 	private:
+		// Called by GLFW whenever the framebuffer is resized, including when the window is minimized
+		static void framebuffer_size_callback(GLFWwindow* window, int width, int height) noexcept;
+
 		GLFWwindow* window_ {};
+
+		// Set by the framebuffer size callback, cleared once the swapchain is recreated
+		bool has_resized_ { false };
 	};
 }

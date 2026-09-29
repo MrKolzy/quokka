@@ -82,9 +82,10 @@ Navigate to:
 
 **C/C++ > Preprocessor > Preprocessor Definitions**
 
-Add the following definition, preserving existing definitions and inherited values:
+Add the following definitions, preserving existing definitions and inherited values:
 
 - `VULKAN_HPP_NO_CONSTRUCTORS`
+- `VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS`
 
 ## Build Configurations
 
