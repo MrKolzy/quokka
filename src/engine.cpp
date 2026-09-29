@@ -721,6 +721,30 @@ namespace quokka
 		constexpr vk::PipelineLayoutCreateInfo pipeline_layout_info {};
 
 		pipeline_layout_ = device_.createPipelineLayout(pipeline_layout_info);
+
+		// Dynamic rendering replaces the render pass and framebuffers, so the pipeline only needs the attachment formats
+		// The chain links the rendering info through the pNext of the pipeline create info
+		const vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> pipeline_info_chain {
+			{
+				.stageCount { static_cast<std::uint32_t>(shader_stages.size()) },
+				.pStages { shader_stages.data() },
+				.pVertexInputState { &vertex_input_info },
+				.pInputAssemblyState { &input_assembly_info },
+				.pViewportState { &viewport_state_info },
+				.pRasterizationState { &rasterization_info },
+				.pMultisampleState { &multisample_info },
+				.pColorBlendState { &color_blend_info },
+				.pDynamicState { &dynamic_state_info },
+				.layout { *pipeline_layout_ },
+				// Not used with dynamic rendering
+				.renderPass { nullptr }
+			},
+			{
+				// A single color attachment, the swapchain image, with its exact format
+				.colorAttachmentCount { 1 },
+				.pColorAttachmentFormats { &swapchain_surface_format_.format }
+			}
+		};
 	}
 
 	void Engine::main_loop()
