@@ -47,9 +47,15 @@ namespace quokka
 
 		void create_graphics_pipeline();
 
+		void create_command_pool();
+
+		void create_command_buffer();
+
 		// ***
 
 		void main_loop();
+
+		void record_command_buffer(std::uint32_t image_index) const;
 
 		// ***
 
@@ -94,5 +100,10 @@ namespace quokka
 
 		// Shader stages and fixed-function state used to draw, must be destroyed before the device
 		vk::raii::Pipeline graphics_pipeline_ { nullptr };
+
+		// Allocates the memory of the command buffers, must be destroyed before the device
+		vk::raii::CommandPool command_pool_ { nullptr };
+		// Records the commands submitted to the queue, must be freed before the command pool
+		vk::raii::CommandBuffer command_buffer_ { nullptr };
 	};
 }

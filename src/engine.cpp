@@ -23,6 +23,7 @@
 #include <print>
 #include <stdexcept> // std::runtime_error
 #include <string>
+#include <utility> // std::move
 #include <vector>
 
 namespace quokka
@@ -158,6 +159,7 @@ namespace quokka
 
 			const bool has_required_features {
 				features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters &&
+				features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 &&
 				features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
 				features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState
 			};
@@ -290,6 +292,48 @@ namespace quokka
 
 			return device.createShaderModule(create_info);
 		}
+
+		// ***
+
+		// Changes the layout of a color image once the source stages and accesses have finished
+		void transition_image_layout(
+			const vk::raii::CommandBuffer& command_buffer,
+			vk::Image image,
+			vk::ImageLayout old_layout,
+			vk::ImageLayout new_layout,
+			vk::AccessFlags2 src_access_mask,
+			vk::AccessFlags2 dst_access_mask,
+			vk::PipelineStageFlags2 src_stage_mask,
+			vk::PipelineStageFlags2 dst_stage_mask) noexcept
+		{
+			const vk::ImageMemoryBarrier2 barrier {
+				.srcStageMask { src_stage_mask },
+				.srcAccessMask { src_access_mask },
+				.dstStageMask { dst_stage_mask },
+				.dstAccessMask { dst_access_mask },
+				.oldLayout { old_layout },
+				.newLayout { new_layout },
+				// The image stays in the same queue family, so there's no ownership transfer
+				.srcQueueFamilyIndex { vk::QueueFamilyIgnored },
+				.dstQueueFamilyIndex { vk::QueueFamilyIgnored },
+				.image { image },
+				// Color, no mipmapping and a single layer
+				.subresourceRange {
+					.aspectMask { vk::ImageAspectFlagBits::eColor },
+					.baseMipLevel { 0 },
+					.levelCount { 1 },
+					.baseArrayLayer { 0 },
+					.layerCount { 1 }
+				}
+			};
+
+			const vk::DependencyInfo dependency_info {
+				.imageMemoryBarrierCount { 1 },
+				.pImageMemoryBarriers { &barrier }
+			};
+
+			command_buffer.pipelineBarrier2(dependency_info);
+		}
 	}
 }
 
@@ -311,6 +355,8 @@ namespace quokka
 		create_swapchain();
 		create_image_views();
 		create_graphics_pipeline();
+		create_command_pool();
+		create_command_buffer();
 	}
 
 	void Engine::create_instance()
@@ -529,7 +575,7 @@ namespace quokka
 			vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT> feature_chain {
 			{},
 			{ .shaderDrawParameters { vk::True } },
-			{ .dynamicRendering { vk::True } },
+			{ .synchronization2 { vk::True }, .dynamicRendering { vk::True } },
 			{ .extendedDynamicState { vk::True } }
 		};
 
@@ -750,11 +796,120 @@ namespace quokka
 		graphics_pipeline_ = device_.createGraphicsPipeline(nullptr, pipeline_info_chain.get<vk::GraphicsPipelineCreateInfo>());
 	}
 
+	void Engine::create_command_pool()
+	{
+		// Configuration used to create the command pool
+		const vk::CommandPoolCreateInfo create_info {
+			// Lets each command buffer be reset individually, since it's re-recorded every frame
+			.flags { vk::CommandPoolCreateFlagBits::eResetCommandBuffer },
+			// Its command buffers can only be submitted to queues of this family
+			.queueFamilyIndex { queue_family_index_ }
+		};
+
+		command_pool_ = device_.createCommandPool(create_info);
+	}
+
+	void Engine::create_command_buffer()
+	{
+		// Configuration used to allocate the command buffer
+		const vk::CommandBufferAllocateInfo allocate_info {
+			.commandPool { *command_pool_ },
+			// Primary buffers are submitted directly to a queue, secondary ones are called from primary ones
+			.level { vk::CommandBufferLevel::ePrimary },
+			.commandBufferCount { 1 }
+		};
+
+		// Allocation always returns a vector, so take ownership of its only command buffer
+		command_buffer_ = std::move(device_.allocateCommandBuffers(allocate_info).front());
+	}
+
 	void Engine::main_loop()
 	{
 		while (!glfwWindowShouldClose(window_.handle()))
 		{
 			glfwPollEvents();
 		}
+	}
+
+	void Engine::record_command_buffer(std::uint32_t image_index) const
+	{
+		// No flags needed, the command buffer is recorded and submitted once per frame
+		command_buffer_.begin({});
+
+		// Nothing to wait for, and the previous contents are discarded, so the old layout can be undefined
+		transition_image_layout(
+			command_buffer_,
+			swapchain_images_[image_index],
+			vk::ImageLayout::eUndefined,
+			vk::ImageLayout::eColorAttachmentOptimal,
+			{},
+			vk::AccessFlagBits2::eColorAttachmentWrite,
+			vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+			vk::PipelineStageFlagBits2::eColorAttachmentOutput
+		);
+
+		// Opaque black, used to clear the swapchain image before drawing
+		constexpr vk::ClearValue clear_color {
+			.color { .float32 { std::array { 0.0f, 0.0f, 0.0f, 1.0f } } }
+		};
+
+		// The swapchain image is cleared on load and its result kept on store so it can be presented
+		const vk::RenderingAttachmentInfo color_attachment_info {
+			.imageView { *swapchain_image_views_[image_index] },
+			.imageLayout { vk::ImageLayout::eColorAttachmentOptimal },
+			.loadOp { vk::AttachmentLoadOp::eClear },
+			.storeOp { vk::AttachmentStoreOp::eStore },
+			.clearValue { clear_color }
+		};
+
+		// The whole swapchain image, used as both the render area and the scissor
+		const vk::Rect2D full_image_area {
+			.offset { .x { 0 }, .y { 0 } },
+			.extent { swapchain_extent_ }
+		};
+
+		// Dynamic rendering replaces the render pass and framebuffer, attachments are given when rendering begins
+		const vk::RenderingInfo rendering_info {
+			.renderArea { full_image_area },
+			.layerCount { 1 },
+			.colorAttachmentCount { 1 },
+			.pColorAttachments { &color_attachment_info }
+		};
+
+		command_buffer_.beginRendering(rendering_info);
+
+		command_buffer_.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphics_pipeline_);
+
+		// Viewport and scissor are dynamic states, so they must be set before drawing
+		const vk::Viewport viewport {
+			.x { 0.0f },
+			.y { 0.0f },
+			.width { static_cast<float>(swapchain_extent_.width) },
+			.height { static_cast<float>(swapchain_extent_.height) },
+			.minDepth { 0.0f },
+			.maxDepth { 1.0f }
+		};
+
+		command_buffer_.setViewport(0, viewport);
+		command_buffer_.setScissor(0, full_image_area);
+
+		// 3 vertices hardcoded in the shader, 1 instance, starting at the first vertex and instance
+		command_buffer_.draw(3, 1, 0, 0);
+
+		command_buffer_.endRendering();
+
+		// Wait for every color write to finish before the presentation engine reads the image
+		transition_image_layout(
+			command_buffer_,
+			swapchain_images_[image_index],
+			vk::ImageLayout::eColorAttachmentOptimal,
+			vk::ImageLayout::ePresentSrcKHR,
+			vk::AccessFlagBits2::eColorAttachmentWrite,
+			{},
+			vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+			vk::PipelineStageFlagBits2::eBottomOfPipe
+		);
+
+		command_buffer_.end();
 	}
 }
