@@ -62,6 +62,14 @@ Add the following library:
 
 Navigate to:
 
+**Build Events > Pre-Build Event > Command Line**
+
+Add the following command, replacing the placeholder with your local path:
+
+- `"<...>\VulkanSDK\1.4.357.0\Bin\slangc.exe" "$(ProjectDir)shaders\shader.slang" -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name -entry vert_main -entry frag_main -o "$(ProjectDir)shaders\shader.spv"`
+
+Navigate to:
+
 **Build Events > Post-Build Event > Command Line**
 
 Add the following command, replacing the placeholder with your local path:

@@ -17,4 +17,7 @@ namespace quokka::constants
 	inline constexpr bool should_enable_validation_layers { true };
 	inline constexpr bool should_print_debug_output { true };
 #endif
+
+	// Compiled SPIR-V shaders, relative to the working directory
+	inline constexpr const char* shader_path { "shaders/shader.spv" };
 }

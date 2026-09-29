@@ -12,9 +12,12 @@
 
 #include <algorithm> // std::clamp, std::max
 #include <array>
+#include <cstddef> // std::size_t
 #include <cstdint> // std::uint32_t
 #include <cstdio> // stderr
 #include <cstring> // std::strcmp
+#include <filesystem>
+#include <fstream>
 #include <limits> // std::numeric_limits
 #include <optional>
 #include <print>
@@ -236,6 +239,56 @@ namespace quokka
 						capabilities.minImageExtent.height, capabilities.maxImageExtent.height)
 				}
 			};
+		}
+
+		// ***
+
+		// Reads a compiled SPIR-V file as 32-bit words, which also guarantees the alignment Vulkan expects
+		std::vector<std::uint32_t> read_shader_file(const std::filesystem::path& path)
+		{
+			// Start at the end (ate) to get the file size, and read raw bytes without text conversions (binary)
+			std::ifstream file(path, std::ios::ate | std::ios::binary);
+
+			if (!file.is_open())
+			{
+				throw std::runtime_error("Failed to open shader file: " + path.string());
+			}
+
+			const auto file_size { static_cast<std::size_t>(file.tellg()) };
+
+			// SPIR-V is a stream of 32-bit words, so any other size means the file is invalid
+			if (file_size == 0 || file_size % sizeof(std::uint32_t) != 0)
+			{
+				throw std::runtime_error("Invalid SPIR-V file size: " + path.string());
+			}
+
+			// Parentheses, not braces: this is the count constructor
+			std::vector<std::uint32_t> code(file_size / sizeof(std::uint32_t));
+
+			file.seekg(0, std::ios::beg);
+			file.read(reinterpret_cast<char*>(code.data()), static_cast<std::streamsize>(file_size));
+
+			if (!file)
+			{
+				throw std::runtime_error("Failed to read shader file: " + path.string());
+			}
+
+			return code;
+		}
+
+		// Wraps SPIR-V code in a shader module, only needed until the pipeline is created
+		[[nodiscard]] vk::raii::ShaderModule create_shader_module(
+			const vk::raii::Device& device,
+			const std::vector<std::uint32_t>& code)
+		{
+			// Configuration used to create the shader module
+			const vk::ShaderModuleCreateInfo create_info {
+				// Size in bytes, not in words
+				.codeSize { code.size() * sizeof(std::uint32_t) },
+				.pCode { code.data() }
+			};
+
+			return device.createShaderModule(create_info);
 		}
 	}
 }
@@ -581,6 +634,25 @@ namespace quokka
 	void Engine::create_graphics_pipeline()
 	{
 		// Vulkan pipelines are almost completely immutable, so any state change requires creating a new one
+
+		// Both entry points live in the same module, which is destroyed at the end of this function
+		const auto shader_module { create_shader_module(device_, read_shader_file(constants::shader_path)) };
+
+		// Must match the entry point names in the shader and in the slangc command
+		const vk::PipelineShaderStageCreateInfo vertex_shader_stage_info {
+			.stage { vk::ShaderStageFlagBits::eVertex },
+			.module { *shader_module },
+			.pName { "vert_main" }
+		};
+
+		const vk::PipelineShaderStageCreateInfo fragment_shader_stage_info {
+			.stage { vk::ShaderStageFlagBits::eFragment },
+			.module { *shader_module },
+			.pName { "frag_main" }
+		};
+
+		// Programmable stages of the pipeline, used when creating it
+		const std::array shader_stages { vertex_shader_stage_info, fragment_shader_stage_info };
 	}
 
 	void Engine::main_loop()
