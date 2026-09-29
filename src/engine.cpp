@@ -653,6 +653,74 @@ namespace quokka
 
 		// Programmable stages of the pipeline, used when creating it
 		const std::array shader_stages { vertex_shader_stage_info, fragment_shader_stage_info };
+
+		// Viewport and scissor are set when recording commands, so they don't require recreating the pipeline
+		constexpr std::array dynamic_states { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
+
+		const vk::PipelineDynamicStateCreateInfo dynamic_state_info {
+			.dynamicStateCount { static_cast<std::uint32_t>(dynamic_states.size()) },
+			.pDynamicStates { dynamic_states.data() }
+		};
+
+		// No vertex buffers yet, the vertex data is hardcoded in the shader
+		constexpr vk::PipelineVertexInputStateCreateInfo vertex_input_info {};
+
+		// Every three vertices form an independent triangle
+		constexpr vk::PipelineInputAssemblyStateCreateInfo input_assembly_info {
+			.topology { vk::PrimitiveTopology::eTriangleList }
+		};
+
+		// Only the counts, the actual viewport and scissor are dynamic
+		constexpr vk::PipelineViewportStateCreateInfo viewport_state_info {
+			.viewportCount { 1 },
+			.scissorCount { 1 }
+		};
+
+		// Turns the triangle into fragments, filling it and discarding the back faces
+		constexpr vk::PipelineRasterizationStateCreateInfo rasterization_info {
+			// Clamping fragments outside the near and far planes requires a GPU feature
+			.depthClampEnable { vk::False },
+			// Otherwise geometry would never reach the framebuffer
+			.rasterizerDiscardEnable { vk::False },
+			// Any mode other than fill requires a GPU feature
+			.polygonMode { vk::PolygonMode::eFill },
+			.cullMode { vk::CullModeFlagBits::eBack },
+			// The shader vertices are listed in clockwise order on screen
+			.frontFace { vk::FrontFace::eClockwise },
+			// Only useful for shadow mapping
+			.depthBiasEnable { vk::False },
+			// Any width other than 1.0 requires a GPU feature
+			.lineWidth { 1.0f }
+		};
+
+		// Multisampling disabled, one sample per pixel
+		constexpr vk::PipelineMultisampleStateCreateInfo multisample_info {
+			.rasterizationSamples { vk::SampleCountFlagBits::e1 },
+			.sampleShadingEnable { vk::False }
+		};
+
+		// No blending, the fragment color overwrites the framebuffer, but every channel is still written
+		constexpr vk::PipelineColorBlendAttachmentState color_blend_attachment {
+			.blendEnable { vk::False },
+			.colorWriteMask {
+				vk::ColorComponentFlagBits::eR |
+				vk::ColorComponentFlagBits::eG |
+				vk::ColorComponentFlagBits::eB |
+				vk::ColorComponentFlagBits::eA
+			}
+		};
+
+		// One blend attachment per color attachment, the swapchain image is the only one
+		const vk::PipelineColorBlendStateCreateInfo color_blend_info {
+			.logicOpEnable { vk::False },
+			.attachmentCount { 1 },
+			.pAttachments { &color_blend_attachment }
+		};
+
+		// Required even when empty, no descriptor set layouts or push constants yet
+		constexpr vk::PipelineLayoutCreateInfo pipeline_layout_info {};
+
+		pipeline_layout_ = device_.createPipelineLayout(pipeline_layout_info);
 	}
 
 	void Engine::main_loop()

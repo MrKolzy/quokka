@@ -88,5 +88,8 @@ namespace quokka
 
 		// Describe how to access each swapchain image, must be destroyed before the device
 		std::vector<vk::raii::ImageView> swapchain_image_views_ {};
+
+		// Uniforms and push constants available to the shaders, must be destroyed before the device
+		vk::raii::PipelineLayout pipeline_layout_ { nullptr };
 	};
 }
