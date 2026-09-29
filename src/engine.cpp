@@ -745,6 +745,9 @@ namespace quokka
 				.pColorAttachmentFormats { &swapchain_surface_format_.format }
 			}
 		};
+
+		// No pipeline cache yet, it would let Vulkan reuse data across pipeline creations and program runs
+		graphics_pipeline_ = device_.createGraphicsPipeline(nullptr, pipeline_info_chain.get<vk::GraphicsPipelineCreateInfo>());
 	}
 
 	void Engine::main_loop()

@@ -91,5 +91,8 @@ namespace quokka
 
 		// Uniforms and push constants available to the shaders, must be destroyed before the device
 		vk::raii::PipelineLayout pipeline_layout_ { nullptr };
+
+		// Shader stages and fixed-function state used to draw, must be destroyed before the device
+		vk::raii::Pipeline graphics_pipeline_ { nullptr };
 	};
 }
