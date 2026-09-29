@@ -51,9 +51,13 @@ namespace quokka
 
 		void create_command_buffer();
 
+		void create_sync_objects();
+
 		// ***
 
 		void main_loop();
+
+		void draw_frame() const;
 
 		void record_command_buffer(std::uint32_t image_index) const;
 
@@ -105,5 +109,12 @@ namespace quokka
 		vk::raii::CommandPool command_pool_ { nullptr };
 		// Records the commands submitted to the queue, must be freed before the command pool
 		vk::raii::CommandBuffer command_buffer_ { nullptr };
+
+		// Signaled when the acquired swapchain image is ready to be rendered to, must be destroyed before the device
+		vk::raii::Semaphore present_complete_semaphore_ { nullptr };
+		// Signaled when rendering finishes, one per swapchain image, must be destroyed before the device
+		std::vector<vk::raii::Semaphore> render_finished_semaphores_ {};
+		// Signaled when the GPU finishes the submitted commands, so the CPU can record again, must be destroyed before the device
+		vk::raii::Fence draw_fence_ { nullptr };
 	};
 }

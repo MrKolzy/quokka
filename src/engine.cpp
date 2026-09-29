@@ -13,7 +13,7 @@
 #include <algorithm> // std::clamp, std::max
 #include <array>
 #include <cstddef> // std::size_t
-#include <cstdint> // std::uint32_t
+#include <cstdint> // std::uint32_t, std::uint64_t
 #include <cstdio> // stderr
 #include <cstring> // std::strcmp
 #include <filesystem>
@@ -357,6 +357,7 @@ namespace quokka
 		create_graphics_pipeline();
 		create_command_pool();
 		create_command_buffer();
+		create_sync_objects();
 	}
 
 	void Engine::create_instance()
@@ -823,12 +824,91 @@ namespace quokka
 		command_buffer_ = std::move(device_.allocateCommandBuffers(allocate_info).front());
 	}
 
+	void Engine::create_sync_objects()
+	{
+		// Semaphores have no configuration yet, they start unsignaled
+		constexpr vk::SemaphoreCreateInfo semaphore_info {};
+
+		present_complete_semaphore_ = device_.createSemaphore(semaphore_info);
+
+		// One per swapchain image, since presentation may still be waiting on it when the next frame is submitted
+		render_finished_semaphores_.reserve(swapchain_images_.size());
+
+		for (std::size_t index { 0 }; index < swapchain_images_.size(); ++index)
+		{
+			render_finished_semaphores_.push_back(device_.createSemaphore(semaphore_info));
+		}
+
+		// Created signaled, so the first frame doesn't wait forever for a submission that never happened
+		constexpr vk::FenceCreateInfo fence_info {
+			.flags { vk::FenceCreateFlagBits::eSignaled }
+		};
+
+		draw_fence_ = device_.createFence(fence_info);
+	}
+
 	void Engine::main_loop()
 	{
 		while (!glfwWindowShouldClose(window_.handle()))
 		{
 			glfwPollEvents();
+			draw_frame();
 		}
+
+		// Drawing and presentation are asynchronous, so wait for them before destroying anything
+		device_.waitIdle();
+	}
+
+	void Engine::draw_frame() const
+	{
+		// Wait indefinitely, the timeout is in nanoseconds
+		constexpr auto no_timeout { std::numeric_limits<std::uint64_t>::max() };
+
+		// Wait until the GPU finishes the previous frame, so the command buffer can be recorded again
+		if (device_.waitForFences(*draw_fence_, vk::True, no_timeout) != vk::Result::eSuccess)
+		{
+			throw std::runtime_error("Failed to wait for the draw fence");
+		}
+
+		// Unsignal it manually, so it can be signaled again by this frame's submission
+		device_.resetFences(*draw_fence_);
+
+		// The semaphore is signaled once the presentation engine stops reading the image
+		// Suboptimal and out of date results are handled when the swapchain is recreated in a later chapter
+		const auto [acquire_result, image_index] { swapchain_.acquireNextImage(no_timeout, *present_complete_semaphore_, nullptr) };
+
+		// Beginning the command buffer implicitly resets it, since the pool has the reset flag
+		record_command_buffer(image_index);
+
+		// Only the color writes wait for the image, the earlier stages can run before it's acquired
+		constexpr vk::PipelineStageFlags wait_stage_mask { vk::PipelineStageFlagBits::eColorAttachmentOutput };
+
+		const auto& render_finished_semaphore { render_finished_semaphores_[image_index] };
+
+		const vk::SubmitInfo submit_info {
+			.waitSemaphoreCount { 1 },
+			.pWaitSemaphores { &*present_complete_semaphore_ },
+			.pWaitDstStageMask { &wait_stage_mask },
+			.commandBufferCount { 1 },
+			.pCommandBuffers { &*command_buffer_ },
+			.signalSemaphoreCount { 1 },
+			.pSignalSemaphores { &*render_finished_semaphore }
+		};
+
+		// The fence is signaled when the GPU finishes executing the command buffer
+		queue_.submit(submit_info, *draw_fence_);
+
+		// Present the image once rendering has finished
+		const vk::PresentInfoKHR present_info {
+			.waitSemaphoreCount { 1 },
+			.pWaitSemaphores { &*render_finished_semaphore },
+			.swapchainCount { 1 },
+			.pSwapchains { &*swapchain_ },
+			.pImageIndices { &image_index }
+		};
+
+		// Suboptimal results are handled when the swapchain is recreated in a later chapter
+		[[maybe_unused]] const auto present_result { queue_.presentKHR(present_info) };
 	}
 
 	void Engine::record_command_buffer(std::uint32_t image_index) const
