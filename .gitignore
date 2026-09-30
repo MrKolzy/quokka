@@ -1,12 +1,12 @@
-# Files
-
+# Visual Studio project files, contain local absolute paths (see docs/building.md)
 Quokka.slnx
 Quokka.vcxproj
 Quokka.vcxproj.filters
 Quokka.vcxproj.user
-shader.spv
 
-# Folders
+# Visual Studio cache and build output
+.vs/
+x64/
 
-Debug/
-Release/
+# SPIR-V shaders, compiled from the .slang sources by the pre-build event
+shaders/*.spv
