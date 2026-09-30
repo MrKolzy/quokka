@@ -1,99 +1,57 @@
 # Building Quokka
 
-## Integrated Development Environment (IDE)
+## Requirements
 
+- Windows x64
+- GPU supporting Vulkan 1.3 or newer
 - Visual Studio Community 2026 Insiders
+- [Vulkan SDK](https://vulkan.lunarg.com/) 1.4.357.0 (sets the `VULKAN_SDK` environment variable)
+- [GLFW](https://www.glfw.org/download.html) 3.5.1, 64-bit Windows binaries
 
-## Dependencies
+## Project Properties
 
-- Vulkan SDK (Vulkan Software Development Kit)
-- GLFW (Graphics Library Framework)
+Right-click the **Quokka** project in **Solution Explorer**, select **Properties**, and set **Configuration** to `All Configurations` and **Platform** to `x64`.
 
-## Project Configuration
+When adding values, keep the existing and inherited ones.
 
-Right-click the **Quokka** project in **Solution Explorer** and select **Properties**.
+`<GLFW>` stands for your local GLFW folder.
 
-Select:
+### C/C++
 
-- Configuration: `All Configurations`
-- Platform: `x64`
+| Property | Value |
+|---|---|
+| General > Additional Include Directories | `$(ProjectDir)include`<br>`$(VULKAN_SDK)\Include`<br>`<GLFW>\include` |
+| Preprocessor > Preprocessor Definitions | `VULKAN_HPP_NO_CONSTRUCTORS`<br>`VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS` |
+| Language > C++ Language Standard | `Preview - Features from the Latest C++ Working Draft (/std:c++latest)` |
 
-## Language Standard
+- `VULKAN_HPP_NO_CONSTRUCTORS` turns Vulkan-Hpp structs into aggregates, allowing designated initializers.
+- `VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS` returns `eErrorOutOfDateKHR` instead of throwing an exception, so the engine can recreate the swapchain when the window is resized.
+- `/std:c++latest` is required for `std::println` (C++23).
 
-Navigate to:
+### Linker
 
-**C/C++ > Language > C++ Language Standard**
+| Property | Value |
+|---|---|
+| General > Additional Library Directories | `<GLFW>\lib-vc2026` |
+| Input > Additional Dependencies | `glfw3dll.lib` |
 
-Select:
+### Build Events
 
-- `Preview - Features from the Latest C++ Working Draft (/std:c++latest)`
+**Pre-Build Event > Command Line** compiles the Slang shaders to SPIR-V:
 
-## Include Directories
+    "$(VULKAN_SDK)\Bin\slangc.exe" "$(ProjectDir)shaders\shader.slang" -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name -entry vert_main -entry frag_main -o "$(ProjectDir)shaders\shader.spv"
 
-Navigate to:
+**Post-Build Event > Command Line** copies the GLFW runtime next to the executable:
 
-**C/C++ > General > Additional Include Directories**
-
-Add the following paths, replacing the placeholders with your local paths:
-
-- `<...>\Quokka\include`
-- `<...>\glfw-3.5.1.bin.WIN64\include`
-- `<...>\VulkanSDK\1.4.357.0\Include`
-
-## Linker Settings
-
-Navigate to:
-
-**Linker > General > Additional Library Directories**
-
-Add the following path, replacing the placeholder with your local path:
-
-- `<...>\glfw-3.5.1.bin.WIN64\lib-vc2026`
-
-Navigate to:
-
-**Linker > Input > Additional Dependencies**
-
-Add the following library:
-
-- `glfw3dll.lib`
-
-## Build Events
-
-Navigate to:
-
-**Build Events > Pre-Build Event > Command Line**
-
-Add the following command, replacing the placeholder with your local path:
-
-- `"<...>\VulkanSDK\1.4.357.0\Bin\slangc.exe" "$(ProjectDir)shaders\shader.slang" -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name -entry vert_main -entry frag_main -o "$(ProjectDir)shaders\shader.spv"`
-
-Navigate to:
-
-**Build Events > Post-Build Event > Command Line**
-
-Add the following command, replacing the placeholder with your local path:
-
-- `copy /Y "<...>\glfw-3.5.1.bin.WIN64\lib-vc2026\glfw3.dll" "$(OutDir)"`
-
-## Preprocessor Definitions
-
-Navigate to:
-
-**C/C++ > Preprocessor > Preprocessor Definitions**
-
-Add the following definitions, preserving existing definitions and inherited values:
-
-- `VULKAN_HPP_NO_CONSTRUCTORS`
-- `VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS`
+    copy /Y "<GLFW>\lib-vc2026\glfw3.dll" "$(OutDir)"
 
 ## Build Configurations
 
-**Solution Configurations**
+Select the configuration from the **Solution Configurations** dropdown in the toolbar.
 
-**Debug** enables the Vulkan validation layers and prints debug output to the console, while **Release** disables both:
+- **Debug** enables the Vulkan validation layers and prints debug output to the console.
+- **Release** defines `NDEBUG` by default, which disables both, and enables compiler optimizations. Use it to measure performance.
 
-- `Debug`
-- `Release`
+## Running
 
-Controlled by **NDEBUG**, defined automatically by Visual Studio Community in **Release**.
+Run from Visual Studio, whose working directory is the project folder, so `shaders/shader.spv` is found.
