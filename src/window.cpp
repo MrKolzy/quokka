@@ -45,9 +45,9 @@ namespace quokka
 		// Resizing is allowed, the engine recreates the swapchain to match the new size
 		glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
-		window_ = glfwCreateWindow(constants::window_width, constants::window_height, constants::app_name, nullptr, nullptr);
+		handle_ = glfwCreateWindow(constants::window_width, constants::window_height, constants::app_name, nullptr, nullptr);
 
-		if (!window_)
+		if (!handle_)
 		{
 			// The destructor doesn't run if the constructor throws, so clean up here
 			glfwTerminate();
@@ -56,19 +56,19 @@ namespace quokka
 		}
 
 		// GLFW is a C library and only passes the window handle, so store this object to find it from the callback
-		glfwSetWindowUserPointer(window_, this);
-		glfwSetFramebufferSizeCallback(window_, &framebuffer_size_callback);
+		glfwSetWindowUserPointer(handle_, this);
+		glfwSetFramebufferSizeCallback(handle_, &framebuffer_size_callback);
 	}
 
 	Window::~Window()
 	{
-		glfwDestroyWindow(window_);
+		glfwDestroyWindow(handle_);
 		glfwTerminate();
 	}
 
 	GLFWwindow* Window::handle() const noexcept
 	{
-		return window_;
+		return handle_;
 	}
 
 	bool Window::has_resized() const noexcept
