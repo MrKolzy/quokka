@@ -5,12 +5,12 @@
 
 namespace quokka::constants
 {
-	inline constexpr const char* name { "Quokka" };
-	inline constexpr int width { 800 };
-	inline constexpr int height { 600 };
+	inline constexpr const char* app_name { "Quokka" };
+	inline constexpr int window_width { 800 };
+	inline constexpr int window_height { 600 };
 
 	// Validation layers and debug output, only enabled in debug builds
-	inline constexpr std::array<const char*, 1> validation_layers { "VK_LAYER_KHRONOS_validation" };
+	inline constexpr std::array validation_layers { "VK_LAYER_KHRONOS_validation" };
 #ifdef NDEBUG
 	inline constexpr bool should_enable_validation_layers { false };
 	inline constexpr bool should_print_debug_output { false };

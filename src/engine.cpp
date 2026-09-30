@@ -364,7 +364,7 @@ namespace quokka
 	{
 		// Application metadata for the driver and the highest Vulkan version to use
 		constexpr vk::ApplicationInfo app_info {
-			.pApplicationName { constants::name },
+			.pApplicationName { constants::app_name },
 			.applicationVersion { vk::makeApiVersion(0, 1, 0, 0) },
 			.pEngineName { "Quokka Engine" },
 			.engineVersion { vk::makeApiVersion(0, 1, 0, 0) },

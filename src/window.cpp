@@ -45,7 +45,7 @@ namespace quokka
 		// Resizing is allowed, the engine recreates the swapchain to match the new size
 		glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
-		window_ = glfwCreateWindow(constants::width, constants::height, constants::name, nullptr, nullptr);
+		window_ = glfwCreateWindow(constants::window_width, constants::window_height, constants::app_name, nullptr, nullptr);
 
 		if (!window_)
 		{
