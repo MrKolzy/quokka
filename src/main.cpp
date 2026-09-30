@@ -1,7 +1,5 @@
 #include "quokka/engine.hpp"
 
-// ***
-
 #include <cstdio> // stderr
 #include <cstdlib> // EXIT_FAILURE, EXIT_SUCCESS
 #include <exception>
