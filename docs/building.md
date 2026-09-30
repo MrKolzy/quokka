@@ -8,6 +8,22 @@
 - [Vulkan SDK](https://vulkan.lunarg.com/) 1.4.357.0 (sets the `VULKAN_SDK` environment variable)
 - [GLFW](https://www.glfw.org/download.html) 3.5.1, 64-bit Windows binaries
 
+## Project Setup
+
+Create a new **Empty Project** in Visual Studio with the following settings:
+
+- **Project name**: `Quokka`
+- **Place solution and project in the same directory**: checked
+
+Open a terminal in the project folder and download the repository into it:
+
+    git init
+    git remote add origin https://github.com/MrKolzy/quokka.git
+    git fetch origin
+    git checkout main
+
+Then right-click the project in **Solution Explorer**, select **Add > Existing Item**, and add the files in `src`, `include/quokka` and `shaders`.
+
 ## Project Properties
 
 Right-click the **Quokka** project in **Solution Explorer**, select **Properties**, and set **Configuration** to `All Configurations` and **Platform** to `x64`.
