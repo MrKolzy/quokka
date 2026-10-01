@@ -347,7 +347,7 @@ namespace quokka
 	void Engine::initialize_vulkan()
 	{
 		create_instance();
-		setup_debug_messenger();
+		create_debug_messenger();
 		create_surface();
 		pick_physical_device();
 		create_logical_device();
@@ -470,7 +470,7 @@ namespace quokka
 		instance_ = context_.createInstance(create_info);
 	}
 
-	void Engine::setup_debug_messenger()
+	void Engine::create_debug_messenger()
 	{
 		if constexpr (constants::should_enable_validation_layers)
 		{
@@ -834,12 +834,12 @@ namespace quokka
 		};
 
 		// One per frame in flight, so each frame waits only for its own previous submission
-		present_complete_semaphores_.reserve(constants::max_frames_in_flight);
+		image_available_semaphores_.reserve(constants::max_frames_in_flight);
 		in_flight_fences_.reserve(constants::max_frames_in_flight);
 
 		for (std::uint32_t index { 0 }; index < constants::max_frames_in_flight; ++index)
 		{
-			present_complete_semaphores_.push_back(device_.createSemaphore(semaphore_info));
+			image_available_semaphores_.push_back(device_.createSemaphore(semaphore_info));
 			in_flight_fences_.push_back(device_.createFence(fence_info));
 		}
 	}
@@ -918,7 +918,7 @@ namespace quokka
 
 		// Objects owned by the current frame in flight
 		const auto& in_flight_fence { in_flight_fences_[frame_index_] };
-		const auto& present_complete_semaphore { present_complete_semaphores_[frame_index_] };
+		const auto& image_available_semaphore { image_available_semaphores_[frame_index_] };
 		const auto& command_buffer { command_buffers_[frame_index_] };
 
 		// Wait until the GPU finishes this frame's previous submission, so its command buffer can be recorded again
@@ -928,7 +928,7 @@ namespace quokka
 		}
 
 		// The semaphore is signaled once the presentation engine stops reading the image
-		const auto [acquire_result, image_index] { swapchain_.acquireNextImage(no_timeout, *present_complete_semaphore, nullptr) };
+		const auto [acquire_result, image_index] { swapchain_.acquireNextImage(no_timeout, *image_available_semaphore, nullptr) };
 
 		// The swapchain no longer matches the surface and can't be used, so recreate it and try again next frame
 		// Suboptimal is still usable, so the frame is drawn and the swapchain is recreated after presenting
@@ -952,7 +952,7 @@ namespace quokka
 
 		const vk::SubmitInfo submit_info {
 			.waitSemaphoreCount { 1 },
-			.pWaitSemaphores { &*present_complete_semaphore },
+			.pWaitSemaphores { &*image_available_semaphore },
 			.pWaitDstStageMask { &wait_stage_mask },
 			.commandBufferCount { 1 },
 			.pCommandBuffers { &*command_buffer },
