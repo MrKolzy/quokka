@@ -8,6 +8,7 @@ namespace quokka::constants
 	inline constexpr const char* app_name { "Quokka" };
 	inline constexpr int window_width { 800 };
 	inline constexpr int window_height { 600 };
+	inline constexpr bool is_window_resizable { true };
 
 	// Validation layers and debug output, only enabled in debug builds
 	inline constexpr std::array validation_layers { "VK_LAYER_KHRONOS_validation" };

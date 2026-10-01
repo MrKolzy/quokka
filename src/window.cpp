@@ -1,14 +1,8 @@
 #include "quokka/window.hpp"
 
-// ***
-
 #include "quokka/constants.hpp"
 
-// ***
-
 #include <GLFW/glfw3.h>
-
-// ***
 
 #include <cstdio> // stderr
 #include <print>
@@ -16,22 +10,17 @@
 
 namespace quokka
 {
-	// Helpers only visible inside this file
 	namespace
 	{
-		// Called by GLFW whenever one of its functions fails
 		void glfw_error_callback(int error_code, const char* description) noexcept
 		{
 			std::println(stderr, "[Quokka] GLFW error ({:#x}): {}", error_code, description);
 		}
 	}
-}
 
-namespace quokka
-{
 	Window::Window()
 	{
-		// Report the reason behind any GLFW failure, it can be set before initialization
+		// Set before glfwInit so initialization errors are reported too
 		glfwSetErrorCallback(&glfw_error_callback);
 
 		if (!glfwInit())
@@ -39,14 +28,11 @@ namespace quokka
 			throw std::runtime_error("Failed to initialize GLFW");
 		}
 
-		// Disable OpenGL context creation, as Vulkan doesn't need one
+		// Vulkan doesn't use an OpenGL context
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-
-		// Resizing is allowed, the engine recreates the swapchain to match the new size
-		glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+		glfwWindowHint(GLFW_RESIZABLE, constants::is_window_resizable ? GLFW_TRUE : GLFW_FALSE);
 
 		handle_ = glfwCreateWindow(constants::window_width, constants::window_height, constants::app_name, nullptr, nullptr);
-
 		if (!handle_)
 		{
 			// The destructor doesn't run if the constructor throws, so clean up here
@@ -55,7 +41,7 @@ namespace quokka
 			throw std::runtime_error("Failed to create GLFW window");
 		}
 
-		// GLFW is a C library and only passes the window handle, so store this object to find it from the callback
+		// GLFW callbacks only receive the GLFWwindow*, so store this to recover the Window
 		glfwSetWindowUserPointer(handle_, this);
 		glfwSetFramebufferSizeCallback(handle_, &framebuffer_size_callback);
 	}
