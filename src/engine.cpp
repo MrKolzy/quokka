@@ -978,7 +978,7 @@ namespace quokka
 		// The resize flag is also checked, since not every driver reports out of date after a resize
 		if (present_result == vk::Result::eErrorOutOfDateKHR ||
 			present_result == vk::Result::eSuboptimalKHR ||
-			window_.has_resized())
+			window_.was_resized())
 		{
 			recreate_swapchain();
 		}

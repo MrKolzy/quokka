@@ -57,20 +57,20 @@ namespace quokka
 		return handle_;
 	}
 
-	bool Window::has_resized() const noexcept
+	bool Window::was_resized() const noexcept
 	{
-		return has_resized_;
+		return was_resized_;
 	}
 
 	void Window::clear_resized() noexcept
 	{
-		has_resized_ = false;
+		was_resized_ = false;
 	}
 
 	void Window::framebuffer_size_callback(GLFWwindow* window, int /*width*/, int /*height*/) noexcept
 	{
 		// The engine queries the new size itself when recreating the swapchain
 		auto* self { static_cast<Window*>(glfwGetWindowUserPointer(window)) };
-		self->has_resized_ = true;
+		self->was_resized_ = true;
 	}
 }

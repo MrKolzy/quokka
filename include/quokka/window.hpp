@@ -22,14 +22,14 @@ namespace quokka
 		[[nodiscard]] GLFWwindow* handle() const noexcept;
 
 		// Set when the framebuffer is resized; the engine recreates the swapchain and calls clear_resized()
-		[[nodiscard]] bool has_resized() const noexcept;
+		[[nodiscard]] bool was_resized() const noexcept;
 		void clear_resized() noexcept;
 
 	private:
-		// Called by GLFW whenever the framebuffer is resized, including when the window is minimized
+		// Also called when the window is minimized (the size becomes 0x0)
 		static void framebuffer_size_callback(GLFWwindow* window, int width, int height) noexcept;
 
 		GLFWwindow* handle_ { nullptr };
-		bool has_resized_ { false };
+		bool was_resized_ { false };
 	};
 }

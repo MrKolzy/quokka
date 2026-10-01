@@ -12,9 +12,9 @@ int main()
 		quokka::Engine engine {};
 		engine.run();
 	}
-	catch (const std::exception& exception)
+	catch (const std::exception& error)
 	{
-		std::println(stderr, "[Quokka] Error: {}", exception.what());
+		std::println(stderr, "[Quokka] Error: {}", error.what());
 
 		return EXIT_FAILURE;
 	}

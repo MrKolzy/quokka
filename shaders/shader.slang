@@ -11,7 +11,7 @@ static const float3 colors[3] = float3[](
 	float3(0.0, 0.0, 1.0)
 );
 
-// Data passed from the vertex shader to the fragment shader
+// Passed to the fragment shader
 struct VertexOutput
 {
 	float4 position : SV_Position;
