@@ -24,6 +24,7 @@ VertexOutput vert_main(uint vertex_id : SV_VertexID)
 	VertexOutput output;
 	output.position = float4(positions[vertex_id], 0.0, 1.0);
 	output.color = colors[vertex_id];
+
 	return output;
 }
 

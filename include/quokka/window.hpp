@@ -11,7 +11,7 @@ namespace quokka
 		Window();
 		~Window();
 
-		// Not copyable: owns the GLFW window and library
+		// Not copyable: would destroy the window twice
 		Window(const Window&) = delete;
 		Window& operator=(const Window&) = delete;
 
@@ -19,10 +19,10 @@ namespace quokka
 		Window(Window&&) = delete;
 		Window& operator=(Window&&) = delete;
 
-		GLFWwindow* handle() const noexcept;
+		[[nodiscard]] GLFWwindow* handle() const noexcept;
 
-		// True after a framebuffer resize until clear_resized(), so the swapchain must be recreated
-		bool has_resized() const noexcept;
+		// Set when the framebuffer is resized; the engine recreates the swapchain and calls clear_resized()
+		[[nodiscard]] bool has_resized() const noexcept;
 		void clear_resized() noexcept;
 
 	private:
