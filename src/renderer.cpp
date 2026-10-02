@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint> // std::uint#_t
+#include <exception>
 #include <limits>
 #include <stdexcept> // std::runtime_error
 
@@ -56,6 +57,20 @@ namespace quokka
 		create_command_pool();
 		create_command_buffers();
 		create_frame_sync_objects();
+	}
+
+	Renderer::~Renderer()
+	{
+		// Drawing and presentation are asynchronous, so wait for them before destroying anything
+		// Done here so it also happens when an exception leaves the main loop early
+		try
+		{
+			device_.logical_device().waitIdle();
+		}
+		catch (const std::exception&)
+		{
+			// Destructors can't throw, and if the device is lost there's nothing left to wait for
+		}
 	}
 
 	bool Renderer::draw_frame()

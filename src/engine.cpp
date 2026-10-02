@@ -29,9 +29,6 @@ namespace quokka
 				}
 			}
 		}
-
-		// Drawing and presentation are asynchronous, so wait for them before destroying anything
-		device_.logical_device().waitIdle();
 	}
 
 	void Engine::recreate_swapchain()

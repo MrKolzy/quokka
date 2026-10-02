@@ -16,7 +16,7 @@ namespace quokka
 	{
 	public:
 		Renderer(const Device& device, const Swapchain& swapchain, const GraphicsPipeline& graphics_pipeline);
-		~Renderer() = default;
+		~Renderer();
 
 		// Neither copyable nor movable: holds references to the modules it draws with
 		Renderer(const Renderer&) = delete;
