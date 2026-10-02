@@ -20,6 +20,9 @@ namespace quokka::constants
 	inline constexpr bool should_print_debug_output { true };
 #endif
 
+	// Shows the average FPS and frame time in the window title, in every build
+	inline constexpr bool should_show_frame_stats { true };
+
 	// Compiled SPIR-V shaders, relative to the working directory
 	inline constexpr const char* shader_path { "shaders/shader.spv" };
 

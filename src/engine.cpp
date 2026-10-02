@@ -20,10 +20,13 @@ namespace quokka
 				recreate_swapchain();
 			}
 
-			if (frame_timer_.tick())
+			if constexpr (constants::should_show_frame_stats)
 			{
-				window_.set_title(std::format("{} | {:.0f} FPS | {:.2f} ms",
-					constants::app_name, frame_timer_.average_fps(), frame_timer_.average_frame_time_ms()));
+				if (frame_timer_.tick())
+				{
+					window_.set_title(std::format("{} | {:.0f} FPS | {:.2f} ms",
+						constants::app_name, frame_timer_.average_fps(), frame_timer_.average_frame_time_ms()));
+				}
 			}
 		}
 
