@@ -3,65 +3,14 @@
 #include "quokka/constants.hpp"
 
 #include <array>
-#include <cstddef> // std::size_t
 #include <cstdint> // std::uint#_t
-#include <filesystem>
-#include <fstream>
 #include <limits>
 #include <stdexcept> // std::runtime_error
-#include <string>
-#include <vector>
 
 namespace quokka
 {
 	namespace
 	{
-		// Reads a compiled SPIR-V file as 32-bit words, which also guarantees the alignment Vulkan expects
-		std::vector<std::uint32_t> read_shader_file(const std::filesystem::path& path)
-		{
-			// Start at the end (ate) to get the file size, and read raw bytes without text conversions (binary)
-			std::ifstream file { path, std::ios::ate | std::ios::binary };
-			if (!file.is_open())
-			{
-				throw std::runtime_error("Failed to open shader file: " + path.string());
-			}
-
-			const auto file_size { static_cast<std::size_t>(file.tellg()) };
-
-			// SPIR-V is a stream of 32-bit words, so an empty file or a partial word means it's invalid
-			if (file_size == 0 || file_size % sizeof(std::uint32_t) != 0)
-			{
-				throw std::runtime_error("Invalid SPIR-V file size: " + path.string());
-			}
-
-			// Parentheses, not braces: this is the count constructor
-			std::vector<std::uint32_t> code(file_size / sizeof(std::uint32_t));
-
-			file.seekg(0, std::ios::beg);
-			file.read(reinterpret_cast<char*>(code.data()), static_cast<std::streamsize>(file_size));
-
-			if (!file)
-			{
-				throw std::runtime_error("Failed to read shader file: " + path.string());
-			}
-
-			return code;
-		}
-
-		// Wraps SPIR-V code in a shader module, only needed until the pipeline is created
-		vk::raii::ShaderModule create_shader_module(const vk::raii::Device& device, const std::vector<std::uint32_t>& code)
-		{
-			const vk::ShaderModuleCreateInfo create_info {
-				// Size in bytes, not in words
-				.codeSize { code.size() * sizeof(std::uint32_t) },
-				.pCode { code.data() }
-			};
-
-			return device.createShaderModule(create_info);
-		}
-
-		// ***
-
 		// Changes the layout of a color image after the source stages and accesses finish,
 		// and before the destination ones start
 		void transition_image_layout(
@@ -107,128 +56,9 @@ namespace quokka
 
 	void Engine::initialize_vulkan()
 	{
-		create_graphics_pipeline();
-
 		create_command_pool();
 		create_command_buffers();
 		create_frame_sync_objects();
-	}
-
-	void Engine::create_graphics_pipeline()
-	{
-		// Both entry points live in the same compiled module
-		const auto shader_module { create_shader_module(device_.logical_device(), read_shader_file(constants::shader_path)) };
-
-		// Must match the entry point names in the shader and in the slangc command
-		const vk::PipelineShaderStageCreateInfo vertex_shader_stage_info {
-			.stage { vk::ShaderStageFlagBits::eVertex },
-			.module { *shader_module },
-			.pName { "vert_main" }
-		};
-
-		const vk::PipelineShaderStageCreateInfo fragment_shader_stage_info {
-			.stage { vk::ShaderStageFlagBits::eFragment },
-			.module { *shader_module },
-			.pName { "frag_main" }
-		};
-
-		const std::array shader_stages { vertex_shader_stage_info, fragment_shader_stage_info };
-
-		// No vertex buffers yet, the vertex data is hardcoded in the shader
-		constexpr vk::PipelineVertexInputStateCreateInfo vertex_input_info {};
-
-		// Every three vertices form an independent triangle
-		constexpr vk::PipelineInputAssemblyStateCreateInfo input_assembly_info {
-			.topology { vk::PrimitiveTopology::eTriangleList }
-		};
-
-		// Only the counts, the actual viewport and scissor are dynamic
-		constexpr vk::PipelineViewportStateCreateInfo viewport_state_info {
-			.viewportCount { 1 },
-			.scissorCount { 1 }
-		};
-
-		// Turns the triangle into fragments, filling it and discarding the back faces
-		constexpr vk::PipelineRasterizationStateCreateInfo rasterization_info {
-			// Clamping fragments outside the near and far planes requires a GPU feature
-			.depthClampEnable { vk::False },
-			// Otherwise geometry would never reach the framebuffer
-			.rasterizerDiscardEnable { vk::False },
-			// Any mode other than fill requires a GPU feature
-			.polygonMode { vk::PolygonMode::eFill },
-			.cullMode { vk::CullModeFlagBits::eBack },
-			// The shader vertices are listed in clockwise order on screen
-			.frontFace { vk::FrontFace::eClockwise },
-			// Mainly used for shadow mapping
-			.depthBiasEnable { vk::False },
-			// Any width other than 1.0 requires a GPU feature
-			.lineWidth { 1.0f }
-		};
-
-		// Multisampling disabled, one sample per pixel
-		constexpr vk::PipelineMultisampleStateCreateInfo multisample_info {
-			.rasterizationSamples { vk::SampleCountFlagBits::e1 },
-			.sampleShadingEnable { vk::False }
-		};
-
-		// No blending, the fragment color overwrites the framebuffer, but every channel is still written
-		constexpr vk::PipelineColorBlendAttachmentState color_blend_attachment {
-			.blendEnable { vk::False },
-			.colorWriteMask {
-				vk::ColorComponentFlagBits::eR |
-				vk::ColorComponentFlagBits::eG |
-				vk::ColorComponentFlagBits::eB |
-				vk::ColorComponentFlagBits::eA
-			}
-		};
-
-		// One blend attachment per color attachment, the swapchain image is the only one
-		const vk::PipelineColorBlendStateCreateInfo color_blend_info {
-			.logicOpEnable { vk::False },
-			.attachmentCount { 1 },
-			.pAttachments { &color_blend_attachment }
-		};
-
-		// Pipelines are immutable, so changing any state means creating a new one
-		// Viewport and scissor are set when recording commands instead, so a resize doesn't require a new pipeline
-		constexpr std::array dynamic_states { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
-
-		const vk::PipelineDynamicStateCreateInfo dynamic_state_info {
-			.dynamicStateCount { static_cast<std::uint32_t>(dynamic_states.size()) },
-			.pDynamicStates { dynamic_states.data() }
-		};
-
-		// Required even when empty, no descriptor set layouts or push constants yet
-		constexpr vk::PipelineLayoutCreateInfo pipeline_layout_info {};
-
-		pipeline_layout_ = device_.logical_device().createPipelineLayout(pipeline_layout_info);
-
-		// Dynamic rendering replaces the render pass and framebuffers, so the pipeline only needs the attachment formats
-		// The chain links the rendering info through the pNext of the pipeline create info
-		const vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> pipeline_info_chain {
-			{
-				.stageCount { static_cast<std::uint32_t>(shader_stages.size()) },
-				.pStages { shader_stages.data() },
-				.pVertexInputState { &vertex_input_info },
-				.pInputAssemblyState { &input_assembly_info },
-				.pViewportState { &viewport_state_info },
-				.pRasterizationState { &rasterization_info },
-				.pMultisampleState { &multisample_info },
-				.pColorBlendState { &color_blend_info },
-				.pDynamicState { &dynamic_state_info },
-				.layout { *pipeline_layout_ },
-				// Not used with dynamic rendering
-				.renderPass { nullptr }
-			},
-			{
-				// A single color attachment, the swapchain image, with its exact format
-				.colorAttachmentCount { 1 },
-				.pColorAttachmentFormats { &swapchain_.surface_format().format }
-			}
-		};
-
-		// No pipeline cache yet, it would let Vulkan reuse data across pipeline creations and program runs
-		graphics_pipeline_ = device_.logical_device().createGraphicsPipeline(nullptr, pipeline_info_chain.get<vk::GraphicsPipelineCreateInfo>());
 	}
 
 	void Engine::create_command_pool()
@@ -446,7 +276,7 @@ namespace quokka
 
 		command_buffer.beginRendering(rendering_info);
 
-		command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphics_pipeline_);
+		command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphics_pipeline_.handle());
 
 		// Viewport and scissor are dynamic states, so they must be set before drawing
 		const vk::Viewport viewport {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "quokka/device.hpp"
+#include "quokka/graphics_pipeline.hpp"
 #include "quokka/swapchain.hpp"
 #include "quokka/window.hpp"
 
@@ -29,8 +30,6 @@ namespace quokka
 	private:
 		void initialize_vulkan();
 
-		void create_graphics_pipeline();
-
 		void create_command_pool();
 		void create_command_buffers();
 		void create_frame_sync_objects();
@@ -52,11 +51,7 @@ namespace quokka
 		Window window_ {};
 		Device device_ { window_ };
 		Swapchain swapchain_ { device_, window_ };
-
-		// Descriptor set layouts and push constant ranges the shaders can access
-		vk::raii::PipelineLayout pipeline_layout_ { nullptr };
-		// Shader stages and fixed-function state used to draw
-		vk::raii::Pipeline graphics_pipeline_ { nullptr };
+		GraphicsPipeline graphics_pipeline_ { device_, swapchain_.surface_format().format };
 
 		// Allocates the memory of the command buffers
 		vk::raii::CommandPool command_pool_ { nullptr };
