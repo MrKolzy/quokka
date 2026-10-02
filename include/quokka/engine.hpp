@@ -2,13 +2,9 @@
 
 #include "quokka/device.hpp"
 #include "quokka/graphics_pipeline.hpp"
+#include "quokka/renderer.hpp"
 #include "quokka/swapchain.hpp"
 #include "quokka/window.hpp"
-
-#include <vulkan/vulkan_raii.hpp>
-
-#include <cstdint> // std::uint32_t
-#include <vector>
 
 namespace quokka
 {
@@ -28,21 +24,11 @@ namespace quokka
 		void run();
 
 	private:
-		void initialize_vulkan();
-
-		void create_command_pool();
-		void create_command_buffers();
-		void create_frame_sync_objects();
-
-		// ***
-
 		void recreate_swapchain();
 
 		// ***
 
 		void main_loop();
-		void draw_frame();
-		void record_command_buffer(const vk::raii::CommandBuffer& command_buffer, std::uint32_t image_index) const;
 
 		// ***
 
@@ -52,18 +38,6 @@ namespace quokka
 		Device device_ { window_ };
 		Swapchain swapchain_ { device_, window_ };
 		GraphicsPipeline graphics_pipeline_ { device_, swapchain_.surface_format().format };
-
-		// Allocates the memory of the command buffers
-		vk::raii::CommandPool command_pool_ { nullptr };
-		// One per frame in flight
-		std::vector<vk::raii::CommandBuffer> command_buffers_ {};
-
-		// Signaled by acquireNextImage, waited on by the submission, one per frame in flight
-		std::vector<vk::raii::Semaphore> image_available_semaphores_ {};
-		// Signaled by the submission, waited on by the CPU, one per frame in flight
-		std::vector<vk::raii::Fence> in_flight_fences_ {};
-
-		// Frame in flight currently being recorded, cycles from 0 to max_frames_in_flight - 1
-		std::uint32_t frame_index_ {};
+		Renderer renderer_ { device_, swapchain_, graphics_pipeline_ };
 	};
 }
