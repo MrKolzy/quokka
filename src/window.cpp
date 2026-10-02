@@ -4,6 +4,7 @@
 
 #include <GLFW/glfw3.h>
 
+#include <cstdint> // std::uint32_t
 #include <cstdio> // stderr
 #include <print>
 #include <stdexcept> // std::runtime_error
@@ -52,9 +53,57 @@ namespace quokka
 		glfwTerminate();
 	}
 
-	GLFWwindow* Window::handle() const noexcept
+	vk::Extent2D Window::framebuffer_extent() const noexcept
 	{
-		return handle_;
+		// Framebuffer size is in pixels, unlike glfwGetWindowSize, which returns screen coordinates
+		int width {};
+		int height {};
+		glfwGetFramebufferSize(handle_, &width, &height);
+
+		return { .width { static_cast<std::uint32_t>(width) }, .height { static_cast<std::uint32_t>(height) } };
+	}
+
+	std::vector<const char*> Window::required_instance_extensions() const
+	{
+		std::uint32_t extension_count {};
+		const auto extensions { glfwGetRequiredInstanceExtensions(&extension_count) };
+		if (!extensions)
+		{
+			throw std::runtime_error("Failed to get the Vulkan instance extensions required by GLFW");
+		}
+
+		// Parentheses, not braces: this is the iterator-range constructor
+		return std::vector<const char*>(extensions, extensions + extension_count);
+	}
+
+	vk::raii::SurfaceKHR Window::create_surface(const vk::raii::Instance& instance) const
+	{
+		// Raw C handle, since GLFW is a C library and doesn't know about vk::raii
+		VkSurfaceKHR raw_surface {};
+
+		// GLFW hides the platform-specific surface creation (Win32, X11, Wayland, ...)
+		if (glfwCreateWindowSurface(*instance, handle_, nullptr, &raw_surface) != VK_SUCCESS)
+		{
+			throw std::runtime_error("Failed to create window surface");
+		}
+
+		// Take ownership of the raw handle so it's destroyed automatically
+		return vk::raii::SurfaceKHR { instance, raw_surface };
+	}
+
+	bool Window::should_close() const noexcept
+	{
+		return glfwWindowShouldClose(handle_);
+	}
+
+	void Window::poll_events() noexcept
+	{
+		glfwPollEvents();
+	}
+
+	void Window::wait_events() noexcept
+	{
+		glfwWaitEvents();
 	}
 
 	bool Window::was_resized() const noexcept

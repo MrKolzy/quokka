@@ -2,8 +2,6 @@
 
 #include "quokka/constants.hpp"
 
-#include <GLFW/glfw3.h>
-
 #include <algorithm> // std::clamp, std::max, std::ranges
 #include <array>
 #include <cstddef> // std::size_t
@@ -40,19 +38,10 @@ namespace quokka
 			});
 		}
 
-		// GLFW's surface extensions for the current platform, plus debug utils when validation is enabled
-		std::vector<const char*> get_required_instance_extensions()
+		// The window's surface extensions, plus debug utils when validation is enabled
+		std::vector<const char*> get_required_instance_extensions(const Window& window)
 		{
-			std::uint32_t glfw_extension_count {};
-			const auto glfw_extensions { glfwGetRequiredInstanceExtensions(&glfw_extension_count) };
-
-			if (!glfw_extensions)
-			{
-				throw std::runtime_error("Failed to get the Vulkan instance extensions required by GLFW");
-			}
-
-			// Parentheses, not braces: this is the iterator-range constructor
-			std::vector<const char*> extensions(glfw_extensions, glfw_extensions + glfw_extension_count);
+			auto extensions { window.required_instance_extensions() };
 
 			// Needed to receive validation layer messages through a callback
 			if constexpr (constants::should_enable_validation_layers)
@@ -193,7 +182,7 @@ namespace quokka
 		}
 
 		// Resolution of the swapchain images in pixels
-		vk::Extent2D choose_swapchain_extent(const vk::SurfaceCapabilitiesKHR& capabilities, GLFWwindow* window) noexcept
+		vk::Extent2D choose_swapchain_extent(const vk::SurfaceCapabilitiesKHR& capabilities, vk::Extent2D framebuffer_extent) noexcept
 		{
 			// A width of UINT32_MAX means the surface lets us choose, otherwise the swapchain must use currentExtent
 			if (capabilities.currentExtent.width != std::numeric_limits<std::uint32_t>::max())
@@ -201,20 +190,9 @@ namespace quokka
 				return capabilities.currentExtent;
 			}
 
-			// Framebuffer size is in pixels, unlike glfwGetWindowSize, which returns screen coordinates
-			int width {};
-			int height {};
-			glfwGetFramebufferSize(window, &width, &height);
-
 			return {
-				.width {
-					std::clamp(static_cast<std::uint32_t>(width),
-						capabilities.minImageExtent.width, capabilities.maxImageExtent.width)
-				},
-				.height {
-					std::clamp(static_cast<std::uint32_t>(height),
-						capabilities.minImageExtent.height, capabilities.maxImageExtent.height)
-				}
+				.width { std::clamp(framebuffer_extent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width) },
+				.height { std::clamp(framebuffer_extent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height) }
 			};
 		}
 
@@ -377,7 +355,7 @@ namespace quokka
 			.apiVersion { vk::ApiVersion13 }
 		};
 
-		const auto required_instance_extensions { get_required_instance_extensions() };
+		const auto required_instance_extensions { get_required_instance_extensions(window_) };
 		if constexpr (constants::should_print_debug_output)
 		{
 			std::println("[Quokka] Required Vulkan instance extensions:");
@@ -446,17 +424,7 @@ namespace quokka
 
 	void Engine::create_surface()
 	{
-		// Raw C handle, since GLFW is a C library and doesn't know about vk::raii
-		VkSurfaceKHR raw_surface {};
-
-		// GLFW hides the platform-specific surface creation (Win32, X11, Wayland, ...)
-		if (glfwCreateWindowSurface(*instance_, window_.handle(), nullptr, &raw_surface) != VK_SUCCESS)
-		{
-			throw std::runtime_error("Failed to create window surface");
-		}
-
-		// Take ownership of the raw handle so it's destroyed automatically
-		surface_ = vk::raii::SurfaceKHR { instance_, raw_surface };
+		surface_ = window_.create_surface(instance_);
 	}
 
 	void Engine::pick_physical_device()
@@ -559,7 +527,7 @@ namespace quokka
 
 		// Pick the best settings among the supported ones
 		swapchain_surface_format_ = choose_swapchain_surface_format(available_formats);
-		swapchain_extent_ = choose_swapchain_extent(capabilities, window_.handle());
+		swapchain_extent_ = choose_swapchain_extent(capabilities, window_.framebuffer_extent());
 		const auto present_mode { choose_swapchain_present_mode(available_present_modes) };
 		const auto min_image_count { choose_swapchain_min_image_count(capabilities) };
 
@@ -797,20 +765,17 @@ namespace quokka
 	void Engine::recreate_swapchain()
 	{
 		// A minimized window has an empty framebuffer, so wait until it's restored
-		int width {};
-		int height {};
-		glfwGetFramebufferSize(window_.handle(), &width, &height);
-
-		while (width == 0 || height == 0)
+		auto framebuffer_extent { window_.framebuffer_extent() };
+		while (framebuffer_extent.width == 0 || framebuffer_extent.height == 0)
 		{
 			// The window may be closed while minimized, in which case the main loop exits without recreating anything
-			if (glfwWindowShouldClose(window_.handle()))
+			if (window_.should_close())
 			{
 				return;
 			}
 
-			glfwWaitEvents();
-			glfwGetFramebufferSize(window_.handle(), &width, &height);
+			window_.wait_events();
+			framebuffer_extent = window_.framebuffer_extent();
 		}
 
 		// The new swapchain queries the current size, so any resize up to this point is already handled
@@ -835,9 +800,9 @@ namespace quokka
 
 	void Engine::main_loop()
 	{
-		while (!glfwWindowShouldClose(window_.handle()))
+		while (!window_.should_close())
 		{
-			glfwPollEvents();
+			window_.poll_events();
 			draw_frame();
 		}
 

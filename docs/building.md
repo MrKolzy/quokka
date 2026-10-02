@@ -37,11 +37,12 @@ When adding values, keep the existing and inherited ones.
 | Property | Value |
 |---|---|
 | General > Additional Include Directories | `$(ProjectDir)include`<br>`$(VULKAN_SDK)\Include`<br>`<GLFW>\include` |
-| Preprocessor > Preprocessor Definitions | `VULKAN_HPP_NO_CONSTRUCTORS`<br>`VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS` |
+| Preprocessor > Preprocessor Definitions | `VULKAN_HPP_NO_CONSTRUCTORS`<br>`VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS`<br>`GLFW_INCLUDE_VULKAN` |
 | Language > C++ Language Standard | `Preview - Features from the Latest C++ Working Draft (/std:c++latest)` |
 
 - `VULKAN_HPP_NO_CONSTRUCTORS` turns Vulkan-Hpp structs into aggregates, allowing designated initializers.
 - `VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS` returns `eErrorOutOfDateKHR` instead of throwing an exception, so the engine can recreate the swapchain when it becomes out of date.
+- `GLFW_INCLUDE_VULKAN` makes GLFW include Vulkan and declare `glfwCreateWindowSurface`.
 - `/std:c++latest` is required for `std::println` (C++23).
 
 ### Linker
