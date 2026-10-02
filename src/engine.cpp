@@ -1,24 +1,18 @@
 #include "quokka/engine.hpp"
 
-// ***
-
 #include "quokka/constants.hpp"
-
-// ***
 
 #include <GLFW/glfw3.h>
 
-// ***
-
-#include <algorithm> // std::clamp, std::max
+#include <algorithm> // std::clamp, std::max, std::ranges
 #include <array>
 #include <cstddef> // std::size_t
-#include <cstdint> // std::uint32_t, std::uint64_t
+#include <cstdint> // std::uint#_t
 #include <cstdio> // stderr
 #include <cstring> // std::strcmp
 #include <filesystem>
 #include <fstream>
-#include <limits> // std::numeric_limits
+#include <limits>
 #include <optional>
 #include <print>
 #include <stdexcept> // std::runtime_error
@@ -27,13 +21,28 @@
 
 namespace quokka
 {
-	// Helpers only visible inside this file
 	namespace
 	{
-		// Vulkan instance extensions required by GLFW, plus debug utils when validation is enabled
-		std::vector<const char*> get_required_extensions()
+		// Vulkan reports names as fixed-size char arrays, so == would compare addresses instead of the text
+		bool is_extension_available(const std::vector<vk::ExtensionProperties>& available_extensions, const char* name) noexcept
 		{
-			// Retrieve the Vulkan instance extensions required by GLFW
+			return std::ranges::any_of(available_extensions, [name](const vk::ExtensionProperties& extension)
+			{
+				return std::strcmp(extension.extensionName.data(), name) == 0;
+			});
+		}
+
+		bool is_layer_available(const std::vector<vk::LayerProperties>& available_layers, const char* name) noexcept
+		{
+			return std::ranges::any_of(available_layers, [name](const vk::LayerProperties& layer)
+			{
+				return std::strcmp(layer.layerName.data(), name) == 0;
+			});
+		}
+
+		// GLFW's surface extensions for the current platform, plus debug utils when validation is enabled
+		std::vector<const char*> get_required_instance_extensions()
+		{
 			std::uint32_t glfw_extension_count {};
 			const auto glfw_extensions { glfwGetRequiredInstanceExtensions(&glfw_extension_count) };
 
@@ -54,6 +63,19 @@ namespace quokka
 			return extensions;
 		}
 
+		// Validation layers when they're enabled, none otherwise
+		std::vector<const char*> get_required_instance_layers()
+		{
+			if constexpr (constants::should_enable_validation_layers)
+			{
+				return std::vector<const char*>(constants::validation_layers.begin(), constants::validation_layers.end());
+			}
+			else
+			{
+				return {};
+			}
+		}
+
 		// Called by the validation layers whenever they have something to report
 		VKAPI_ATTR vk::Bool32 VKAPI_CALL debug_callback(
 			vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
@@ -70,7 +92,7 @@ namespace quokka
 
 		// Messenger configuration, shared by instance creation and the debug messenger
 		constexpr vk::DebugUtilsMessengerCreateInfoEXT debug_messenger_create_info {
-			// Add eVerbose for detailed loader diagnostics (layer and driver loading), otherwise it's just noise
+			// eVerbose and eInfo are left out, they're mostly noise unless debugging the loader
 			.messageSeverity {
 				vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning |
 				vk::DebugUtilsMessageSeverityFlagBitsEXT::eError
@@ -85,7 +107,7 @@ namespace quokka
 
 		// ***
 
-		// Device extensions every candidate GPU must support
+		// Checked when picking the physical device and enabled when creating the logical device
 		constexpr std::array required_device_extensions { vk::KHRSwapchainExtensionName };
 
 		// Index of the first queue family that can execute graphics commands and present to the surface, if any
@@ -97,7 +119,7 @@ namespace quokka
 
 			for (std::uint32_t index { 0 }; index < queue_families.size(); ++index)
 			{
-				// Presentation support is only queried if the family can execute graphics commands
+				// A single family for both keeps one queue for everything, which nearly every GPU supports
 				if ((queue_families[index].queueFlags & vk::QueueFlagBits::eGraphics) &&
 					physical_device.getSurfaceSupportKHR(index, *surface))
 				{
@@ -108,39 +130,23 @@ namespace quokka
 			return std::nullopt;
 		}
 
-		// Checks whether a GPU meets every requirement of the engine
 		bool is_device_suitable(const vk::raii::PhysicalDevice& physical_device, const vk::raii::SurfaceKHR& surface)
 		{
-			// Dynamic rendering and the other features used below are core in Vulkan 1.3
-			const bool has_vulkan_1_3 { physical_device.getProperties().apiVersion >= vk::ApiVersion13 };
+			// Dynamic rendering and synchronization2 are core in Vulkan 1.3
+			if (physical_device.getProperties().apiVersion < vk::ApiVersion13)
+			{
+				return false;
+			}
 
-			// At least one queue family must be able to execute graphics commands and present to the surface
 			const bool has_suitable_queue_family { find_queue_family_index(physical_device, surface).has_value() };
 
-			// Every required device extension must be available
 			const auto available_extensions { physical_device.enumerateDeviceExtensionProperties() };
-
-			bool has_required_extensions { true };
-
-			for (const auto* required_extension : required_device_extensions)
-			{
-				bool is_available { false };
-
-				for (const auto& extension : available_extensions)
+			const bool has_required_extensions {
+				std::ranges::all_of(required_device_extensions, [&available_extensions](const char* extension)
 				{
-					if (std::strcmp(extension.extensionName.data(), required_extension) == 0)
-					{
-						is_available = true;
-						break;
-					}
-				}
-
-				if (!is_available)
-				{
-					has_required_extensions = false;
-					break;
-				}
-			}
+					return is_extension_available(available_extensions, extension);
+				})
+			};
 
 			// The swapchain needs at least one image format and one presentation mode for the surface
 			const bool has_adequate_swapchain_support {
@@ -148,29 +154,29 @@ namespace quokka
 				!physical_device.getSurfacePresentModesKHR(*surface).empty()
 			};
 
-			// Query all the feature structures we need in a single call
-			const auto features { physical_device.getFeatures2<
-				vk::PhysicalDeviceFeatures2,
-				vk::PhysicalDeviceVulkan11Features,
-				vk::PhysicalDeviceVulkan13Features,
-				vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>()
+			// The structures are linked through pNext, so a single call fills all of them
+			const auto features {
+				physical_device.getFeatures2<
+					vk::PhysicalDeviceFeatures2,
+					vk::PhysicalDeviceVulkan11Features,
+					vk::PhysicalDeviceVulkan13Features>()
 			};
 
+			// shaderDrawParameters is needed because Slang translates SV_VertexID using BaseVertex
 			const bool has_required_features {
 				features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters &&
 				features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 &&
-				features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
-				features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState
+				features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering
 			};
 
-			return has_vulkan_1_3 && has_suitable_queue_family && has_required_extensions &&
+			return has_suitable_queue_family && has_required_extensions &&
 				has_adequate_swapchain_support && has_required_features;
 		}
 
 		// ***
 
-		// Prefers 8-bit BGRA with sRGB color space, otherwise falls back to the first available format
-		vk::SurfaceFormatKHR choose_swap_surface_format(const std::vector<vk::SurfaceFormatKHR>& available_formats) noexcept
+		// Prefers 8-bit BGRA sRGB, so the hardware gamma-corrects the shader output on write, otherwise falls back to the first available format
+		vk::SurfaceFormatKHR choose_swapchain_surface_format(const std::vector<vk::SurfaceFormatKHR>& available_formats) noexcept
 		{
 			for (const auto& format : available_formats)
 			{
@@ -185,41 +191,10 @@ namespace quokka
 			return available_formats.front();
 		}
 
-		// Prefers mailbox (triple buffering, low latency), otherwise falls back to FIFO (vertical sync)
-		vk::PresentModeKHR choose_swap_present_mode(const std::vector<vk::PresentModeKHR>& available_present_modes) noexcept
+		// Resolution of the swapchain images in pixels
+		vk::Extent2D choose_swapchain_extent(const vk::SurfaceCapabilitiesKHR& capabilities, GLFWwindow* window) noexcept
 		{
-			for (const auto present_mode : available_present_modes)
-			{
-				if (present_mode == vk::PresentModeKHR::eMailbox)
-				{
-					return present_mode;
-				}
-			}
-
-			// FIFO is the only mode the Vulkan specification guarantees to be available
-			return vk::PresentModeKHR::eFifo;
-		}
-
-		// Requests at least three images so the driver never makes us wait, within the surface limits
-		constexpr std::uint32_t choose_swap_min_image_count(const vk::SurfaceCapabilitiesKHR& capabilities) noexcept
-		{
-			constexpr std::uint32_t preferred_image_count { 3 };
-
-			const std::uint32_t min_image_count { std::max(preferred_image_count, capabilities.minImageCount) };
-
-			// A maximum of 0 means there's no limit
-			if (capabilities.maxImageCount > 0 && capabilities.maxImageCount < min_image_count)
-			{
-				return capabilities.maxImageCount;
-			}
-
-			return min_image_count;
-		}
-
-		// Resolution of the swapchain images in pixels, which may differ from screen coordinates on high DPI displays
-		vk::Extent2D choose_swap_extent(const vk::SurfaceCapabilitiesKHR& capabilities, GLFWwindow* window) noexcept
-		{
-			// The maximum value means the surface lets us choose, otherwise it must match the window
+			// A width of UINT32_MAX means the surface lets us choose, otherwise the swapchain must use currentExtent
 			if (capabilities.currentExtent.width != std::numeric_limits<std::uint32_t>::max())
 			{
 				return capabilities.currentExtent;
@@ -242,13 +217,50 @@ namespace quokka
 			};
 		}
 
+		// Prefers mailbox (no tearing, low latency), otherwise falls back to FIFO (vertical sync)
+		vk::PresentModeKHR choose_swapchain_present_mode(const std::vector<vk::PresentModeKHR>& available_present_modes) noexcept
+		{
+			if (std::ranges::contains(available_present_modes, vk::PresentModeKHR::eMailbox))
+			{
+				return vk::PresentModeKHR::eMailbox;
+			}
+
+			// FIFO is the only mode the Vulkan specification guarantees to be available
+			return vk::PresentModeKHR::eFifo;
+		}
+
+		// Three images let mailbox keep one on screen, one queued and one being rendered, within the surface limits
+		std::uint32_t choose_swapchain_min_image_count(const vk::SurfaceCapabilitiesKHR& capabilities) noexcept
+		{
+			constexpr std::uint32_t preferred_image_count { 3 };
+
+			const std::uint32_t min_image_count { std::max(preferred_image_count, capabilities.minImageCount) };
+
+			// A maximum of 0 means there's no limit
+			if (capabilities.maxImageCount > 0 && capabilities.maxImageCount < min_image_count)
+			{
+				return capabilities.maxImageCount;
+			}
+
+			return min_image_count;
+		}
+
+		// Color, no mipmapping and a single layer, the only subresource swapchain images have
+		constexpr vk::ImageSubresourceRange color_subresource_range {
+			.aspectMask { vk::ImageAspectFlagBits::eColor },
+			.baseMipLevel { 0 },
+			.levelCount { 1 },
+			.baseArrayLayer { 0 },
+			.layerCount { 1 }
+		};
+
 		// ***
 
 		// Reads a compiled SPIR-V file as 32-bit words, which also guarantees the alignment Vulkan expects
 		std::vector<std::uint32_t> read_shader_file(const std::filesystem::path& path)
 		{
 			// Start at the end (ate) to get the file size, and read raw bytes without text conversions (binary)
-			std::ifstream file(path, std::ios::ate | std::ios::binary);
+			std::ifstream file { path, std::ios::ate | std::ios::binary };
 
 			if (!file.is_open())
 			{
@@ -257,7 +269,7 @@ namespace quokka
 
 			const auto file_size { static_cast<std::size_t>(file.tellg()) };
 
-			// SPIR-V is a stream of 32-bit words, so any other size means the file is invalid
+			// SPIR-V is a stream of 32-bit words, so an empty file or a partial word means it's invalid
 			if (file_size == 0 || file_size % sizeof(std::uint32_t) != 0)
 			{
 				throw std::runtime_error("Invalid SPIR-V file size: " + path.string());
@@ -278,11 +290,8 @@ namespace quokka
 		}
 
 		// Wraps SPIR-V code in a shader module, only needed until the pipeline is created
-		[[nodiscard]] vk::raii::ShaderModule create_shader_module(
-			const vk::raii::Device& device,
-			const std::vector<std::uint32_t>& code)
+		vk::raii::ShaderModule create_shader_module(const vk::raii::Device& device, const std::vector<std::uint32_t>& code)
 		{
-			// Configuration used to create the shader module
 			const vk::ShaderModuleCreateInfo create_info {
 				// Size in bytes, not in words
 				.codeSize { code.size() * sizeof(std::uint32_t) },
@@ -294,16 +303,16 @@ namespace quokka
 
 		// ***
 
-		// Changes the layout of a color image once the source stages and accesses have finished
+		// Changes the layout of a color image after the source stages and accesses finish, and before the destination ones start
 		void transition_image_layout(
 			const vk::raii::CommandBuffer& command_buffer,
 			vk::Image image,
 			vk::ImageLayout old_layout,
 			vk::ImageLayout new_layout,
-			vk::AccessFlags2 src_access_mask,
-			vk::AccessFlags2 dst_access_mask,
 			vk::PipelineStageFlags2 src_stage_mask,
-			vk::PipelineStageFlags2 dst_stage_mask) noexcept
+			vk::AccessFlags2 src_access_mask,
+			vk::PipelineStageFlags2 dst_stage_mask,
+			vk::AccessFlags2 dst_access_mask) noexcept
 		{
 			const vk::ImageMemoryBarrier2 barrier {
 				.srcStageMask { src_stage_mask },
@@ -316,14 +325,7 @@ namespace quokka
 				.srcQueueFamilyIndex { vk::QueueFamilyIgnored },
 				.dstQueueFamilyIndex { vk::QueueFamilyIgnored },
 				.image { image },
-				// Color, no mipmapping and a single layer
-				.subresourceRange {
-					.aspectMask { vk::ImageAspectFlagBits::eColor },
-					.baseMipLevel { 0 },
-					.levelCount { 1 },
-					.baseArrayLayer { 0 },
-					.layerCount { 1 }
-				}
+				.subresourceRange { color_subresource_range }
 			};
 
 			const vk::DependencyInfo dependency_info {
@@ -334,10 +336,9 @@ namespace quokka
 			command_buffer.pipelineBarrier2(dependency_info);
 		}
 	}
-}
 
-namespace quokka
-{
+	// ***
+
 	void Engine::run()
 	{
 		initialize_vulkan();
@@ -351,12 +352,15 @@ namespace quokka
 		create_surface();
 		pick_physical_device();
 		create_logical_device();
+
 		create_swapchain();
 		create_image_views();
+
 		create_graphics_pipeline();
+
 		create_command_pool();
 		create_command_buffers();
-		create_sync_objects();
+		create_frame_sync_objects();
 		create_render_finished_semaphores();
 	}
 
@@ -368,103 +372,63 @@ namespace quokka
 			.applicationVersion { vk::makeApiVersion(0, 1, 0, 0) },
 			.pEngineName { "Quokka Engine" },
 			.engineVersion { vk::makeApiVersion(0, 1, 0, 0) },
-			.apiVersion { vk::ApiVersion14 }
+			.apiVersion { vk::ApiVersion13 }
 		};
 
-		// Retrieve all available Vulkan instance extensions
-		const auto available_extensions { context_.enumerateInstanceExtensionProperties() };
-
-		// Extensions required by GLFW, plus debug utils when validation is enabled
-		const auto required_extensions { get_required_extensions() };
-
-		// Print them for debugging purposes
+		const auto required_instance_extensions { get_required_instance_extensions() };
 		if constexpr (constants::should_print_debug_output)
 		{
 			std::println("[Quokka] Required Vulkan instance extensions:");
-			for (const auto* extension : required_extensions)
+			for (const auto* extension : required_instance_extensions)
 			{
 				std::println("\t- {}", extension);
 			}
 			std::println();
 		}
 
-		// Verify that every required extension is available
-		for (const auto* required_extension : required_extensions)
+		const auto available_extensions { context_.enumerateInstanceExtensionProperties() };
+		for (const auto* extension : required_instance_extensions)
 		{
-			bool is_available { false };
-
-			for (const auto& extension : available_extensions)
+			if (!is_extension_available(available_extensions, extension))
 			{
-				if (std::strcmp(extension.extensionName.data(), required_extension) == 0)
-				{
-					is_available = true;
-					break;
-				}
-			}
-
-			if (!is_available)
-			{
-				throw std::runtime_error("Required Vulkan instance extension is not supported: " +
-					std::string(required_extension));
+				throw std::runtime_error("Required Vulkan instance extension is not supported: " + std::string(extension));
 			}
 		}
 
-		// Retrieve all available Vulkan instance layers
-		const auto available_layers { context_.enumerateInstanceLayerProperties() };
-
-		// Validation layers to enable (empty in release builds)
-		std::vector<const char*> required_layers {};
-		if constexpr (constants::should_enable_validation_layers)
-		{
-			required_layers.assign(constants::validation_layers.begin(), constants::validation_layers.end());
-		}
-
-		// Print them for debugging purposes
+		const auto required_instance_layers { get_required_instance_layers() };
 		if constexpr (constants::should_print_debug_output)
 		{
 			std::println("[Quokka] Required Vulkan instance layers:");
-			for (const auto* layer : required_layers)
+			for (const auto* layer : required_instance_layers)
 			{
 				std::println("\t- {}", layer);
 			}
 
 			// Happens if validation layers are disabled while debug output is enabled
-			if (required_layers.empty())
+			if (required_instance_layers.empty())
 			{
 				std::println("\t- None");
 			}
 			std::println();
 		}
 
-		// Verify that every required layer is available
-		for (const auto* required_layer : required_layers)
+		const auto available_layers { context_.enumerateInstanceLayerProperties() };
+		for (const auto* layer : required_instance_layers)
 		{
-			bool is_available { false };
-
-			for (const auto& layer : available_layers)
+			if (!is_layer_available(available_layers, layer))
 			{
-				if (std::strcmp(layer.layerName.data(), required_layer) == 0)
-				{
-					is_available = true;
-					break;
-				}
-			}
-
-			if (!is_available)
-			{
-				throw std::runtime_error("Required Vulkan layer is not supported: " + std::string(required_layer));
+				throw std::runtime_error("Required Vulkan instance layer is not supported: " + std::string(layer));
 			}
 		}
 
-		// Configuration used to create the Vulkan instance
 		const vk::InstanceCreateInfo create_info {
 			// Also captures messages from instance creation and destruction
 			.pNext { constants::should_enable_validation_layers ? &debug_messenger_create_info : nullptr },
 			.pApplicationInfo { &app_info },
-			.enabledLayerCount { static_cast<std::uint32_t>(required_layers.size()) },
-			.ppEnabledLayerNames { required_layers.data() },
-			.enabledExtensionCount { static_cast<std::uint32_t>(required_extensions.size()) },
-			.ppEnabledExtensionNames { required_extensions.data() }
+			.enabledLayerCount { static_cast<std::uint32_t>(required_instance_layers.size()) },
+			.ppEnabledLayerNames { required_instance_layers.data() },
+			.enabledExtensionCount { static_cast<std::uint32_t>(required_instance_extensions.size()) },
+			.ppEnabledExtensionNames { required_instance_extensions.data() }
 		};
 
 		instance_ = context_.createInstance(create_info);
@@ -490,20 +454,17 @@ namespace quokka
 		}
 
 		// Take ownership of the raw handle so it's destroyed automatically
-		surface_ = vk::raii::SurfaceKHR(instance_, raw_surface);
+		surface_ = vk::raii::SurfaceKHR { instance_, raw_surface };
 	}
 
 	void Engine::pick_physical_device()
 	{
-		// Retrieve every GPU that supports Vulkan
 		const auto physical_devices { instance_.enumeratePhysicalDevices() };
-
 		if (physical_devices.empty())
 		{
 			throw std::runtime_error("Failed to find GPUs with Vulkan support");
 		}
 
-		// Print the device extensions every candidate GPU must support for debugging purposes
 		if constexpr (constants::should_print_debug_output)
 		{
 			std::println("[Quokka] Required Vulkan device extensions:");
@@ -516,7 +477,6 @@ namespace quokka
 
 		// Prefer a dedicated GPU, otherwise fall back to the first suitable one
 		bool has_suitable_device { false };
-
 		for (const auto& physical_device : physical_devices)
 		{
 			if (!is_device_suitable(physical_device, surface_))
@@ -524,14 +484,12 @@ namespace quokka
 				continue;
 			}
 
-			// Remember the first suitable GPU in case there's no dedicated one
 			if (!has_suitable_device)
 			{
 				physical_device_ = physical_device;
 				has_suitable_device = true;
 			}
 
-			// A dedicated GPU is the best choice, so stop searching
 			if (physical_device.getProperties().deviceType == vk::PhysicalDeviceType::eDiscreteGpu)
 			{
 				physical_device_ = physical_device;
@@ -544,7 +502,6 @@ namespace quokka
 			throw std::runtime_error("Failed to find a suitable GPU");
 		}
 
-		// Print the selected GPU for debugging purposes
 		if constexpr (constants::should_print_debug_output)
 		{
 			std::println("[Quokka] Selected physical device:");
@@ -558,10 +515,9 @@ namespace quokka
 		// The selected GPU already passed is_device_suitable, so this always has a value
 		queue_family_index_ = find_queue_family_index(physical_device_, surface_).value();
 
-		// Required by Vulkan even with a single queue, ranges from 0.0 to 1.0
+		// Required by Vulkan even with a single queue, where any value in 0.0 to 1.0 works the same
 		constexpr float queue_priority { 0.5f };
 
-		// A single queue from the family that executes graphics commands and presents to the surface
 		const vk::DeviceQueueCreateInfo queue_create_info {
 			.queueFamilyIndex { queue_family_index_ },
 			.queueCount { 1 },
@@ -572,15 +528,12 @@ namespace quokka
 		const vk::StructureChain<
 			vk::PhysicalDeviceFeatures2,
 			vk::PhysicalDeviceVulkan11Features,
-			vk::PhysicalDeviceVulkan13Features,
-			vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT> feature_chain {
-			{},
+			vk::PhysicalDeviceVulkan13Features> feature_chain {
+			{}, // No Vulkan 1.0 features needed, it only heads the chain
 			{ .shaderDrawParameters { vk::True } },
-			{ .synchronization2 { vk::True }, .dynamicRendering { vk::True } },
-			{ .extendedDynamicState { vk::True } }
+			{ .synchronization2 { vk::True }, .dynamicRendering { vk::True } }
 		};
 
-		// Configuration used to create the logical device
 		const vk::DeviceCreateInfo create_info {
 			.pNext { &feature_chain.get<vk::PhysicalDeviceFeatures2>() },
 			.queueCreateInfoCount { 1 },
@@ -603,12 +556,11 @@ namespace quokka
 		const auto available_present_modes { physical_device_.getSurfacePresentModesKHR(*surface_) };
 
 		// Pick the best settings among the supported ones
-		swapchain_surface_format_ = choose_swap_surface_format(available_formats);
-		swapchain_extent_ = choose_swap_extent(capabilities, window_.handle());
-		const auto present_mode { choose_swap_present_mode(available_present_modes) };
-		const auto min_image_count { choose_swap_min_image_count(capabilities) };
+		swapchain_surface_format_ = choose_swapchain_surface_format(available_formats);
+		swapchain_extent_ = choose_swapchain_extent(capabilities, window_.handle());
+		const auto present_mode { choose_swapchain_present_mode(available_present_modes) };
+		const auto min_image_count { choose_swapchain_min_image_count(capabilities) };
 
-		// Configuration used to create the swapchain
 		const vk::SwapchainCreateInfoKHR create_info {
 			.surface { *surface_ },
 			.minImageCount { min_image_count },
@@ -628,7 +580,7 @@ namespace quokka
 			.presentMode { present_mode },
 			// Don't care about the color of pixels hidden behind other windows
 			.clipped { vk::True },
-			// Only needed when recreating the swapchain, for example after a resize
+			// Not needed: recreate_swapchain waits for the device and destroys the old one before creating this one
 			.oldSwapchain { nullptr }
 		};
 
@@ -637,7 +589,6 @@ namespace quokka
 		// The implementation may create more images than requested
 		swapchain_images_ = swapchain_.getImages();
 
-		// Print the swapchain configuration for debugging purposes
 		if constexpr (constants::should_print_debug_output)
 		{
 			std::println("[Quokka] Swapchain:");
@@ -652,26 +603,18 @@ namespace quokka
 
 	void Engine::create_image_views()
 	{
-		// One view per swapchain image, so reserve the exact amount up front
 		swapchain_image_views_.reserve(swapchain_images_.size());
 
 		for (const auto& image : swapchain_images_)
 		{
-			// Configuration used to create the image view
 			const vk::ImageViewCreateInfo create_info {
 				.image { image },
 				// Treat the image as a regular 2D texture
 				.viewType { vk::ImageViewType::e2D },
 				.format { swapchain_surface_format_.format },
-				// Components are left at their default, which maps each channel to itself (identity)
-				// Color target with no mipmapping and a single layer
-				.subresourceRange {
-					.aspectMask { vk::ImageAspectFlagBits::eColor },
-					.baseMipLevel { 0 },
-					.levelCount { 1 },
-					.baseArrayLayer { 0 },
-					.layerCount { 1 }
-				}
+				// Default mapping: each channel is read as itself (identity), no swizzling
+				.components {},
+				.subresourceRange { color_subresource_range }
 			};
 
 			swapchain_image_views_.push_back(device_.createImageView(create_info));
@@ -680,9 +623,7 @@ namespace quokka
 
 	void Engine::create_graphics_pipeline()
 	{
-		// Vulkan pipelines are almost completely immutable, so any state change requires creating a new one
-
-		// Both entry points live in the same module, which is destroyed at the end of this function
+		// Both entry points live in the same compiled module
 		const auto shader_module { create_shader_module(device_, read_shader_file(constants::shader_path)) };
 
 		// Must match the entry point names in the shader and in the slangc command
@@ -698,16 +639,7 @@ namespace quokka
 			.pName { "frag_main" }
 		};
 
-		// Programmable stages of the pipeline, used when creating it
 		const std::array shader_stages { vertex_shader_stage_info, fragment_shader_stage_info };
-
-		// Viewport and scissor are set when recording commands, so they don't require recreating the pipeline
-		constexpr std::array dynamic_states { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
-
-		const vk::PipelineDynamicStateCreateInfo dynamic_state_info {
-			.dynamicStateCount { static_cast<std::uint32_t>(dynamic_states.size()) },
-			.pDynamicStates { dynamic_states.data() }
-		};
 
 		// No vertex buffers yet, the vertex data is hardcoded in the shader
 		constexpr vk::PipelineVertexInputStateCreateInfo vertex_input_info {};
@@ -734,7 +666,7 @@ namespace quokka
 			.cullMode { vk::CullModeFlagBits::eBack },
 			// The shader vertices are listed in clockwise order on screen
 			.frontFace { vk::FrontFace::eClockwise },
-			// Only useful for shadow mapping
+			// Mainly used for shadow mapping
 			.depthBiasEnable { vk::False },
 			// Any width other than 1.0 requires a GPU feature
 			.lineWidth { 1.0f }
@@ -762,6 +694,15 @@ namespace quokka
 			.logicOpEnable { vk::False },
 			.attachmentCount { 1 },
 			.pAttachments { &color_blend_attachment }
+		};
+
+		// Pipelines are immutable, so changing any state means creating a new one
+		// Viewport and scissor are set when recording commands instead, so a resize doesn't require a new pipeline
+		constexpr std::array dynamic_states { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
+
+		const vk::PipelineDynamicStateCreateInfo dynamic_state_info {
+			.dynamicStateCount { static_cast<std::uint32_t>(dynamic_states.size()) },
+			.pDynamicStates { dynamic_states.data() }
 		};
 
 		// Required even when empty, no descriptor set layouts or push constants yet
@@ -799,7 +740,6 @@ namespace quokka
 
 	void Engine::create_command_pool()
 	{
-		// Configuration used to create the command pool
 		const vk::CommandPoolCreateInfo create_info {
 			// Lets each command buffer be reset individually, since it's re-recorded every frame
 			.flags { vk::CommandPoolCreateFlagBits::eResetCommandBuffer },
@@ -812,7 +752,6 @@ namespace quokka
 
 	void Engine::create_command_buffers()
 	{
-		// Configuration used to allocate the command buffers
 		const vk::CommandBufferAllocateInfo allocate_info {
 			.commandPool { *command_pool_ },
 			// Primary buffers are submitted directly to a queue, secondary ones are called from primary ones
@@ -823,11 +762,8 @@ namespace quokka
 		command_buffers_ = device_.allocateCommandBuffers(allocate_info);
 	}
 
-	void Engine::create_sync_objects()
+	void Engine::create_frame_sync_objects()
 	{
-		// Semaphores have no configuration yet, they start unsignaled
-		constexpr vk::SemaphoreCreateInfo semaphore_info {};
-
 		// Created signaled, so the first frames don't wait forever for a submission that never happened
 		constexpr vk::FenceCreateInfo fence_info {
 			.flags { vk::FenceCreateFlagBits::eSignaled }
@@ -839,24 +775,20 @@ namespace quokka
 
 		for (std::uint32_t index { 0 }; index < constants::max_frames_in_flight; ++index)
 		{
-			image_available_semaphores_.push_back(device_.createSemaphore(semaphore_info));
+			image_available_semaphores_.push_back(device_.createSemaphore({}));
 			in_flight_fences_.push_back(device_.createFence(fence_info));
 		}
 	}
 
 	void Engine::create_render_finished_semaphores()
 	{
-		// Semaphores have no configuration yet, they start unsignaled
-		constexpr vk::SemaphoreCreateInfo semaphore_info {};
-
 		// One per swapchain image, since presentation may still be waiting on it when the next frame is submitted
-		// Only the missing ones are created, as a recreated swapchain may have more images than the previous one
-		// Existing ones are kept, since the presentation engine may still be waiting on them
+		// For that same reason existing ones are kept on recreation, and only the missing ones are created
 		render_finished_semaphores_.reserve(swapchain_images_.size());
 
 		while (render_finished_semaphores_.size() < swapchain_images_.size())
 		{
-			render_finished_semaphores_.push_back(device_.createSemaphore(semaphore_info));
+			render_finished_semaphores_.push_back(device_.createSemaphore({}));
 		}
 	}
 
@@ -928,6 +860,8 @@ namespace quokka
 		}
 
 		// The semaphore is signaled once the presentation engine stops reading the image
+		// Out of date is returned instead of thrown, here and in presentKHR,
+		// because the project defines VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS
 		const auto [acquire_result, image_index] { swapchain_.acquireNextImage(no_timeout, *image_available_semaphore, nullptr) };
 
 		// The swapchain no longer matches the surface and can't be used, so recreate it and try again next frame
@@ -942,28 +876,39 @@ namespace quokka
 		device_.resetFences(*in_flight_fence);
 
 		// Beginning the command buffer implicitly resets it, since the pool has the reset flag
-		record_command_buffer(image_index);
-
-		// Only the color writes wait for the image, the earlier stages can run before it's acquired
-		constexpr vk::PipelineStageFlags wait_stage_mask { vk::PipelineStageFlagBits::eColorAttachmentOutput };
+		record_command_buffer(command_buffer, image_index);
 
 		// Indexed by image, not by frame, since it's tied to the presentation of that image
 		const auto& render_finished_semaphore { render_finished_semaphores_[image_index] };
 
-		const vk::SubmitInfo submit_info {
-			.waitSemaphoreCount { 1 },
-			.pWaitSemaphores { &*image_available_semaphore },
-			.pWaitDstStageMask { &wait_stage_mask },
-			.commandBufferCount { 1 },
-			.pCommandBuffers { &*command_buffer },
-			.signalSemaphoreCount { 1 },
-			.pSignalSemaphores { &*render_finished_semaphore }
+		// Only the color writes wait for the image, the earlier stages can run before it's acquired
+		const vk::SemaphoreSubmitInfo wait_semaphore_info {
+			.semaphore { *image_available_semaphore },
+			.stageMask { vk::PipelineStageFlagBits2::eColorAttachmentOutput }
+		};
+
+		// Signaled once every command has finished, including the final transition to the present layout
+		const vk::SemaphoreSubmitInfo signal_semaphore_info {
+			.semaphore { *render_finished_semaphore },
+			.stageMask { vk::PipelineStageFlagBits2::eAllCommands }
+		};
+
+		const vk::CommandBufferSubmitInfo command_buffer_info {
+			.commandBuffer { *command_buffer }
+		};
+
+		const vk::SubmitInfo2 submit_info {
+			.waitSemaphoreInfoCount { 1 },
+			.pWaitSemaphoreInfos { &wait_semaphore_info },
+			.commandBufferInfoCount { 1 },
+			.pCommandBufferInfos { &command_buffer_info },
+			.signalSemaphoreInfoCount { 1 },
+			.pSignalSemaphoreInfos { &signal_semaphore_info }
 		};
 
 		// The fence is signaled when the GPU finishes executing the command buffer
-		queue_.submit(submit_info, *in_flight_fence);
+		queue_.submit2(submit_info, *in_flight_fence);
 
-		// Present the image once rendering has finished
 		const vk::PresentInfoKHR present_info {
 			.waitSemaphoreCount { 1 },
 			.pWaitSemaphores { &*render_finished_semaphore },
@@ -983,28 +928,25 @@ namespace quokka
 			recreate_swapchain();
 		}
 
-		// Move on to the next frame in flight, wrapping around after the last one
 		frame_index_ = (frame_index_ + 1) % constants::max_frames_in_flight;
 	}
 
-	void Engine::record_command_buffer(std::uint32_t image_index) const
+	void Engine::record_command_buffer(const vk::raii::CommandBuffer& command_buffer, std::uint32_t image_index) const
 	{
-		// Command buffer owned by the current frame in flight
-		const auto& command_buffer { command_buffers_[frame_index_] };
+		// Re-recorded every frame, so each recording is submitted only once
+		command_buffer.begin({ .flags { vk::CommandBufferUsageFlagBits::eOneTimeSubmit } });
 
-		// No flags needed, the command buffer is recorded and submitted once per frame
-		command_buffer.begin({});
-
-		// Nothing to wait for, and the previous contents are discarded, so the old layout can be undefined
+		// Same stage the acquire semaphore waits on, so the transition happens after the image is acquired
+		// The old contents are discarded, so the old layout can be undefined
 		transition_image_layout(
 			command_buffer,
 			swapchain_images_[image_index],
 			vk::ImageLayout::eUndefined,
 			vk::ImageLayout::eColorAttachmentOptimal,
-			{},
-			vk::AccessFlagBits2::eColorAttachmentWrite,
 			vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-			vk::PipelineStageFlagBits2::eColorAttachmentOutput
+			{},
+			vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+			vk::AccessFlagBits2::eColorAttachmentWrite
 		);
 
 		// Opaque black, used to clear the swapchain image before drawing
@@ -1027,7 +969,7 @@ namespace quokka
 			.extent { swapchain_extent_ }
 		};
 
-		// Dynamic rendering replaces the render pass and framebuffer, attachments are given when rendering begins
+		// Without framebuffers, the attachments are given when rendering begins
 		const vk::RenderingInfo rendering_info {
 			.renderArea { full_image_area },
 			.layerCount { 1 },
@@ -1063,10 +1005,10 @@ namespace quokka
 			swapchain_images_[image_index],
 			vk::ImageLayout::eColorAttachmentOptimal,
 			vk::ImageLayout::ePresentSrcKHR,
-			vk::AccessFlagBits2::eColorAttachmentWrite,
-			{},
 			vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-			vk::PipelineStageFlagBits2::eBottomOfPipe
+			vk::AccessFlagBits2::eColorAttachmentWrite,
+			vk::PipelineStageFlagBits2::eBottomOfPipe,
+			{}
 		);
 
 		command_buffer.end();

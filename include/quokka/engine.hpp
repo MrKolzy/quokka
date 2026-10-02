@@ -40,7 +40,7 @@ namespace quokka
 
 		void create_command_pool();
 		void create_command_buffers();
-		void create_sync_objects();
+		void create_frame_sync_objects();
 		void create_render_finished_semaphores();
 
 		// ***
@@ -52,7 +52,7 @@ namespace quokka
 
 		void main_loop();
 		void draw_frame();
-		void record_command_buffer(std::uint32_t image_index) const;
+		void record_command_buffer(const vk::raii::CommandBuffer& command_buffer, std::uint32_t image_index) const;
 
 		// ***
 
