@@ -65,15 +65,17 @@ namespace quokka
 
 	std::vector<const char*> Window::required_instance_extensions() const
 	{
-		std::uint32_t extension_count {};
-		const auto extensions { glfwGetRequiredInstanceExtensions(&extension_count) };
-		if (!extensions)
+		std::uint32_t glfw_extension_count {};
+		const auto glfw_extensions { glfwGetRequiredInstanceExtensions(&glfw_extension_count) };
+		if (!glfw_extensions)
 		{
 			throw std::runtime_error("Failed to get the Vulkan instance extensions required by GLFW");
 		}
 
 		// Parentheses, not braces: this is the iterator-range constructor
-		return std::vector<const char*>(extensions, extensions + extension_count);
+		std::vector<const char*> extensions(glfw_extensions, glfw_extensions + glfw_extension_count);
+
+		return extensions;
 	}
 
 	vk::raii::SurfaceKHR Window::create_surface(const vk::raii::Instance& instance) const

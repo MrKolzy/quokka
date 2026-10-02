@@ -1,5 +1,6 @@
 #pragma once
 
+#include "quokka/device.hpp"
 #include "quokka/window.hpp"
 
 #include <vulkan/vulkan_raii.hpp>
@@ -27,12 +28,6 @@ namespace quokka
 	private:
 		void initialize_vulkan();
 
-		void create_instance();
-		void create_debug_messenger();
-		void create_surface();
-		void pick_physical_device();
-		void create_logical_device();
-
 		void create_swapchain();
 		void create_image_views();
 
@@ -59,26 +54,7 @@ namespace quokka
 		// Declared in creation order: members are destroyed in reverse order,
 		// so every object is destroyed before the one it was created from, and the window last
 		Window window_ {};
-
-		// Loads the Vulkan library and exposes functions that don't require an instance
-		vk::raii::Context context_ {};
-		vk::raii::Instance instance_ { nullptr };
-
-		// Routes validation layer messages to our callback, only created in debug builds
-		vk::raii::DebugUtilsMessengerEXT debug_messenger_ { nullptr };
-
-		// Connection between Vulkan and the window
-		vk::raii::SurfaceKHR surface_ { nullptr };
-
-		// GPU selected to run the engine, implicitly destroyed with the instance
-		vk::raii::PhysicalDevice physical_device_ { nullptr };
-
-		// Family of queue_, also needed to create the command pool
-		std::uint32_t queue_family_index_ {};
-		// Used to create most other Vulkan objects
-		vk::raii::Device device_ { nullptr };
-		// Submits graphics commands and presents images, implicitly destroyed with the device
-		vk::raii::Queue queue_ { nullptr };
+		Device device_ { window_ };
 
 		// Queue of images presented to the surface
 		vk::raii::SwapchainKHR swapchain_ { nullptr };
