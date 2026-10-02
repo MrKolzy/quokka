@@ -2,6 +2,7 @@
 
 #include <vulkan/vulkan_raii.hpp>
 
+#include <string>
 #include <vector>
 
 struct GLFWwindow;
@@ -33,6 +34,8 @@ namespace quokka
 		[[nodiscard]] vk::raii::SurfaceKHR create_surface(const vk::raii::Instance& instance) const;
 
 		[[nodiscard]] bool should_close() const noexcept;
+
+		void set_title(const std::string& title) noexcept;
 
 		// Process pending events and run their callbacks, poll returns immediately and wait blocks until there's one
 		void poll_events() noexcept;

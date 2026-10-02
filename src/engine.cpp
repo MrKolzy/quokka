@@ -1,5 +1,9 @@
 #include "quokka/engine.hpp"
 
+#include "quokka/constants.hpp"
+
+#include <format>
+
 namespace quokka
 {
 	void Engine::run()
@@ -14,6 +18,12 @@ namespace quokka
 			if (is_swapchain_outdated || window_.was_resized())
 			{
 				recreate_swapchain();
+			}
+
+			if (frame_timer_.tick())
+			{
+				window_.set_title(std::format("{} | {:.0f} FPS | {:.2f} ms",
+					constants::app_name, frame_timer_.average_fps(), frame_timer_.average_frame_time_ms()));
 			}
 		}
 

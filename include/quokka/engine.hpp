@@ -1,6 +1,7 @@
 #pragma once
 
 #include "quokka/device.hpp"
+#include "quokka/frame_timer.hpp"
 #include "quokka/graphics_pipeline.hpp"
 #include "quokka/renderer.hpp"
 #include "quokka/swapchain.hpp"
@@ -33,5 +34,7 @@ namespace quokka
 		Swapchain swapchain_ { device_, window_ };
 		GraphicsPipeline graphics_pipeline_ { device_, swapchain_.surface_format().format };
 		Renderer renderer_ { device_, swapchain_, graphics_pipeline_ };
+
+		FrameTimer frame_timer_ {};
 	};
 }

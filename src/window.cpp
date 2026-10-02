@@ -98,6 +98,11 @@ namespace quokka
 		return glfwWindowShouldClose(handle_);
 	}
 
+	void Window::set_title(const std::string& title) noexcept
+	{
+		glfwSetWindowTitle(handle_, title.c_str());
+	}
+
 	void Window::poll_events() noexcept
 	{
 		glfwPollEvents();
