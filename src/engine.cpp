@@ -4,7 +4,21 @@ namespace quokka
 {
 	void Engine::run()
 	{
-		main_loop();
+		while (!window_.should_close())
+		{
+			window_.poll_events();
+
+			const bool is_swapchain_outdated { renderer_.draw_frame() };
+
+			// The resize flag is also checked, since not every driver reports out of date after a resize
+			if (is_swapchain_outdated || window_.was_resized())
+			{
+				recreate_swapchain();
+			}
+		}
+
+		// Drawing and presentation are asynchronous, so wait for them before destroying anything
+		device_.logical_device().waitIdle();
 	}
 
 	void Engine::recreate_swapchain()
@@ -30,24 +44,5 @@ namespace quokka
 		device_.logical_device().waitIdle();
 
 		swapchain_.recreate();
-	}
-
-	void Engine::main_loop()
-	{
-		while (!window_.should_close())
-		{
-			window_.poll_events();
-
-			const bool is_swapchain_outdated { renderer_.draw_frame() };
-
-			// The resize flag is also checked, since not every driver reports out of date after a resize
-			if (is_swapchain_outdated || window_.was_resized())
-			{
-				recreate_swapchain();
-			}
-		}
-
-		// Drawing and presentation are asynchronous, so wait for them before destroying anything
-		device_.logical_device().waitIdle();
 	}
 }

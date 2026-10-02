@@ -26,12 +26,6 @@ namespace quokka
 	private:
 		void recreate_swapchain();
 
-		// ***
-
-		void main_loop();
-
-		// ***
-
 		// Declared in creation order: members are destroyed in reverse order,
 		// so every object is destroyed before the one it was created from, and the window last
 		Window window_ {};
