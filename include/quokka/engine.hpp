@@ -1,6 +1,7 @@
 #pragma once
 
 #include "quokka/device.hpp"
+#include "quokka/swapchain.hpp"
 #include "quokka/window.hpp"
 
 #include <vulkan/vulkan_raii.hpp>
@@ -28,20 +29,15 @@ namespace quokka
 	private:
 		void initialize_vulkan();
 
-		void create_swapchain();
-		void create_image_views();
-
 		void create_graphics_pipeline();
 
 		void create_command_pool();
 		void create_command_buffers();
 		void create_frame_sync_objects();
-		void create_render_finished_semaphores();
 
 		// ***
 
 		void recreate_swapchain();
-		void cleanup_swapchain() noexcept;
 
 		// ***
 
@@ -55,15 +51,7 @@ namespace quokka
 		// so every object is destroyed before the one it was created from, and the window last
 		Window window_ {};
 		Device device_ { window_ };
-
-		// Queue of images presented to the surface
-		vk::raii::SwapchainKHR swapchain_ { nullptr };
-		// Owned by the swapchain, implicitly destroyed with it
-		std::vector<vk::Image> swapchain_images_ {};
-		vk::SurfaceFormatKHR swapchain_surface_format_ {};
-		vk::Extent2D swapchain_extent_ {};
-		// Describe how to access each swapchain image
-		std::vector<vk::raii::ImageView> swapchain_image_views_ {};
+		Swapchain swapchain_ { device_, window_ };
 
 		// Descriptor set layouts and push constant ranges the shaders can access
 		vk::raii::PipelineLayout pipeline_layout_ { nullptr };
@@ -77,8 +65,6 @@ namespace quokka
 
 		// Signaled by acquireNextImage, waited on by the submission, one per frame in flight
 		std::vector<vk::raii::Semaphore> image_available_semaphores_ {};
-		// Signaled by the submission, waited on by presentation, at least one per swapchain image
-		std::vector<vk::raii::Semaphore> render_finished_semaphores_ {};
 		// Signaled by the submission, waited on by the CPU, one per frame in flight
 		std::vector<vk::raii::Fence> in_flight_fences_ {};
 

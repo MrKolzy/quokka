@@ -2,14 +2,12 @@
 
 #include "quokka/constants.hpp"
 
-#include <algorithm> // std::clamp, std::max, std::ranges
 #include <array>
 #include <cstddef> // std::size_t
 #include <cstdint> // std::uint#_t
 #include <filesystem>
 #include <fstream>
 #include <limits>
-#include <print>
 #include <stdexcept> // std::runtime_error
 #include <string>
 #include <vector>
@@ -18,83 +16,6 @@ namespace quokka
 {
 	namespace
 	{
-		// Prefers 8-bit BGRA sRGB, so the hardware gamma-corrects the shader output on write,
-		// otherwise falls back to the first available format
-		vk::SurfaceFormatKHR choose_swapchain_surface_format(const std::vector<vk::SurfaceFormatKHR>& available_formats) noexcept
-		{
-			for (const auto& format : available_formats)
-			{
-				if (format.format == vk::Format::eB8G8R8A8Srgb &&
-					format.colorSpace == vk::ColorSpaceKHR::eSrgbNonlinear)
-				{
-					return format;
-				}
-			}
-
-			// is_device_suitable guarantees at least one available format
-			return available_formats.front();
-		}
-
-		// Resolution of the swapchain images in pixels
-		vk::Extent2D choose_swapchain_extent(const vk::SurfaceCapabilitiesKHR& capabilities, vk::Extent2D framebuffer_extent) noexcept
-		{
-			// A width of UINT32_MAX means the surface lets us choose, otherwise the swapchain must use currentExtent
-			if (capabilities.currentExtent.width != std::numeric_limits<std::uint32_t>::max())
-			{
-				return capabilities.currentExtent;
-			}
-
-			return {
-				.width {
-					std::clamp(framebuffer_extent.width,
-						capabilities.minImageExtent.width, capabilities.maxImageExtent.width)
-				},
-				.height {
-					std::clamp(framebuffer_extent.height,
-						capabilities.minImageExtent.height, capabilities.maxImageExtent.height)
-				}
-			};
-		}
-
-		// Prefers mailbox (no tearing, low latency), otherwise falls back to FIFO (vertical sync)
-		vk::PresentModeKHR choose_swapchain_present_mode(const std::vector<vk::PresentModeKHR>& available_present_modes) noexcept
-		{
-			if (std::ranges::contains(available_present_modes, vk::PresentModeKHR::eMailbox))
-			{
-				return vk::PresentModeKHR::eMailbox;
-			}
-
-			// FIFO is the only mode the Vulkan specification guarantees to be available
-			return vk::PresentModeKHR::eFifo;
-		}
-
-		// Three images let mailbox keep one on screen, one queued and one being rendered, within the surface limits
-		std::uint32_t choose_swapchain_min_image_count(const vk::SurfaceCapabilitiesKHR& capabilities) noexcept
-		{
-			constexpr std::uint32_t preferred_image_count { 3 };
-
-			const std::uint32_t min_image_count { std::max(preferred_image_count, capabilities.minImageCount) };
-
-			// A maximum of 0 means there's no limit
-			if (capabilities.maxImageCount > 0 && capabilities.maxImageCount < min_image_count)
-			{
-				return capabilities.maxImageCount;
-			}
-
-			return min_image_count;
-		}
-
-		// Color, no mipmapping and a single layer, the only subresource swapchain images have
-		constexpr vk::ImageSubresourceRange color_subresource_range {
-			.aspectMask { vk::ImageAspectFlagBits::eColor },
-			.baseMipLevel { 0 },
-			.levelCount { 1 },
-			.baseArrayLayer { 0 },
-			.layerCount { 1 }
-		};
-
-		// ***
-
 		// Reads a compiled SPIR-V file as 32-bit words, which also guarantees the alignment Vulkan expects
 		std::vector<std::uint32_t> read_shader_file(const std::filesystem::path& path)
 		{
@@ -186,88 +107,11 @@ namespace quokka
 
 	void Engine::initialize_vulkan()
 	{
-		create_swapchain();
-		create_image_views();
-
 		create_graphics_pipeline();
 
 		create_command_pool();
 		create_command_buffers();
 		create_frame_sync_objects();
-		create_render_finished_semaphores();
-	}
-
-	void Engine::create_swapchain()
-	{
-		// Retrieve what the surface supports on the selected GPU
-		const auto capabilities { device_.physical_device().getSurfaceCapabilitiesKHR(*device_.surface()) };
-		const auto available_formats { device_.physical_device().getSurfaceFormatsKHR(*device_.surface()) };
-		const auto available_present_modes { device_.physical_device().getSurfacePresentModesKHR(*device_.surface()) };
-
-		// Pick the best settings among the supported ones
-		swapchain_surface_format_ = choose_swapchain_surface_format(available_formats);
-		swapchain_extent_ = choose_swapchain_extent(capabilities, window_.framebuffer_extent());
-		const auto present_mode { choose_swapchain_present_mode(available_present_modes) };
-		const auto min_image_count { choose_swapchain_min_image_count(capabilities) };
-
-		const vk::SwapchainCreateInfoKHR create_info {
-			.surface { *device_.surface() },
-			.minImageCount { min_image_count },
-			.imageFormat { swapchain_surface_format_.format },
-			.imageColorSpace { swapchain_surface_format_.colorSpace },
-			.imageExtent { swapchain_extent_ },
-			// Always 1 unless developing a stereoscopic 3D application
-			.imageArrayLayers { 1 },
-			// Images are rendered to directly as color attachments
-			.imageUsage { vk::ImageUsageFlagBits::eColorAttachment },
-			// A single queue family renders and presents, so no ownership sharing is needed
-			.imageSharingMode { vk::SharingMode::eExclusive },
-			// Keep the surface's current transform, so no rotation or flip is applied
-			.preTransform { capabilities.currentTransform },
-			// Ignore the alpha channel when blending with other windows
-			.compositeAlpha { vk::CompositeAlphaFlagBitsKHR::eOpaque },
-			.presentMode { present_mode },
-			// Don't care about the color of pixels hidden behind other windows
-			.clipped { vk::True },
-			// Not needed: recreate_swapchain waits for the device and destroys the old one before creating this one
-			.oldSwapchain { nullptr }
-		};
-
-		swapchain_ = device_.logical_device().createSwapchainKHR(create_info);
-
-		// The implementation may create more images than requested
-		swapchain_images_ = swapchain_.getImages();
-
-		if constexpr (constants::should_print_debug_output)
-		{
-			std::println("[Quokka] Swapchain:");
-			std::println("\t- Format: {}", vk::to_string(swapchain_surface_format_.format));
-			std::println("\t- Color space: {}", vk::to_string(swapchain_surface_format_.colorSpace));
-			std::println("\t- Present mode: {}", vk::to_string(present_mode));
-			std::println("\t- Extent: {}x{}", swapchain_extent_.width, swapchain_extent_.height);
-			std::println("\t- Images: {}", swapchain_images_.size());
-			std::println();
-		}
-	}
-
-	void Engine::create_image_views()
-	{
-		swapchain_image_views_.reserve(swapchain_images_.size());
-
-		for (const auto& image : swapchain_images_)
-		{
-			const vk::ImageViewCreateInfo create_info {
-				.image { image },
-				// Treat the image as a regular 2D texture
-				.viewType { vk::ImageViewType::e2D },
-				.format { swapchain_surface_format_.format },
-				// Default mapping: each channel is read as itself (identity), no swizzling
-				.components {},
-				.subresourceRange { color_subresource_range }
-			};
-
-			swapchain_image_views_.push_back(device_.logical_device().createImageView(create_info));
-		}
 	}
 
 	void Engine::create_graphics_pipeline()
@@ -379,7 +223,7 @@ namespace quokka
 			{
 				// A single color attachment, the swapchain image, with its exact format
 				.colorAttachmentCount { 1 },
-				.pColorAttachmentFormats { &swapchain_surface_format_.format }
+				.pColorAttachmentFormats { &swapchain_.surface_format().format }
 			}
 		};
 
@@ -429,18 +273,6 @@ namespace quokka
 		}
 	}
 
-	void Engine::create_render_finished_semaphores()
-	{
-		// One per swapchain image, since presentation may still be waiting on it when the next frame is submitted
-		// For that same reason existing ones are kept on recreation, and only the missing ones are created
-		render_finished_semaphores_.reserve(swapchain_images_.size());
-
-		while (render_finished_semaphores_.size() < swapchain_images_.size())
-		{
-			render_finished_semaphores_.push_back(device_.logical_device().createSemaphore({}));
-		}
-	}
-
 	void Engine::recreate_swapchain()
 	{
 		// A minimized window has an empty framebuffer, so wait until it's restored
@@ -463,18 +295,7 @@ namespace quokka
 		// Nothing may still be using the old swapchain or its image views
 		device_.logical_device().waitIdle();
 
-		cleanup_swapchain();
-
-		create_swapchain();
-		create_image_views();
-		create_render_finished_semaphores();
-	}
-
-	void Engine::cleanup_swapchain() noexcept
-	{
-		// Image views must be destroyed before the swapchain that owns their images
-		swapchain_image_views_.clear();
-		swapchain_ = nullptr;
+		swapchain_.recreate();
 	}
 
 	void Engine::main_loop()
@@ -508,7 +329,7 @@ namespace quokka
 		// The semaphore is signaled once the presentation engine stops reading the image
 		// Out of date is returned instead of thrown, here and in presentKHR,
 		// because the project defines VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS
-		const auto [acquire_result, image_index] { swapchain_.acquireNextImage(no_timeout, *image_available_semaphore, nullptr) };
+		const auto [acquire_result, image_index] { swapchain_.handle().acquireNextImage(no_timeout, *image_available_semaphore, nullptr) };
 
 		// The swapchain no longer matches the surface and can't be used, so recreate it and try again next frame
 		// Suboptimal is still usable, so the frame is drawn and the swapchain is recreated after presenting
@@ -525,7 +346,7 @@ namespace quokka
 		record_command_buffer(command_buffer, image_index);
 
 		// Indexed by image, not by frame, since it's tied to the presentation of that image
-		const auto& render_finished_semaphore { render_finished_semaphores_[image_index] };
+		const auto& render_finished_semaphore { swapchain_.render_finished_semaphore(image_index) };
 
 		// Only the color writes wait for the image, the earlier stages can run before it's acquired
 		const vk::SemaphoreSubmitInfo wait_semaphore_info {
@@ -559,7 +380,7 @@ namespace quokka
 			.waitSemaphoreCount { 1 },
 			.pWaitSemaphores { &*render_finished_semaphore },
 			.swapchainCount { 1 },
-			.pSwapchains { &*swapchain_ },
+			.pSwapchains { &*swapchain_.handle() },
 			.pImageIndices { &image_index }
 		};
 
@@ -586,7 +407,7 @@ namespace quokka
 		// The old contents are discarded, so the old layout can be undefined
 		transition_image_layout(
 			command_buffer,
-			swapchain_images_[image_index],
+			swapchain_.image(image_index),
 			vk::ImageLayout::eUndefined,
 			vk::ImageLayout::eColorAttachmentOptimal,
 			vk::PipelineStageFlagBits2::eColorAttachmentOutput,
@@ -602,7 +423,7 @@ namespace quokka
 
 		// The swapchain image is cleared on load and its result kept on store so it can be presented
 		const vk::RenderingAttachmentInfo color_attachment_info {
-			.imageView { *swapchain_image_views_[image_index] },
+			.imageView { *swapchain_.image_view(image_index) },
 			.imageLayout { vk::ImageLayout::eColorAttachmentOptimal },
 			.loadOp { vk::AttachmentLoadOp::eClear },
 			.storeOp { vk::AttachmentStoreOp::eStore },
@@ -612,7 +433,7 @@ namespace quokka
 		// The whole swapchain image, used as both the render area and the scissor
 		const vk::Rect2D full_image_area {
 			.offset { .x { 0 }, .y { 0 } },
-			.extent { swapchain_extent_ }
+			.extent { swapchain_.extent() }
 		};
 
 		// Without framebuffers, the attachments are given when rendering begins
@@ -631,8 +452,8 @@ namespace quokka
 		const vk::Viewport viewport {
 			.x { 0.0f },
 			.y { 0.0f },
-			.width { static_cast<float>(swapchain_extent_.width) },
-			.height { static_cast<float>(swapchain_extent_.height) },
+			.width { static_cast<float>(swapchain_.extent().width) },
+			.height { static_cast<float>(swapchain_.extent().height) },
 			.minDepth { 0.0f },
 			.maxDepth { 1.0f }
 		};
@@ -648,7 +469,7 @@ namespace quokka
 		// Wait for every color write to finish before the presentation engine reads the image
 		transition_image_layout(
 			command_buffer,
-			swapchain_images_[image_index],
+			swapchain_.image(image_index),
 			vk::ImageLayout::eColorAttachmentOptimal,
 			vk::ImageLayout::ePresentSrcKHR,
 			vk::PipelineStageFlagBits2::eColorAttachmentOutput,
