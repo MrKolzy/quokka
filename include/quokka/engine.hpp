@@ -89,7 +89,7 @@ namespace quokka
 		// Describe how to access each swapchain image
 		std::vector<vk::raii::ImageView> swapchain_image_views_ {};
 
-		// Uniforms and push constants available to the shaders
+		// Descriptor set layouts and push constant ranges the shaders can access
 		vk::raii::PipelineLayout pipeline_layout_ { nullptr };
 		// Shader stages and fixed-function state used to draw
 		vk::raii::Pipeline graphics_pipeline_ { nullptr };

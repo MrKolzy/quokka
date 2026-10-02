@@ -23,7 +23,7 @@ namespace quokka
 {
 	namespace
 	{
-		// Vulkan reports names as fixed-size char arrays, so == would compare addresses instead of the text
+		// Names are C strings, and == between two char pointers compares addresses instead of the text
 		bool is_extension_available(const std::vector<vk::ExtensionProperties>& available_extensions, const char* name) noexcept
 		{
 			return std::ranges::any_of(available_extensions, [name](const vk::ExtensionProperties& extension)
@@ -175,7 +175,8 @@ namespace quokka
 
 		// ***
 
-		// Prefers 8-bit BGRA sRGB, so the hardware gamma-corrects the shader output on write, otherwise falls back to the first available format
+		// Prefers 8-bit BGRA sRGB, so the hardware gamma-corrects the shader output on write,
+		// otherwise falls back to the first available format
 		vk::SurfaceFormatKHR choose_swapchain_surface_format(const std::vector<vk::SurfaceFormatKHR>& available_formats) noexcept
 		{
 			for (const auto& format : available_formats)
@@ -303,7 +304,8 @@ namespace quokka
 
 		// ***
 
-		// Changes the layout of a color image after the source stages and accesses finish, and before the destination ones start
+		// Changes the layout of a color image after the source stages and accesses finish,
+		// and before the destination ones start
 		void transition_image_layout(
 			const vk::raii::CommandBuffer& command_buffer,
 			vk::Image image,
