@@ -10,7 +10,7 @@
 
 namespace quokka
 {
-	// Color, no mipmapping and a single layer, the only subresource swapchain images have
+	// Color, no mipmapping and a single layer, the whole of a swapchain image or a texture without mipmaps
 	inline constexpr vk::ImageSubresourceRange color_subresource_range {
 		.aspectMask { vk::ImageAspectFlagBits::eColor },
 		.baseMipLevel { 0 },

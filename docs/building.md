@@ -7,6 +7,7 @@
 - Visual Studio Community 2026 Insiders
 - [Vulkan SDK](https://vulkan.lunarg.com/) 1.4.357.0 with the GLM headers component (sets the `VULKAN_SDK` environment variable)
 - [GLFW](https://www.glfw.org/download.html) 3.5.1, 64-bit Windows binaries
+- [stb_image](https://github.com/nothings/stb) 2.30, the single header `stb_image.h`
 
 ## Project Setup
 
@@ -30,18 +31,20 @@ Right-click the **Quokka** project in **Solution Explorer**, select **Properties
 
 When adding values, keep the existing and inherited ones.
 
-`<GLFW>` stands for your local GLFW folder.
+`<GLFW>` and `<stb>` stand for your local GLFW and stb_image folders.
 
 ### C/C++
 
 | Property | Value |
 |---|---|
-| General > Additional Include Directories | `$(ProjectDir)include`<br>`$(VULKAN_SDK)\Include`<br>`<GLFW>\include` |
+| General > Additional Include Directories | `$(ProjectDir)include`<br>`$(VULKAN_SDK)\Include`<br>`<GLFW>\include`<br>`<stb>` |
 | General > Multi-processor Compilation | `Yes (/MP)` |
 | Preprocessor > Preprocessor Definitions | `VULKAN_HPP_NO_CONSTRUCTORS`<br>`VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS`<br>`GLFW_INCLUDE_VULKAN`<br>`GLM_FORCE_DEPTH_ZERO_TO_ONE` |
 | Language > C++ Language Standard | `Preview - Features from the Latest C++ Working Draft (/std:c++latest)` |
 | Precompiled Headers > Precompiled Header | `Use (/Yu)` |
 | Precompiled Headers > Precompiled Header File | `pch.hpp` |
+| External Includes > Treat Files Included with Angle Brackets as External | `Yes (/external:anglebrackets)` |
+| External Includes > External Header Warning Level | `Level3 (/external:W3)` |
 | Advanced > Forced Include File | `pch.hpp` |
 
 - `VULKAN_HPP_NO_CONSTRUCTORS` turns Vulkan-Hpp structs into aggregates, allowing designated initializers.
@@ -51,6 +54,7 @@ When adding values, keep the existing and inherited ones.
 - `/std:c++latest` is required for `std::println` (C++23).
 - `/MP` compiles the source files in parallel.
 - The precompiled header compiles Vulkan-Hpp once instead of once per source file. Forced Include adds it at the start of every source file, so they don't need to include it.
+- Headers included with angle brackets are treated as external, so the warning level 3 applies to them instead of `/W4`, and third-party code like stb_image doesn't break the build with `/WX`.
 
 Then right-click `src/pch.cpp` in **Solution Explorer**, select **Properties**, and set **C/C++ > Precompiled Headers > Precompiled Header** to `Create (/Yc)`.
 
@@ -80,4 +84,4 @@ Select the configuration from the **Solution Configurations** dropdown in the to
 
 ## Running
 
-Run from Visual Studio, whose working directory is the project folder, so `shaders/shader.spv` is found.
+Run from Visual Studio, whose working directory is the project folder, so `shaders/shader.spv` and `textures/texture.png` are found.

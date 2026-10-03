@@ -25,6 +25,9 @@ namespace quokka
 		vk::BufferUsageFlags usage,
 		vk::MemoryPropertyFlags properties);
 
+	// Host visible buffer with the given contents, the source of a copy into device local memory
+	[[nodiscard]] Buffer create_staging_buffer(const Device& device, std::span<const std::byte> contents);
+
 	// Device local buffer with the given contents, uploaded through a temporary staging buffer
 	// Also usable as a transfer destination, since that's how its contents get there
 	[[nodiscard]] Buffer create_device_local_buffer(

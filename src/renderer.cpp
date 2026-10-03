@@ -1,19 +1,24 @@
 #include "quokka/renderer.hpp"
 
 #include "quokka/constants.hpp"
+#include "quokka/one_time_commands.hpp"
 #include "quokka/vertex.hpp"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp> // glm::rotate, glm::lookAt, glm::perspective
+#include <stb_image.h>
 
 #include <array>
 #include <chrono>
+#include <cstddef> // std::size_t
 #include <cstdint> // std::uint#_t
 #include <cstring> // std::memcpy
 #include <exception>
 #include <limits>
+#include <memory> // std::unique_ptr
 #include <span>
 #include <stdexcept> // std::runtime_error
+#include <string>
 
 namespace quokka
 {
@@ -86,6 +91,7 @@ namespace quokka
 		create_command_buffers();
 		create_vertex_buffer();
 		create_index_buffer();
+		create_texture_image();
 		create_uniform_buffers();
 		create_descriptor_pool();
 		create_descriptor_sets();
@@ -235,6 +241,91 @@ namespace quokka
 			std::as_bytes(std::span { rectangle_indices }),
 			vk::BufferUsageFlagBits::eIndexBuffer
 		);
+	}
+
+	void Renderer::create_texture_image()
+	{
+		int width {};
+		int height {};
+		int channels {};
+
+		// Always 4 channels (RGBA), even if the file has fewer, so every texel matches the image format
+		// Owned by a unique_ptr, so stbi_image_free also runs if an exception is thrown before the end
+		const std::unique_ptr<stbi_uc, decltype(&stbi_image_free)> pixels {
+			stbi_load(constants::texture_path, &width, &height, &channels, STBI_rgb_alpha),
+			&stbi_image_free
+		};
+
+		if (!pixels)
+		{
+			throw std::runtime_error(std::string { "Failed to load texture file: " } + constants::texture_path);
+		}
+
+		const vk::Extent2D extent {
+			.width { static_cast<std::uint32_t>(width) },
+			.height { static_cast<std::uint32_t>(height) }
+		};
+
+		// One byte per channel
+		constexpr std::size_t bytes_per_texel { 4 };
+		const std::span<const stbi_uc> texels { pixels.get(), std::size_t { extent.width } * extent.height * bytes_per_texel };
+
+		// Only lives until its contents are copied into the image
+		const auto staging_buffer { create_staging_buffer(device_, std::as_bytes(texels)) };
+
+		// sRGB like the file, so sampling converts the colors to linear; a transfer destination for the copy
+		texture_image_ = create_image(
+			device_,
+			extent,
+			vk::Format::eR8G8B8A8Srgb,
+			vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+			vk::MemoryPropertyFlagBits::eDeviceLocal
+		);
+
+		// Both transitions and the copy go in a single submission
+		submit_one_time_commands(device_, command_pool_, [this, &staging_buffer, extent](const vk::raii::CommandBuffer& command_buffer)
+		{
+			// Nothing to wait for, the old contents are discarded, and the copy waits for the transition
+			transition_image_layout(
+				command_buffer,
+				*texture_image_.handle,
+				vk::ImageLayout::eUndefined,
+				vk::ImageLayout::eTransferDstOptimal,
+				vk::PipelineStageFlagBits2::eNone,
+				{},
+				vk::PipelineStageFlagBits2::eTransfer,
+				vk::AccessFlagBits2::eTransferWrite
+			);
+
+			const vk::BufferImageCopy copy_region {
+				.bufferOffset { 0 },
+				// 0 means the texels are tightly packed, without padding between rows
+				.bufferRowLength { 0 },
+				.bufferImageHeight { 0 },
+				.imageSubresource {
+					.aspectMask { vk::ImageAspectFlagBits::eColor },
+					.mipLevel { 0 },
+					.baseArrayLayer { 0 },
+					.layerCount { 1 }
+				},
+				.imageOffset { .x { 0 }, .y { 0 }, .z { 0 } },
+				.imageExtent { .width { extent.width }, .height { extent.height }, .depth { 1 } }
+			};
+
+			command_buffer.copyBufferToImage(*staging_buffer.handle, *texture_image_.handle, vk::ImageLayout::eTransferDstOptimal, copy_region);
+
+			// Sampling in the fragment shader waits for the copy to finish
+			transition_image_layout(
+				command_buffer,
+				*texture_image_.handle,
+				vk::ImageLayout::eTransferDstOptimal,
+				vk::ImageLayout::eShaderReadOnlyOptimal,
+				vk::PipelineStageFlagBits2::eTransfer,
+				vk::AccessFlagBits2::eTransferWrite,
+				vk::PipelineStageFlagBits2::eFragmentShader,
+				vk::AccessFlagBits2::eShaderRead
+			);
+		});
 	}
 
 	void Renderer::create_uniform_buffers()

@@ -1,7 +1,8 @@
 #include "quokka/buffer.hpp"
 
+#include "quokka/one_time_commands.hpp"
+
 #include <cstring> // std::memcpy
-#include <utility> // std::move
 
 namespace quokka
 {
@@ -15,41 +16,16 @@ namespace quokka
 			const Buffer& destination,
 			vk::DeviceSize size)
 		{
-			const vk::CommandBufferAllocateInfo allocate_info {
-				.commandPool { *command_pool },
-				.level { vk::CommandBufferLevel::ePrimary },
-				.commandBufferCount { 1 }
-			};
+			submit_one_time_commands(device, command_pool, [&source, &destination, size](const vk::raii::CommandBuffer& command_buffer)
+			{
+				const vk::BufferCopy copy_region {
+					.srcOffset { 0 },
+					.dstOffset { 0 },
+					.size { size }
+				};
 
-			// Only needed for this copy, it's freed back to the pool when it goes out of scope
-			const auto command_buffer { std::move(device.logical_device().allocateCommandBuffers(allocate_info).front()) };
-
-			command_buffer.begin({ .flags { vk::CommandBufferUsageFlagBits::eOneTimeSubmit } });
-
-			const vk::BufferCopy copy_region {
-				.srcOffset { 0 },
-				.dstOffset { 0 },
-				.size { size }
-			};
-
-			command_buffer.copyBuffer(*source.handle, *destination.handle, copy_region);
-
-			command_buffer.end();
-
-			const vk::CommandBufferSubmitInfo command_buffer_info {
-				.commandBuffer { *command_buffer }
-			};
-
-			const vk::SubmitInfo2 submit_info {
-				.commandBufferInfoCount { 1 },
-				.pCommandBufferInfos { &command_buffer_info }
-			};
-
-			// Every queue family with graphics support can also do transfers, so no dedicated transfer queue is needed
-			device.queue().submit2(submit_info);
-
-			// Simplest way to wait, fine for a single upload while loading; a fence would let several copies run at once
-			device.queue().waitIdle();
+				command_buffer.copyBuffer(*source.handle, *destination.handle, copy_region);
+			});
 		}
 	}
 
@@ -87,11 +63,7 @@ namespace quokka
 		return buffer;
 	}
 
-	Buffer create_device_local_buffer(
-		const Device& device,
-		const vk::raii::CommandPool& command_pool,
-		std::span<const std::byte> contents,
-		vk::BufferUsageFlags usage)
+	Buffer create_staging_buffer(const Device& device, std::span<const std::byte> contents)
 	{
 		const vk::DeviceSize buffer_size { contents.size_bytes() };
 
@@ -100,12 +72,25 @@ namespace quokka
 			vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent
 		};
 
-		// Only lives until its contents are copied into the final buffer
-		const auto staging_buffer { create_buffer(device, buffer_size, vk::BufferUsageFlagBits::eTransferSrc, staging_memory_properties) };
+		auto staging_buffer { create_buffer(device, buffer_size, vk::BufferUsageFlagBits::eTransferSrc, staging_memory_properties) };
 
 		void* const data { staging_buffer.memory.mapMemory(0, buffer_size) };
 		std::memcpy(data, contents.data(), buffer_size);
 		staging_buffer.memory.unmapMemory();
+
+		return staging_buffer;
+	}
+
+	Buffer create_device_local_buffer(
+		const Device& device,
+		const vk::raii::CommandPool& command_pool,
+		std::span<const std::byte> contents,
+		vk::BufferUsageFlags usage)
+	{
+		const vk::DeviceSize buffer_size { contents.size_bytes() };
+
+		// Only lives until its contents are copied into the final buffer
+		const auto staging_buffer { create_staging_buffer(device, contents) };
 
 		// Also a transfer destination, since its contents are copied from the staging buffer
 		const vk::BufferUsageFlags buffer_usage { usage | vk::BufferUsageFlagBits::eTransferDst };

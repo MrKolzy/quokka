@@ -3,6 +3,7 @@
 #include "quokka/buffer.hpp"
 #include "quokka/device.hpp"
 #include "quokka/graphics_pipeline.hpp"
+#include "quokka/image.hpp"
 #include "quokka/swapchain.hpp"
 
 #include <vulkan/vulkan_raii.hpp>
@@ -34,6 +35,7 @@ namespace quokka
 		void create_command_buffers();
 		void create_vertex_buffer();
 		void create_index_buffer();
+		void create_texture_image();
 		void create_uniform_buffers();
 		void create_descriptor_pool();
 		void create_descriptor_sets();
@@ -60,6 +62,8 @@ namespace quokka
 		Buffer vertex_buffer_ {};
 		// Indices into vertex_buffer_, so vertices shared by several triangles are stored only once
 		Buffer index_buffer_ {};
+		// Texels of the texture in device local memory, ready to be sampled by the fragment shader
+		Image texture_image_ {};
 
 		// Transformation matrices, one per frame in flight so the CPU never overwrites one the GPU may still be reading
 		std::vector<Buffer> uniform_buffers_ {};
