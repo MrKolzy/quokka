@@ -225,13 +225,10 @@ namespace quokka
 			const auto features {
 				physical_device.getFeatures2<
 					vk::PhysicalDeviceFeatures2,
-					vk::PhysicalDeviceVulkan11Features,
 					vk::PhysicalDeviceVulkan13Features>()
 			};
 
-			// shaderDrawParameters is needed because Slang translates SV_VertexID using BaseVertex
 			const bool has_required_features {
-				features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters &&
 				features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 &&
 				features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering
 			};
@@ -310,10 +307,8 @@ namespace quokka
 			// Enable the same features checked in is_device_suitable
 			const vk::StructureChain<
 				vk::PhysicalDeviceFeatures2,
-				vk::PhysicalDeviceVulkan11Features,
 				vk::PhysicalDeviceVulkan13Features> feature_chain {
 				{}, // No Vulkan 1.0 features needed, it only heads the chain
-				{ .shaderDrawParameters { vk::True } },
 				{ .synchronization2 { vk::True }, .dynamicRendering { vk::True } }
 			};
 
@@ -367,5 +362,23 @@ namespace quokka
 	const vk::raii::Queue& Device::queue() const noexcept
 	{
 		return queue_;
+	}
+
+	std::uint32_t Device::find_memory_type(std::uint32_t type_filter, vk::MemoryPropertyFlags properties) const
+	{
+		const auto memory_properties { physical_device_.getMemoryProperties() };
+
+		for (std::uint32_t index { 0 }; index < memory_properties.memoryTypeCount; ++index)
+		{
+			// Bit i of the filter is set when memory type i can back the resource
+			const bool is_type_allowed { (type_filter & (1u << index)) != 0 };
+			const bool has_properties { (memory_properties.memoryTypes[index].propertyFlags & properties) == properties };
+			if (is_type_allowed && has_properties)
+			{
+				return index;
+			}
+		}
+
+		throw std::runtime_error("Failed to find a suitable memory type");
 	}
 }

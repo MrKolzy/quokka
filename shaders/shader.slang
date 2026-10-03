@@ -1,15 +1,9 @@
-// Hardcoded triangle until vertex buffers are added
-static const float2 positions[3] = float2[](
-	float2(0.0, -0.5),
-	float2(0.5, 0.5),
-	float2(-0.5, 0.5)
-);
-
-static const float3 colors[3] = float3[](
-	float3(1.0, 0.0, 0.0),
-	float3(0.0, 1.0, 0.0),
-	float3(0.0, 0.0, 1.0)
-);
+// Read from the vertex buffer, locations follow declaration order and must match Vertex::attribute_descriptions
+struct VertexInput
+{
+	float2 position;
+	float3 color;
+};
 
 // Passed to the fragment shader
 struct VertexOutput
@@ -19,11 +13,11 @@ struct VertexOutput
 };
 
 [shader("vertex")]
-VertexOutput vert_main(uint vertex_id : SV_VertexID)
+VertexOutput vert_main(VertexInput input)
 {
 	VertexOutput output;
-	output.position = float4(positions[vertex_id], 0.0, 1.0);
-	output.color = colors[vertex_id];
+	output.position = float4(input.position, 0.0, 1.0);
+	output.color = input.color;
 
 	return output;
 }

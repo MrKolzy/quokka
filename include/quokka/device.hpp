@@ -27,6 +27,9 @@ namespace quokka
 		[[nodiscard]] const vk::raii::Device& logical_device() const noexcept;
 		[[nodiscard]] const vk::raii::Queue& queue() const noexcept;
 
+		// Index of a memory type allowed by type_filter that has all the given properties
+		[[nodiscard]] std::uint32_t find_memory_type(std::uint32_t type_filter, vk::MemoryPropertyFlags properties) const;
+
 	private:
 		// Declared in creation order: members are initialized in this order and destroyed in reverse
 		// Loads the Vulkan library and exposes functions that don't require an instance

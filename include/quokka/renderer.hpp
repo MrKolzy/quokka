@@ -30,6 +30,7 @@ namespace quokka
 	private:
 		void create_command_pool();
 		void create_command_buffers();
+		void create_vertex_buffer();
 		void create_frame_sync_objects();
 
 		void record_command_buffer(const vk::raii::CommandBuffer& command_buffer, std::uint32_t image_index) const;
@@ -44,6 +45,11 @@ namespace quokka
 		vk::raii::CommandPool command_pool_ { nullptr };
 		// One per frame in flight
 		std::vector<vk::raii::CommandBuffer> command_buffers_ {};
+
+		// Vertices of the triangle, read by the vertex shader through binding 0
+		vk::raii::Buffer vertex_buffer_ { nullptr };
+		// Backs vertex_buffer_, freed first since it's allocated after it
+		vk::raii::DeviceMemory vertex_buffer_memory_ { nullptr };
 
 		// Signaled by acquireNextImage, waited on by the submission, one per frame in flight
 		std::vector<vk::raii::Semaphore> image_available_semaphores_ {};

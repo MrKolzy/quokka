@@ -1,9 +1,11 @@
 #include "quokka/renderer.hpp"
 
 #include "quokka/constants.hpp"
+#include "quokka/vertex.hpp"
 
 #include <array>
 #include <cstdint> // std::uint#_t
+#include <cstring> // std::memcpy
 #include <exception>
 #include <limits>
 #include <stdexcept> // std::runtime_error
@@ -12,6 +14,13 @@ namespace quokka
 {
 	namespace
 	{
+		// Clockwise on screen, matching the front face of the pipeline
+		constexpr std::array triangle_vertices {
+			Vertex { .position { 0.0f, -0.5f }, .color { 1.0f, 0.0f, 0.0f } },
+			Vertex { .position { 0.5f, 0.5f }, .color { 0.0f, 1.0f, 0.0f } },
+			Vertex { .position { -0.5f, 0.5f }, .color { 0.0f, 0.0f, 1.0f } }
+		};
+
 		// Changes the layout of a color image after the source stages and accesses finish,
 		// and before the destination ones start
 		void transition_image_layout(
@@ -56,6 +65,7 @@ namespace quokka
 	{
 		create_command_pool();
 		create_command_buffers();
+		create_vertex_buffer();
 		create_frame_sync_objects();
 	}
 
@@ -179,6 +189,43 @@ namespace quokka
 		command_buffers_ = device_.logical_device().allocateCommandBuffers(allocate_info);
 	}
 
+	void Renderer::create_vertex_buffer()
+	{
+		constexpr vk::DeviceSize buffer_size { sizeof(Vertex) * triangle_vertices.size() };
+
+		constexpr vk::BufferCreateInfo buffer_info {
+			.size { buffer_size },
+			.usage { vk::BufferUsageFlagBits::eVertexBuffer },
+			// Only accessed from the graphics queue family
+			.sharingMode { vk::SharingMode::eExclusive }
+		};
+
+		vertex_buffer_ = device_.logical_device().createBuffer(buffer_info);
+
+		// The size may be larger than requested, and memoryTypeBits limits which memory types can back the buffer
+		const auto memory_requirements { vertex_buffer_.getMemoryRequirements() };
+
+		// Host visible so the CPU can map it, and host coherent so its writes reach the GPU without explicit flushes
+		constexpr vk::MemoryPropertyFlags memory_properties {
+			vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent
+		};
+
+		const vk::MemoryAllocateInfo allocate_info {
+			.allocationSize { memory_requirements.size },
+			.memoryTypeIndex { device_.find_memory_type(memory_requirements.memoryTypeBits, memory_properties) }
+		};
+
+		vertex_buffer_memory_ = device_.logical_device().allocateMemory(allocate_info);
+
+		// Offset 0, since the whole allocation belongs to this buffer
+		vertex_buffer_.bindMemory(*vertex_buffer_memory_, 0);
+
+		// Coherent memory guarantees the copy is visible to the GPU by the next submission
+		void* const data { vertex_buffer_memory_.mapMemory(0, buffer_size) };
+		std::memcpy(data, triangle_vertices.data(), buffer_size);
+		vertex_buffer_memory_.unmapMemory();
+	}
+
 	void Renderer::create_frame_sync_objects()
 	{
 		// Created signaled, so the first frames don't wait forever for a submission that never happened
@@ -247,6 +294,9 @@ namespace quokka
 
 		command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphics_pipeline_.handle());
 
+		// Starting at binding 0, with the vertex data at the start of the buffer
+		command_buffer.bindVertexBuffers(0, *vertex_buffer_, { 0 });
+
 		// Viewport and scissor are dynamic states, so they must be set before drawing
 		const vk::Viewport viewport {
 			.x { 0.0f },
@@ -260,8 +310,8 @@ namespace quokka
 		command_buffer.setViewport(0, viewport);
 		command_buffer.setScissor(0, full_image_area);
 
-		// 3 vertices hardcoded in the shader, 1 instance, starting at the first vertex and instance
-		command_buffer.draw(3, 1, 0, 0);
+		// Every vertex in the buffer, 1 instance, starting at the first vertex and instance
+		command_buffer.draw(static_cast<std::uint32_t>(triangle_vertices.size()), 1, 0, 0);
 
 		command_buffer.endRendering();
 

@@ -1,6 +1,7 @@
 #include "quokka/graphics_pipeline.hpp"
 
 #include "quokka/constants.hpp"
+#include "quokka/vertex.hpp"
 
 #include <array>
 #include <cstddef> // std::size_t
@@ -90,8 +91,16 @@ namespace quokka
 
 			const std::array shader_stages { vertex_shader_stage_info, fragment_shader_stage_info };
 
-			// No vertex buffers yet, the vertex data is hardcoded in the shader
-			constexpr vk::PipelineVertexInputStateCreateInfo vertex_input_info {};
+			// Only the layout of the vertex data, the buffer itself is bound when recording commands
+			constexpr auto binding_description { Vertex::binding_description() };
+			constexpr auto attribute_descriptions { Vertex::attribute_descriptions() };
+
+			const vk::PipelineVertexInputStateCreateInfo vertex_input_info {
+				.vertexBindingDescriptionCount { 1 },
+				.pVertexBindingDescriptions { &binding_description },
+				.vertexAttributeDescriptionCount { static_cast<std::uint32_t>(attribute_descriptions.size()) },
+				.pVertexAttributeDescriptions { attribute_descriptions.data() }
+			};
 
 			// Every three vertices form an independent triangle
 			constexpr vk::PipelineInputAssemblyStateCreateInfo input_assembly_info {
@@ -113,7 +122,7 @@ namespace quokka
 				// Any mode other than fill requires a GPU feature
 				.polygonMode { vk::PolygonMode::eFill },
 				.cullMode { vk::CullModeFlagBits::eBack },
-				// The shader vertices are listed in clockwise order on screen
+				// The triangle vertices are listed in clockwise order on screen
 				.frontFace { vk::FrontFace::eClockwise },
 				// Mainly used for shadow mapping
 				.depthBiasEnable { vk::False },

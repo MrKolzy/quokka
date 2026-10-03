@@ -5,7 +5,7 @@
 - Windows x64
 - GPU supporting Vulkan 1.3 or newer
 - Visual Studio Community 2026 Insiders
-- [Vulkan SDK](https://vulkan.lunarg.com/) 1.4.357.0 (sets the `VULKAN_SDK` environment variable)
+- [Vulkan SDK](https://vulkan.lunarg.com/) 1.4.357.0 with the GLM headers component (sets the `VULKAN_SDK` environment variable)
 - [GLFW](https://www.glfw.org/download.html) 3.5.1, 64-bit Windows binaries
 
 ## Project Setup
