@@ -229,6 +229,7 @@ namespace quokka
 			};
 
 			const bool has_required_features {
+				features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy &&
 				features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 &&
 				features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering
 			};
@@ -308,7 +309,7 @@ namespace quokka
 			const vk::StructureChain<
 				vk::PhysicalDeviceFeatures2,
 				vk::PhysicalDeviceVulkan13Features> feature_chain {
-				{}, // No Vulkan 1.0 features needed, it only heads the chain
+				{ .features { .samplerAnisotropy { vk::True } } }, // Vulkan 1.0 features, also the head of the chain
 				{ .synchronization2 { vk::True }, .dynamicRendering { vk::True } }
 			};
 

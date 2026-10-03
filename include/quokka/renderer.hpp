@@ -36,6 +36,8 @@ namespace quokka
 		void create_vertex_buffer();
 		void create_index_buffer();
 		void create_texture_image();
+		void create_texture_image_view();
+		void create_texture_sampler();
 		void create_uniform_buffers();
 		void create_descriptor_pool();
 		void create_descriptor_sets();
@@ -64,6 +66,10 @@ namespace quokka
 		Buffer index_buffer_ {};
 		// Texels of the texture in device local memory, ready to be sampled by the fragment shader
 		Image texture_image_ {};
+		// How shaders see texture_image_, as a 2D color texture
+		vk::raii::ImageView texture_image_view_ { nullptr };
+		// How texels are filtered and addressed when sampled, independent of any particular image
+		vk::raii::Sampler texture_sampler_ { nullptr };
 
 		// Transformation matrices, one per frame in flight so the CPU never overwrites one the GPU may still be reading
 		std::vector<Buffer> uniform_buffers_ {};

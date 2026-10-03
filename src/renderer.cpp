@@ -45,6 +45,9 @@ namespace quokka
 			glm::mat4 projection;
 		};
 
+		// sRGB like the texture file, so sampling converts the colors to linear
+		constexpr vk::Format texture_format { vk::Format::eR8G8B8A8Srgb };
+
 		// Changes the layout of a color image after the source stages and accesses finish,
 		// and before the destination ones start
 		void transition_image_layout(
@@ -92,6 +95,8 @@ namespace quokka
 		create_vertex_buffer();
 		create_index_buffer();
 		create_texture_image();
+		create_texture_image_view();
+		create_texture_sampler();
 		create_uniform_buffers();
 		create_descriptor_pool();
 		create_descriptor_sets();
@@ -273,11 +278,11 @@ namespace quokka
 		// Only lives until its contents are copied into the image
 		const auto staging_buffer { create_staging_buffer(device_, std::as_bytes(texels)) };
 
-		// sRGB like the file, so sampling converts the colors to linear; a transfer destination for the copy
+		// A transfer destination for the copy, and sampled by the shaders afterwards
 		texture_image_ = create_image(
 			device_,
 			extent,
-			vk::Format::eR8G8B8A8Srgb,
+			texture_format,
 			vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
 			vk::MemoryPropertyFlagBits::eDeviceLocal
 		);
@@ -326,6 +331,42 @@ namespace quokka
 				vk::AccessFlagBits2::eShaderRead
 			);
 		});
+	}
+
+	void Renderer::create_texture_image_view()
+	{
+		texture_image_view_ = create_image_view(device_, *texture_image_.handle, texture_format);
+	}
+
+	void Renderer::create_texture_sampler()
+	{
+		const vk::SamplerCreateInfo create_info {
+			// Interpolate between the nearest texels instead of picking one, both when magnified and minified
+			.magFilter { vk::Filter::eLinear },
+			.minFilter { vk::Filter::eLinear },
+			// Only matters with mipmaps, which the texture doesn't have yet
+			.mipmapMode { vk::SamplerMipmapMode::eLinear },
+			// Coordinates outside 0 to 1 wrap around, tiling the texture
+			.addressModeU { vk::SamplerAddressMode::eRepeat },
+			.addressModeV { vk::SamplerAddressMode::eRepeat },
+			.addressModeW { vk::SamplerAddressMode::eRepeat },
+			.mipLodBias { 0.0f },
+			// Keeps textures sharp when seen at steep angles, with as many samples as the GPU allows
+			.anisotropyEnable { vk::True },
+			.maxAnisotropy { device_.physical_device().getProperties().limits.maxSamplerAnisotropy },
+			// Comparing texels against a reference value is for shadow maps
+			.compareEnable { vk::False },
+			.compareOp { vk::CompareOp::eAlways },
+			// A single mip level
+			.minLod { 0.0f },
+			.maxLod { 0.0f },
+			// Only used with the clamp to border address mode
+			.borderColor { vk::BorderColor::eIntOpaqueBlack },
+			// Coordinates go from 0 to 1 regardless of the texture size
+			.unnormalizedCoordinates { vk::False }
+		};
+
+		texture_sampler_ = device_.logical_device().createSampler(create_info);
 	}
 
 	void Renderer::create_uniform_buffers()

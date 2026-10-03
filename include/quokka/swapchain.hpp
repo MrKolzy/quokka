@@ -10,15 +10,6 @@
 
 namespace quokka
 {
-	// Color, no mipmapping and a single layer, the whole of a swapchain image or a texture without mipmaps
-	inline constexpr vk::ImageSubresourceRange color_subresource_range {
-		.aspectMask { vk::ImageAspectFlagBits::eColor },
-		.baseMipLevel { 0 },
-		.levelCount { 1 },
-		.baseArrayLayer { 0 },
-		.layerCount { 1 }
-	};
-
 	// Owns the images presented to the window and everything that depends on their number or size
 	class Swapchain
 	{

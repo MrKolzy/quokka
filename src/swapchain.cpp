@@ -1,6 +1,7 @@
 #include "quokka/swapchain.hpp"
 
 #include "quokka/constants.hpp"
+#include "quokka/image.hpp"
 
 #include <algorithm> // std::clamp, std::max, std::ranges
 #include <cstdint> // std::uint32_t
@@ -188,17 +189,7 @@ namespace quokka
 
 		for (const auto& image : images_)
 		{
-			const vk::ImageViewCreateInfo create_info {
-				.image { image },
-				// Treat the image as a regular 2D texture
-				.viewType { vk::ImageViewType::e2D },
-				.format { surface_format_.format },
-				// Default mapping: each channel is read as itself (identity), no swizzling
-				.components {},
-				.subresourceRange { color_subresource_range }
-			};
-
-			image_views_.push_back(device_.logical_device().createImageView(create_info));
+			image_views_.push_back(create_image_view(device_, image, surface_format_.format));
 		}
 	}
 

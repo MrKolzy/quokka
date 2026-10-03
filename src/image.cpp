@@ -44,4 +44,19 @@ namespace quokka
 
 		return image;
 	}
+
+	vk::raii::ImageView create_image_view(const Device& device, vk::Image image, vk::Format format)
+	{
+		const vk::ImageViewCreateInfo create_info {
+			.image { image },
+			// Treat the image as a regular 2D texture
+			.viewType { vk::ImageViewType::e2D },
+			.format { format },
+			// Default mapping: each channel is read as itself (identity), no swizzling
+			.components {},
+			.subresourceRange { color_subresource_range }
+		};
+
+		return device.logical_device().createImageView(create_info);
+	}
 }
