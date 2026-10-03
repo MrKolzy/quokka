@@ -72,6 +72,7 @@ Then right-click `src/pch.cpp` in **Solution Explorer**, select **Properties**, 
 **Pre-Build Event > Command Line** compiles the Slang shaders to SPIR-V:
 
     "$(VULKAN_SDK)\Bin\slangc.exe" "$(ProjectDir)shaders\shader.slang" -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name -entry vert_main -entry frag_main -o "$(ProjectDir)shaders\shader.spv"
+    "$(VULKAN_SDK)\Bin\slangc.exe" "$(ProjectDir)shaders\particles.slang" -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name -entry update_main -entry particle_vert_main -entry particle_frag_main -o "$(ProjectDir)shaders\particles.spv"
 
 **Post-Build Event > Command Line** copies the GLFW and KTX runtimes next to the executable:
 
@@ -87,4 +88,4 @@ Select the configuration from the **Solution Configurations** dropdown in the to
 
 ## Running
 
-Run from Visual Studio, whose working directory is the project folder, so `shaders/shader.spv`, `models/viking_room.glb` and `textures/viking_room.ktx2` are found.
+Run from Visual Studio, whose working directory is the project folder, so `shaders/shader.spv`, `shaders/particles.spv`, `models/viking_room.glb` and `textures/viking_room.ktx2` are found.

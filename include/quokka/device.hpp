@@ -49,7 +49,7 @@ namespace quokka
 		std::uint32_t queue_family_index_;
 		// Used to create most other Vulkan objects
 		vk::raii::Device logical_device_;
-		// Submits graphics commands and presents images, implicitly destroyed with the device
+		// Submits graphics and compute commands and presents images, implicitly destroyed with the device
 		vk::raii::Queue queue_;
 	};
 }

@@ -178,7 +178,7 @@ namespace quokka
 		// Checked when picking the physical device and enabled when creating the logical device
 		constexpr std::array required_device_extensions { vk::KHRSwapchainExtensionName };
 
-		// Index of the first queue family that can execute graphics commands and present to the surface, if any
+		// Index of the first queue family that can execute graphics and compute commands and present to the surface, if any
 		std::optional<std::uint32_t> find_queue_family_index(
 			const vk::raii::PhysicalDevice& physical_device,
 			const vk::raii::SurfaceKHR& surface)
@@ -186,8 +186,9 @@ namespace quokka
 			const auto queue_families { physical_device.getQueueFamilyProperties() };
 			for (std::uint32_t index { 0 }; index < queue_families.size(); ++index)
 			{
-				// A single family for both keeps one queue for everything, which nearly every GPU supports
+				// A single family for all of them keeps one queue for everything, which nearly every GPU supports
 				if ((queue_families[index].queueFlags & vk::QueueFlagBits::eGraphics) &&
+					(queue_families[index].queueFlags & vk::QueueFlagBits::eCompute) &&
 					physical_device.getSurfaceSupportKHR(index, *surface))
 				{
 					return index;
@@ -228,7 +229,9 @@ namespace quokka
 					vk::PhysicalDeviceVulkan13Features>()
 			};
 
+			// Large points let the particles be bigger than one pixel
 			const bool has_required_features {
+				features.get<vk::PhysicalDeviceFeatures2>().features.largePoints &&
 				features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy &&
 				features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 &&
 				features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering
@@ -309,7 +312,7 @@ namespace quokka
 			const vk::StructureChain<
 				vk::PhysicalDeviceFeatures2,
 				vk::PhysicalDeviceVulkan13Features> feature_chain {
-				{ .features { .samplerAnisotropy { vk::True } } }, // Vulkan 1.0 features, also the head of the chain
+				{ .features { .largePoints { vk::True }, .samplerAnisotropy { vk::True } } }, // Vulkan 1.0 features, also the head of the chain
 				{ .synchronization2 { vk::True }, .dynamicRendering { vk::True } }
 			};
 

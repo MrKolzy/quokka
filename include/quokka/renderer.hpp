@@ -5,6 +5,7 @@
 #include "quokka/graphics_pipeline.hpp"
 #include "quokka/image.hpp"
 #include "quokka/mesh.hpp"
+#include "quokka/particle_system.hpp"
 #include "quokka/swapchain.hpp"
 #include "quokka/worker_threads.hpp"
 
@@ -20,7 +21,11 @@ namespace quokka
 	class Renderer
 	{
 	public:
-		Renderer(const Device& device, const Swapchain& swapchain, const GraphicsPipeline& graphics_pipeline);
+		Renderer(
+			const Device& device,
+			const Swapchain& swapchain,
+			const GraphicsPipeline& graphics_pipeline,
+			const ParticleSystem& particle_system);
 		~Renderer();
 
 		// Neither copyable nor movable: holds references to the modules it draws with
@@ -52,6 +57,9 @@ namespace quokka
 			const vk::raii::CommandBuffer& command_buffer,
 			const vk::raii::DescriptorSet& descriptor_set,
 			std::uint32_t image_index);
+		// Begins a secondary command buffer inside the rendering of the primary one, with the viewport and scissor set
+		// Called from the recording threads at the same time, so it must only read shared state
+		void begin_secondary_command_buffer(const vk::raii::CommandBuffer& command_buffer) const;
 		// Called from the recording threads at the same time, so it must only read shared state
 		void record_object_draws(
 			const vk::raii::CommandBuffer& command_buffer,
@@ -63,6 +71,7 @@ namespace quokka
 		const Device& device_;
 		const Swapchain& swapchain_;
 		const GraphicsPipeline& graphics_pipeline_;
+		const ParticleSystem& particle_system_;
 
 		// Declared in creation order: members are destroyed in reverse order,
 		// so every object is destroyed before the one it was created from
@@ -74,6 +83,8 @@ namespace quokka
 		std::vector<vk::raii::CommandPool> recording_command_pools_ {};
 		// Indexed by recording thread and then by frame in flight, executed from the primary command buffer of the frame
 		std::vector<std::vector<vk::raii::CommandBuffer>> secondary_command_buffers_ {};
+		// One per frame in flight, with the particle draws, executed after the secondary command buffers of the objects
+		std::vector<vk::raii::CommandBuffer> particle_command_buffers_ {};
 
 		// Loaded from the model file, uploaded to vertex_buffer_ and index_buffer_
 		Mesh mesh_ {};
@@ -110,6 +121,8 @@ namespace quokka
 
 		// The objects rotate according to the time elapsed since then
 		std::chrono::steady_clock::time_point start_time_ { std::chrono::steady_clock::now() };
+		// When the previous frame was recorded, the particles move according to the time elapsed since then
+		std::chrono::steady_clock::time_point previous_frame_time_ { std::chrono::steady_clock::now() };
 
 		// Record the draws of each frame into secondary_command_buffers_
 		// Declared last, so its threads are joined before anything they record into is destroyed

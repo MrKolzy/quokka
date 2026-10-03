@@ -25,6 +25,7 @@ namespace quokka::constants
 
 	// Compiled SPIR-V shaders, relative to the working directory
 	inline constexpr const char* shader_path { "shaders/shader.spv" };
+	inline constexpr const char* particle_shader_path { "shaders/particles.spv" };
 	// Model drawn by the renderer and its texture, relative to the working directory
 	inline constexpr const char* model_path { "models/viking_room.glb" };
 	inline constexpr const char* texture_path { "textures/viking_room.ktx2" };
@@ -40,4 +41,8 @@ namespace quokka::constants
 	// Threads that record the draw commands of each frame in parallel, 1 to compare against recording them on one thread
 	inline constexpr std::uint32_t recording_thread_count { 4 };
 	static_assert(recording_thread_count > 0);
+
+	// Particles simulated by the compute shader every frame, entirely on the GPU
+	inline constexpr std::uint32_t particle_count { 65536 };
+	static_assert(particle_count > 0);
 }

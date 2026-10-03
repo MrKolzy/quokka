@@ -1,65 +1,16 @@
 #include "quokka/graphics_pipeline.hpp"
 
 #include "quokka/constants.hpp"
+#include "quokka/shader_module.hpp"
 #include "quokka/vertex.hpp"
 
 #include <array>
-#include <cstddef> // std::size_t
 #include <cstdint> // std::uint32_t
-#include <filesystem>
-#include <fstream>
-#include <stdexcept> // std::runtime_error
-#include <string>
-#include <vector>
 
 namespace quokka
 {
 	namespace
 	{
-		// Reads a compiled SPIR-V file as 32-bit words, which also guarantees the alignment Vulkan expects
-		std::vector<std::uint32_t> read_shader_file(const std::filesystem::path& path)
-		{
-			// Start at the end (ate) to get the file size, and read raw bytes without text conversions (binary)
-			std::ifstream file { path, std::ios::ate | std::ios::binary };
-			if (!file.is_open())
-			{
-				throw std::runtime_error("Failed to open shader file: " + path.string());
-			}
-
-			const auto file_size { static_cast<std::size_t>(file.tellg()) };
-
-			// SPIR-V is a stream of 32-bit words, so an empty file or a partial word means it's invalid
-			if (file_size == 0 || file_size % sizeof(std::uint32_t) != 0)
-			{
-				throw std::runtime_error("Invalid SPIR-V file size: " + path.string());
-			}
-
-			// Parentheses, not braces: this is the count constructor
-			std::vector<std::uint32_t> code(file_size / sizeof(std::uint32_t));
-
-			file.seekg(0, std::ios::beg);
-			file.read(reinterpret_cast<char*>(code.data()), static_cast<std::streamsize>(file_size));
-
-			if (!file)
-			{
-				throw std::runtime_error("Failed to read shader file: " + path.string());
-			}
-
-			return code;
-		}
-
-		// Wraps SPIR-V code in a shader module, only needed until the pipeline is created
-		vk::raii::ShaderModule create_shader_module(const vk::raii::Device& device, const std::vector<std::uint32_t>& code)
-		{
-			const vk::ShaderModuleCreateInfo create_info {
-				// Size in bytes, not in words
-				.codeSize { code.size() * sizeof(std::uint32_t) },
-				.pCode { code.data() }
-			};
-
-			return device.createShaderModule(create_info);
-		}
-
 		vk::raii::DescriptorSetLayout create_descriptor_set_layout(const vk::raii::Device& device)
 		{
 			// The camera matrices, read only by the vertex shader

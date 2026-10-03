@@ -211,10 +211,15 @@ namespace quokka
 
 	// ***
 
-	Renderer::Renderer(const Device& device, const Swapchain& swapchain, const GraphicsPipeline& graphics_pipeline)
+	Renderer::Renderer(
+		const Device& device,
+		const Swapchain& swapchain,
+		const GraphicsPipeline& graphics_pipeline,
+		const ParticleSystem& particle_system)
 		: device_ { device }
 		, swapchain_ { swapchain }
 		, graphics_pipeline_ { graphics_pipeline }
+		, particle_system_ { particle_system }
 		, recording_threads_ { constants::recording_thread_count }
 	{
 		create_command_pool();
@@ -382,6 +387,15 @@ namespace quokka
 
 			secondary_command_buffers_.push_back(device_.logical_device().allocateCommandBuffers(allocate_info));
 		}
+
+		// The particle draws are recorded on the main thread, so their buffers come from the same pool as the primary ones
+		const vk::CommandBufferAllocateInfo particle_allocate_info {
+			.commandPool { *command_pool_ },
+			.level { vk::CommandBufferLevel::eSecondary },
+			.commandBufferCount { constants::max_frames_in_flight }
+		};
+
+		particle_command_buffers_ = device_.logical_device().allocateCommandBuffers(particle_allocate_info);
 	}
 
 	void Renderer::load_model()
@@ -769,6 +783,16 @@ namespace quokka
 			vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite
 		);
 
+		// Measured once, so the particles and every recording thread use the same time
+		const auto frame_time { std::chrono::steady_clock::now() };
+		// In seconds, as floats so the motion is smooth
+		const std::chrono::duration<float> elapsed_time { frame_time - start_time_ };
+		const std::chrono::duration<float> delta_time { frame_time - previous_frame_time_ };
+		previous_frame_time_ = frame_time;
+
+		// Before the rendering begins, since compute work can't be recorded inside one
+		particle_system_.record_update(command_buffer, frame_index_, delta_time.count());
+
 		// Opaque black, used to clear the multisampled image before drawing
 		constexpr vk::ClearValue clear_color {
 			.color { .float32 { std::array { 0.0f, 0.0f, 0.0f, 1.0f } } }
@@ -814,9 +838,6 @@ namespace quokka
 
 		command_buffer.beginRendering(rendering_info);
 
-		// In seconds, as a float so the rotation is smooth, and measured once so every thread uses the same time
-		const std::chrono::duration<float> elapsed_time { std::chrono::steady_clock::now() - start_time_ };
-
 		// Each thread records the draws of its share of the objects into its own secondary command buffer,
 		// and run() returns once all of them are done
 		recording_threads_.run([this, &descriptor_set, &elapsed_time](std::uint32_t thread_index)
@@ -843,6 +864,15 @@ namespace quokka
 
 		command_buffer.executeCommands(frame_secondary_command_buffers);
 
+		// Only a few commands, so they're recorded on this thread
+		const auto& particle_command_buffer { particle_command_buffers_[frame_index_] };
+		begin_secondary_command_buffer(particle_command_buffer);
+		particle_system_.record_draw(particle_command_buffer, descriptor_set, frame_index_);
+		particle_command_buffer.end();
+
+		// After the objects, since the particles are hidden behind them by their depth without writing their own
+		command_buffer.executeCommands(*particle_command_buffer);
+
 		command_buffer.endRendering();
 
 		// Wait for every color write to finish before the presentation engine reads the image
@@ -861,12 +891,7 @@ namespace quokka
 		command_buffer.end();
 	}
 
-	void Renderer::record_object_draws(
-		const vk::raii::CommandBuffer& command_buffer,
-		const vk::raii::DescriptorSet& descriptor_set,
-		std::uint32_t first_object,
-		std::uint32_t object_count,
-		float elapsed_seconds) const
+	void Renderer::begin_secondary_command_buffer(const vk::raii::CommandBuffer& command_buffer) const
 	{
 		const vk::Format color_format { swapchain_.surface_format().format };
 
@@ -889,7 +914,32 @@ namespace quokka
 
 		command_buffer.begin(begin_info);
 
-		// A secondary command buffer inherits no state from the primary one, so it binds and sets everything it uses
+		// A secondary command buffer inherits no state from the primary one, so each one sets its own
+		// Viewport and scissor are dynamic states, so they must be set before drawing
+		// Negative height flips the y axis to point up like in GLM's projection, so it starts at the bottom edge
+		const vk::Viewport viewport {
+			.x { 0.0f },
+			.y { static_cast<float>(swapchain_.extent().height) },
+			.width { static_cast<float>(swapchain_.extent().width) },
+			.height { -static_cast<float>(swapchain_.extent().height) },
+			.minDepth { 0.0f },
+			.maxDepth { 1.0f }
+		};
+
+		command_buffer.setViewport(0, viewport);
+		command_buffer.setScissor(0, full_area(swapchain_.extent()));
+	}
+
+	void Renderer::record_object_draws(
+		const vk::raii::CommandBuffer& command_buffer,
+		const vk::raii::DescriptorSet& descriptor_set,
+		std::uint32_t first_object,
+		std::uint32_t object_count,
+		float elapsed_seconds) const
+	{
+		begin_secondary_command_buffer(command_buffer);
+
+		// A secondary command buffer inherits no state from the primary one, so it binds everything it uses
 		command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphics_pipeline_.handle());
 
 		// Starting at binding 0, with the vertex data at the start of the buffer
@@ -906,20 +956,6 @@ namespace quokka
 			*descriptor_set,
 			{}
 		);
-
-		// Viewport and scissor are dynamic states, so they must be set before drawing
-		// Negative height flips the y axis to point up like in GLM's projection, so it starts at the bottom edge
-		const vk::Viewport viewport {
-			.x { 0.0f },
-			.y { static_cast<float>(swapchain_.extent().height) },
-			.width { static_cast<float>(swapchain_.extent().width) },
-			.height { -static_cast<float>(swapchain_.extent().height) },
-			.minDepth { 0.0f },
-			.maxDepth { 1.0f }
-		};
-
-		command_buffer.setViewport(0, viewport);
-		command_buffer.setScissor(0, full_area(swapchain_.extent()));
 
 		// Every object shares the mesh, the texture and the camera, so only the pushed model matrix changes between draws
 		for (std::uint32_t object_index { first_object }; object_index < first_object + object_count; ++object_index)
