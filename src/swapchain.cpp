@@ -233,8 +233,15 @@ namespace quokka
 
 	void Swapchain::create_depth_resources()
 	{
-		// Only used as an attachment while drawing, never sampled or copied
-		depth_image_ = create_image(device_, extent_, depth_format_, vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal);
+		// Only used as an attachment while drawing, never sampled or copied, so a single mip level is enough
+		depth_image_ = create_image(
+			device_,
+			extent_,
+			1,
+			depth_format_,
+			vk::ImageUsageFlagBits::eDepthStencilAttachment,
+			vk::MemoryPropertyFlagBits::eDeviceLocal
+		);
 		depth_image_view_ = create_image_view(device_, *depth_image_.handle, depth_format_, vk::ImageAspectFlagBits::eDepth);
 	}
 

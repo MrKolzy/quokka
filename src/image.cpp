@@ -5,6 +5,7 @@ namespace quokka
 	Image create_image(
 		const Device& device,
 		vk::Extent2D extent,
+		std::uint32_t mip_levels,
 		vk::Format format,
 		vk::ImageUsageFlags usage,
 		vk::MemoryPropertyFlags properties)
@@ -13,8 +14,8 @@ namespace quokka
 			.imageType { vk::ImageType::e2D },
 			.format { format },
 			.extent { .width { extent.width }, .height { extent.height }, .depth { 1 } },
-			// No mipmaps or array layers yet
-			.mipLevels { 1 },
+			.mipLevels { mip_levels },
+			// No array layers yet
 			.arrayLayers { 1 },
 			.samples { vk::SampleCountFlagBits::e1 },
 			// Texels in an implementation defined order that's faster for the GPU, but the CPU can't access them directly

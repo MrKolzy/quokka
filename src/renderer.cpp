@@ -7,10 +7,12 @@
 #include <glm/gtc/matrix_transform.hpp> // glm::rotate, glm::lookAt, glm::perspective
 #include <stb_image.h>
 
+#include <algorithm> // std::max
 #include <array>
+#include <bit> // std::bit_width
 #include <chrono>
 #include <cstddef> // std::size_t
-#include <cstdint> // std::uint#_t
+#include <cstdint> // std::int32_t, std::uint#_t
 #include <cstring> // std::memcpy
 #include <exception>
 #include <limits>
@@ -35,12 +37,12 @@ namespace quokka
 		// sRGB like the texture file, so sampling converts the colors to linear
 		constexpr vk::Format texture_format { vk::Format::eR8G8B8A8Srgb };
 
-		// Changes the layout of an image after the source stages and accesses finish,
+		// Changes the layout of part of an image after the source stages and accesses finish,
 		// and before the destination ones start
 		void transition_image_layout(
 			const vk::raii::CommandBuffer& command_buffer,
 			vk::Image image,
-			vk::ImageAspectFlags aspect,
+			vk::ImageSubresourceRange subresource_range,
 			vk::ImageLayout old_layout,
 			vk::ImageLayout new_layout,
 			vk::PipelineStageFlags2 src_stage_mask,
@@ -59,7 +61,7 @@ namespace quokka
 				.srcQueueFamilyIndex { vk::QueueFamilyIgnored },
 				.dstQueueFamilyIndex { vk::QueueFamilyIgnored },
 				.image { image },
-				.subresourceRange { full_subresource_range(aspect) }
+				.subresourceRange { subresource_range }
 			};
 
 			const vk::DependencyInfo dependency_info {
@@ -68,6 +70,100 @@ namespace quokka
 			};
 
 			command_buffer.pipelineBarrier2(dependency_info);
+		}
+
+		// Fills every mip level after the first by blitting each level into the next one at half its size
+		// Expects every level in the transfer destination layout, and leaves them all ready to be sampled by the fragment shader
+		void generate_mipmaps(
+			const vk::raii::CommandBuffer& command_buffer,
+			vk::Image image,
+			vk::Extent2D extent,
+			std::uint32_t mip_levels) noexcept
+		{
+			// Signed, like the blit offsets
+			auto mip_width { static_cast<std::int32_t>(extent.width) };
+			auto mip_height { static_cast<std::int32_t>(extent.height) };
+
+			for (std::uint32_t mip_level { 1 }; mip_level < mip_levels; ++mip_level)
+			{
+				// The previous level was written by the copy or by the previous blit, and this blit reads it
+				transition_image_layout(
+					command_buffer,
+					image,
+					mip_level_subresource_range(vk::ImageAspectFlagBits::eColor, mip_level - 1),
+					vk::ImageLayout::eTransferDstOptimal,
+					vk::ImageLayout::eTransferSrcOptimal,
+					vk::PipelineStageFlagBits2::eTransfer,
+					vk::AccessFlagBits2::eTransferWrite,
+					vk::PipelineStageFlagBits2::eTransfer,
+					vk::AccessFlagBits2::eTransferRead
+				);
+
+				// Halved but never below 1 pixel, so the longer side of a non-square image keeps shrinking on its own
+				const std::int32_t next_mip_width { mip_width > 1 ? mip_width / 2 : 1 };
+				const std::int32_t next_mip_height { mip_height > 1 ? mip_height / 2 : 1 };
+
+				// Each region goes from the origin to the opposite corner of its whole level
+				const std::array source_corners { vk::Offset3D {}, vk::Offset3D { .x { mip_width }, .y { mip_height }, .z { 1 } } };
+				const std::array destination_corners { vk::Offset3D {}, vk::Offset3D { .x { next_mip_width }, .y { next_mip_height }, .z { 1 } } };
+
+				const vk::ImageBlit blit {
+					.srcSubresource {
+						.aspectMask { vk::ImageAspectFlagBits::eColor },
+						.mipLevel { mip_level - 1 },
+						.baseArrayLayer { 0 },
+						.layerCount { 1 }
+					},
+					.srcOffsets { source_corners },
+					.dstSubresource {
+						.aspectMask { vk::ImageAspectFlagBits::eColor },
+						.mipLevel { mip_level },
+						.baseArrayLayer { 0 },
+						.layerCount { 1 }
+					},
+					.dstOffsets { destination_corners }
+				};
+
+				// Linear filtering averages the texels that shrink into each one
+				command_buffer.blitImage(
+					image,
+					vk::ImageLayout::eTransferSrcOptimal,
+					image,
+					vk::ImageLayout::eTransferDstOptimal,
+					blit,
+					vk::Filter::eLinear
+				);
+
+				// The previous level is final, so it can be sampled once this blit is done reading it
+				// Only a read to wait for, so no source access is needed, just the stage
+				transition_image_layout(
+					command_buffer,
+					image,
+					mip_level_subresource_range(vk::ImageAspectFlagBits::eColor, mip_level - 1),
+					vk::ImageLayout::eTransferSrcOptimal,
+					vk::ImageLayout::eShaderReadOnlyOptimal,
+					vk::PipelineStageFlagBits2::eTransfer,
+					{},
+					vk::PipelineStageFlagBits2::eFragmentShader,
+					vk::AccessFlagBits2::eShaderRead
+				);
+
+				mip_width = next_mip_width;
+				mip_height = next_mip_height;
+			}
+
+			// The last level is never read by a blit, so it goes straight from being written to being sampled
+			transition_image_layout(
+				command_buffer,
+				image,
+				mip_level_subresource_range(vk::ImageAspectFlagBits::eColor, mip_levels - 1),
+				vk::ImageLayout::eTransferDstOptimal,
+				vk::ImageLayout::eShaderReadOnlyOptimal,
+				vk::PipelineStageFlagBits2::eTransfer,
+				vk::AccessFlagBits2::eTransferWrite,
+				vk::PipelineStageFlagBits2::eFragmentShader,
+				vk::AccessFlagBits2::eShaderRead
+			);
 		}
 	}
 
@@ -265,6 +361,18 @@ namespace quokka
 			.height { static_cast<std::uint32_t>(height) }
 		};
 
+		// Each level halves the previous one down to 1x1, so there are floor(log2(longest side)) + 1 levels,
+		// which is the number of bits needed to write the longest side
+		const auto mip_levels { static_cast<std::uint32_t>(std::bit_width(std::max(extent.width, extent.height))) };
+
+		// The blits that generate the mipmaps filter linearly, which practically every GPU supports for this format,
+		// but it's checked anyway in case texture_format changes
+		const auto format_properties { device_.physical_device().getFormatProperties(texture_format) };
+		if (!(format_properties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eSampledImageFilterLinear))
+		{
+			throw std::runtime_error("The texture format doesn't support the linear filtering needed to generate its mipmaps");
+		}
+
 		// One byte per channel
 		constexpr std::size_t bytes_per_texel { 4 };
 		const std::span<const stbi_uc> texels { pixels.get(), std::size_t { extent.width } * extent.height * bytes_per_texel };
@@ -272,23 +380,24 @@ namespace quokka
 		// Only lives until its contents are copied into the image
 		const auto staging_buffer { create_staging_buffer(device_, std::as_bytes(texels)) };
 
-		// A transfer destination for the copy, and sampled by the shaders afterwards
+		// Transfer destination of the copy and the blits, transfer source of the blits, and sampled by the shaders afterwards
 		texture_image_ = create_image(
 			device_,
 			extent,
+			mip_levels,
 			texture_format,
-			vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+			vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
 			vk::MemoryPropertyFlagBits::eDeviceLocal
 		);
 
-		// Both transitions and the copy go in a single submission
-		submit_one_time_commands(device_, command_pool_, [this, &staging_buffer, extent](const vk::raii::CommandBuffer& command_buffer)
+		// The transitions, the copy and the mipmap generation go in a single submission
+		submit_one_time_commands(device_, command_pool_, [this, &staging_buffer, extent, mip_levels](const vk::raii::CommandBuffer& command_buffer)
 		{
-			// Nothing to wait for, the old contents are discarded, and the copy waits for the transition
+			// Every mip level at once: nothing to wait for, the old contents are discarded, and the copy and the blits wait for it
 			transition_image_layout(
 				command_buffer,
 				*texture_image_.handle,
-				vk::ImageAspectFlagBits::eColor,
+				full_subresource_range(vk::ImageAspectFlagBits::eColor),
 				vk::ImageLayout::eUndefined,
 				vk::ImageLayout::eTransferDstOptimal,
 				vk::PipelineStageFlagBits2::eNone,
@@ -304,6 +413,7 @@ namespace quokka
 				.bufferImageHeight { 0 },
 				.imageSubresource {
 					.aspectMask { vk::ImageAspectFlagBits::eColor },
+					// The texels from the file go into the full size level, the others are generated from it
 					.mipLevel { 0 },
 					.baseArrayLayer { 0 },
 					.layerCount { 1 }
@@ -314,18 +424,8 @@ namespace quokka
 
 			command_buffer.copyBufferToImage(*staging_buffer.handle, *texture_image_.handle, vk::ImageLayout::eTransferDstOptimal, copy_region);
 
-			// Sampling in the fragment shader waits for the copy to finish
-			transition_image_layout(
-				command_buffer,
-				*texture_image_.handle,
-				vk::ImageAspectFlagBits::eColor,
-				vk::ImageLayout::eTransferDstOptimal,
-				vk::ImageLayout::eShaderReadOnlyOptimal,
-				vk::PipelineStageFlagBits2::eTransfer,
-				vk::AccessFlagBits2::eTransferWrite,
-				vk::PipelineStageFlagBits2::eFragmentShader,
-				vk::AccessFlagBits2::eShaderRead
-			);
+			// Also leaves every mip level ready to be sampled by the fragment shader
+			generate_mipmaps(command_buffer, *texture_image_.handle, extent, mip_levels);
 		});
 	}
 
@@ -340,7 +440,7 @@ namespace quokka
 			// Interpolate between the nearest texels instead of picking one, both when magnified and minified
 			.magFilter { vk::Filter::eLinear },
 			.minFilter { vk::Filter::eLinear },
-			// Only matters with mipmaps, which the texture doesn't have yet
+			// Blends the two closest mip levels, so the switch from one to the next isn't visible
 			.mipmapMode { vk::SamplerMipmapMode::eLinear },
 			// Coordinates outside 0 to 1 wrap around, tiling the texture
 			.addressModeU { vk::SamplerAddressMode::eRepeat },
@@ -353,9 +453,9 @@ namespace quokka
 			// Comparing texels against a reference value is for shadow maps
 			.compareEnable { vk::False },
 			.compareOp { vk::CompareOp::eAlways },
-			// A single mip level
+			// Every mip level the texture has, starting at the full size one
 			.minLod { 0.0f },
-			.maxLod { 0.0f },
+			.maxLod { vk::LodClampNone },
 			// Only used with the clamp to border address mode
 			.borderColor { vk::BorderColor::eIntOpaqueBlack },
 			// Coordinates go from 0 to 1 regardless of the texture size
@@ -519,7 +619,7 @@ namespace quokka
 		transition_image_layout(
 			command_buffer,
 			swapchain_.image(image_index),
-			vk::ImageAspectFlagBits::eColor,
+			full_subresource_range(vk::ImageAspectFlagBits::eColor),
 			vk::ImageLayout::eUndefined,
 			vk::ImageLayout::eColorAttachmentOptimal,
 			vk::PipelineStageFlagBits2::eColorAttachmentOutput,
@@ -533,7 +633,7 @@ namespace quokka
 		transition_image_layout(
 			command_buffer,
 			swapchain_.depth_image(),
-			vk::ImageAspectFlagBits::eDepth,
+			full_subresource_range(vk::ImageAspectFlagBits::eDepth),
 			vk::ImageLayout::eUndefined,
 			vk::ImageLayout::eDepthAttachmentOptimal,
 			vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
@@ -627,7 +727,7 @@ namespace quokka
 		transition_image_layout(
 			command_buffer,
 			swapchain_.image(image_index),
-			vk::ImageAspectFlagBits::eColor,
+			full_subresource_range(vk::ImageAspectFlagBits::eColor),
 			vk::ImageLayout::eColorAttachmentOptimal,
 			vk::ImageLayout::ePresentSrcKHR,
 			vk::PipelineStageFlagBits2::eColorAttachmentOutput,

@@ -4,14 +4,29 @@
 
 #include <vulkan/vulkan_raii.hpp>
 
+#include <cstdint> // std::uint32_t
+
 namespace quokka
 {
-	// The whole of an image without mipmaps or array layers, for the given aspect (color or depth)
+	// Every mip level of an image without array layers, for the given aspect (color or depth)
 	[[nodiscard]] constexpr vk::ImageSubresourceRange full_subresource_range(vk::ImageAspectFlags aspect) noexcept
 	{
 		return {
 			.aspectMask { aspect },
 			.baseMipLevel { 0 },
+			// However many the image has, so the same range works with and without mipmaps
+			.levelCount { vk::RemainingMipLevels },
+			.baseArrayLayer { 0 },
+			.layerCount { 1 }
+		};
+	}
+
+	// A single mip level of an image without array layers, for the given aspect (color or depth)
+	[[nodiscard]] constexpr vk::ImageSubresourceRange mip_level_subresource_range(vk::ImageAspectFlags aspect, std::uint32_t mip_level) noexcept
+	{
+		return {
+			.aspectMask { aspect },
+			.baseMipLevel { mip_level },
 			.levelCount { 1 },
 			.baseArrayLayer { 0 },
 			.layerCount { 1 }
@@ -26,10 +41,11 @@ namespace quokka
 		vk::raii::DeviceMemory memory { nullptr };
 	};
 
-	// 2D with optimal tiling, no mipmaps or multisampling, exclusive to one queue family and backed by a new allocation
+	// 2D with optimal tiling and no multisampling, exclusive to one queue family and backed by a new allocation
 	[[nodiscard]] Image create_image(
 		const Device& device,
 		vk::Extent2D extent,
+		std::uint32_t mip_levels,
 		vk::Format format,
 		vk::ImageUsageFlags usage,
 		vk::MemoryPropertyFlags properties);
