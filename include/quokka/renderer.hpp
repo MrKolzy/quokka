@@ -75,7 +75,7 @@ namespace quokka
 		// How texels are filtered and addressed when sampled, independent of any particular image
 		vk::raii::Sampler texture_sampler_ { nullptr };
 
-		// Transformation matrices, one per frame in flight so the CPU never overwrites one the GPU may still be reading
+		// Camera matrices, one per frame in flight so the CPU never overwrites one the GPU may still be reading
 		std::vector<Buffer> uniform_buffers_ {};
 		// Mapped once and kept mapped, since they're written every frame
 		std::vector<void*> mapped_uniform_buffers_ {};
@@ -93,7 +93,7 @@ namespace quokka
 		// Frame in flight currently being recorded, cycles from 0 to max_frames_in_flight - 1
 		std::uint32_t frame_index_ {};
 
-		// The model rotates according to the time elapsed since then
+		// The objects rotate according to the time elapsed since then
 		std::chrono::steady_clock::time_point start_time_ { std::chrono::steady_clock::now() };
 	};
 }

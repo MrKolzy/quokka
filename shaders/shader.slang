@@ -1,13 +1,21 @@
-// Must match TransformUniforms in renderer.cpp, and binding 0 of set 0 in the descriptor set layout
-struct TransformUniforms
+// Must match CameraUniforms in renderer.cpp, and binding 0 of set 0 in the descriptor set layout
+struct CameraUniforms
 {
-	float4x4 model;
 	float4x4 view;
 	float4x4 projection;
 };
 
 [[vk::binding(0, 0)]]
-ConstantBuffer<TransformUniforms> transforms;
+ConstantBuffer<CameraUniforms> camera;
+
+// Must match ObjectConstants in graphics_pipeline.hpp, pushed before drawing each object
+struct ObjectConstants
+{
+	float4x4 model;
+};
+
+[[vk::push_constant]]
+ConstantBuffer<ObjectConstants> object_constants;
 
 // Image and sampler in a single descriptor, must match binding 1 of set 0 in the descriptor set layout
 [[vk::binding(1, 0)]]
@@ -34,7 +42,7 @@ VertexOutput vert_main(VertexInput input)
 {
 	VertexOutput output;
 	// Model to world, world to view and view to clip space, applied from right to left
-	output.position = mul(transforms.projection, mul(transforms.view, mul(transforms.model, float4(input.position, 1.0))));
+	output.position = mul(camera.projection, mul(camera.view, mul(object_constants.model, float4(input.position, 1.0))));
 	output.color = input.color;
 	output.texture_coordinates = input.texture_coordinates;
 

@@ -4,7 +4,7 @@
 #include "quokka/one_time_commands.hpp"
 
 #include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp> // glm::rotate, glm::lookAt, glm::perspective
+#include <glm/gtc/matrix_transform.hpp> // glm::translate, glm::rotate, glm::scale, glm::lookAt, glm::perspective
 #include <stb_image.h>
 
 #include <algorithm> // std::max
@@ -25,13 +25,40 @@ namespace quokka
 {
 	namespace
 	{
-		// Must match TransformUniforms in the shader
+		// Must match CameraUniforms in the shader
 		// Only 4x4 matrices, which already meet the 16-byte alignment uniform buffers require
-		struct TransformUniforms
+		struct CameraUniforms
 		{
-			glm::mat4 model;
 			glm::mat4 view;
 			glm::mat4 projection;
+		};
+
+		// Position, orientation and size of an object in the world
+		struct Transform
+		{
+			glm::vec3 position { 0.0f, 0.0f, 0.0f };
+			// Euler angles in radians around the x, y and z axes
+			glm::vec3 rotation { 0.0f, 0.0f, 0.0f };
+			glm::vec3 scale { 1.0f, 1.0f, 1.0f };
+
+			// Scales, then rotates and finally moves the object, since the matrices apply from right to left
+			[[nodiscard]] glm::mat4 model_matrix() const noexcept
+			{
+				glm::mat4 model { glm::translate(glm::mat4 { 1.0f }, position) };
+				model = glm::rotate(model, rotation.x, glm::vec3 { 1.0f, 0.0f, 0.0f });
+				model = glm::rotate(model, rotation.y, glm::vec3 { 0.0f, 1.0f, 0.0f });
+				model = glm::rotate(model, rotation.z, glm::vec3 { 0.0f, 0.0f, 1.0f });
+
+				return glm::scale(model, scale);
+			}
+		};
+
+		// Copies of the model drawn every frame: one in the center and two smaller ones behind it to the sides,
+		// turned 45 degrees in opposite directions
+		constexpr std::array object_transforms {
+			Transform { .position { 0.0f, 0.0f, 0.0f }, .rotation { 0.0f, 0.0f, 0.0f }, .scale { 1.0f, 1.0f, 1.0f } },
+			Transform { .position { -2.0f, 0.0f, -1.0f }, .rotation { 0.0f, glm::radians(45.0f), 0.0f }, .scale { 0.75f, 0.75f, 0.75f } },
+			Transform { .position { 2.0f, 0.0f, -1.0f }, .rotation { 0.0f, glm::radians(-45.0f), 0.0f }, .scale { 0.75f, 0.75f, 0.75f } }
 		};
 
 		// sRGB like the texture file, so sampling converts the colors to linear
@@ -316,6 +343,13 @@ namespace quokka
 	void Renderer::load_model()
 	{
 		mesh_ = load_obj(constants::model_path);
+
+		// The viking room is stored with z pointing up, but the world uses y up like glTF,
+		// so it's rotated -90 degrees around x once here instead of in every model matrix
+		for (auto& vertex : mesh_.vertices)
+		{
+			vertex.position = { vertex.position.x, vertex.position.z, -vertex.position.y };
+		}
 	}
 
 	void Renderer::create_vertex_buffer()
@@ -468,7 +502,7 @@ namespace quokka
 
 	void Renderer::create_uniform_buffers()
 	{
-		constexpr vk::DeviceSize buffer_size { sizeof(TransformUniforms) };
+		constexpr vk::DeviceSize buffer_size { sizeof(CameraUniforms) };
 
 		// Written every frame, so the CPU writes them directly instead of going through a staging buffer
 		// Host visible so the CPU can map them, and host coherent so its writes reach the GPU without explicit flushes
@@ -541,10 +575,10 @@ namespace quokka
 			const vk::DescriptorBufferInfo buffer_info {
 				.buffer { *uniform_buffers_[index].handle },
 				.offset { 0 },
-				.range { sizeof(TransformUniforms) }
+				.range { sizeof(CameraUniforms) }
 			};
 
-			const vk::WriteDescriptorSet transforms_write {
+			const vk::WriteDescriptorSet camera_write {
 				.dstSet { *descriptor_sets_[index] },
 				.dstBinding { 0 },
 				// Not an array, so the first and only element
@@ -563,7 +597,7 @@ namespace quokka
 				.pImageInfo { &image_info }
 			};
 
-			const std::array descriptor_writes { transforms_write, texture_write };
+			const std::array descriptor_writes { camera_write, texture_write };
 
 			// No copies from other descriptor sets
 			device_.logical_device().updateDescriptorSets(descriptor_writes, {});
@@ -590,21 +624,16 @@ namespace quokka
 
 	void Renderer::update_uniform_buffer(void* mapped_memory) const
 	{
-		// In seconds, as a float so the rotation is smooth
-		const std::chrono::duration<float> elapsed_time { std::chrono::steady_clock::now() - start_time_ };
-
 		const float aspect_ratio { static_cast<float>(swapchain_.extent().width) / static_cast<float>(swapchain_.extent().height) };
 
-		const TransformUniforms transforms {
-			// Rotates 90 degrees per second around the z axis
-			.model { glm::rotate(glm::mat4 { 1.0f }, elapsed_time.count() * glm::radians(90.0f), glm::vec3 { 0.0f, 0.0f, 1.0f }) },
-			// Looks at the origin diagonally from (2, 2, 2), with the z axis pointing up
-			.view { glm::lookAt(glm::vec3 { 2.0f, 2.0f, 2.0f }, glm::vec3 { 0.0f, 0.0f, 0.0f }, glm::vec3 { 0.0f, 0.0f, 1.0f }) },
-			// 45 degree vertical field of view, with the near and far planes at 0.1 and 10
-			.projection { glm::perspective(glm::radians(45.0f), aspect_ratio, 0.1f, 10.0f) }
+		const CameraUniforms camera {
+			// Looks at the origin from (2, 2, 6), above and to the right of the objects, with the y axis pointing up
+			.view { glm::lookAt(glm::vec3 { 2.0f, 2.0f, 6.0f }, glm::vec3 { 0.0f, 0.0f, 0.0f }, glm::vec3 { 0.0f, 1.0f, 0.0f }) },
+			// 45 degree vertical field of view, with the near and far planes at 0.1 and 20
+			.projection { glm::perspective(glm::radians(45.0f), aspect_ratio, 0.1f, 20.0f) }
 		};
 
-		std::memcpy(mapped_memory, &transforms, sizeof(transforms));
+		std::memcpy(mapped_memory, &camera, sizeof(camera));
 	}
 
 	void Renderer::record_command_buffer(
@@ -737,8 +766,22 @@ namespace quokka
 		command_buffer.setViewport(0, viewport);
 		command_buffer.setScissor(0, full_image_area);
 
-		// Every index in the buffer, 1 instance, starting at the first index, vertex and instance
-		command_buffer.drawIndexed(static_cast<std::uint32_t>(mesh_.indices.size()), 1, 0, 0, 0);
+		// In seconds, as a float so the rotation is smooth
+		const std::chrono::duration<float> elapsed_time { std::chrono::steady_clock::now() - start_time_ };
+
+		// Every object shares the mesh, the texture and the camera, so only the pushed model matrix changes between draws
+		for (const auto& transform : object_transforms)
+		{
+			// Each one also turns around its own vertical axis, 30 degrees per second
+			Transform animated_transform { transform };
+			animated_transform.rotation.y += elapsed_time.count() * glm::radians(30.0f);
+
+			const ObjectConstants object_constants { .model { animated_transform.model_matrix() } };
+			command_buffer.pushConstants<ObjectConstants>(*graphics_pipeline_.pipeline_layout(), vk::ShaderStageFlagBits::eVertex, 0, object_constants);
+
+			// Every index in the buffer, 1 instance, starting at the first index, vertex and instance
+			command_buffer.drawIndexed(static_cast<std::uint32_t>(mesh_.indices.size()), 1, 0, 0, 0);
+		}
 
 		command_buffer.endRendering();
 

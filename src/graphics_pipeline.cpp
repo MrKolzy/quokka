@@ -62,8 +62,8 @@ namespace quokka
 
 		vk::raii::DescriptorSetLayout create_descriptor_set_layout(const vk::raii::Device& device)
 		{
-			// The transformation matrices, read only by the vertex shader
-			constexpr vk::DescriptorSetLayoutBinding transforms_binding {
+			// The camera matrices, read only by the vertex shader
+			constexpr vk::DescriptorSetLayoutBinding camera_binding {
 				.binding { 0 },
 				.descriptorType { vk::DescriptorType::eUniformBuffer },
 				// A single uniform buffer, not an array of them
@@ -79,7 +79,7 @@ namespace quokka
 				.stageFlags { vk::ShaderStageFlagBits::eFragment }
 			};
 
-			constexpr std::array bindings { transforms_binding, texture_binding };
+			constexpr std::array bindings { camera_binding, texture_binding };
 
 			const vk::DescriptorSetLayoutCreateInfo create_info {
 				.bindingCount { static_cast<std::uint32_t>(bindings.size()) },
@@ -93,10 +93,20 @@ namespace quokka
 			const vk::raii::Device& device,
 			const vk::raii::DescriptorSetLayout& descriptor_set_layout)
 		{
-			// A single descriptor set, set 0 in the shader, and no push constants yet
+			// The model matrix of each object, read only by the vertex shader
+			// Pushed into the command buffer before each draw, so drawing more objects needs no extra buffers or descriptor sets
+			constexpr vk::PushConstantRange object_constants_range {
+				.stageFlags { vk::ShaderStageFlagBits::eVertex },
+				.offset { 0 },
+				.size { sizeof(ObjectConstants) }
+			};
+
+			// A single descriptor set, set 0 in the shader
 			const vk::PipelineLayoutCreateInfo pipeline_layout_info {
 				.setLayoutCount { 1 },
-				.pSetLayouts { &*descriptor_set_layout }
+				.pSetLayouts { &*descriptor_set_layout },
+				.pushConstantRangeCount { 1 },
+				.pPushConstantRanges { &object_constants_range }
 			};
 
 			return device.createPipelineLayout(pipeline_layout_info);

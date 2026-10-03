@@ -2,10 +2,18 @@
 
 #include "quokka/device.hpp"
 
+#include <glm/glm.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
 namespace quokka
 {
+	// Pushed before drawing each object, must match ObjectConstants in the shader
+	// A 4x4 matrix takes 64 bytes, well within the 128 bytes of push constants every GPU guarantees
+	struct ObjectConstants
+	{
+		glm::mat4 model;
+	};
+
 	// Owns the graphics pipeline and the layouts of the resources it accesses, built once for given attachment formats and sample count
 	class GraphicsPipeline
 	{
