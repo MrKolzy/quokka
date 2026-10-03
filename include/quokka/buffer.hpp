@@ -4,6 +4,9 @@
 
 #include <vulkan/vulkan_raii.hpp>
 
+#include <cstddef> // std::byte
+#include <span>
+
 namespace quokka
 {
 	// Each buffer gets its own allocation, fine for a few buffers,
@@ -22,11 +25,11 @@ namespace quokka
 		vk::BufferUsageFlags usage,
 		vk::MemoryPropertyFlags properties);
 
-	// Copies the first size bytes of source into destination, and waits until the copy finishes
-	void copy_buffer(
+	// Device local buffer with the given contents, uploaded through a temporary staging buffer
+	// Also usable as a transfer destination, since that's how its contents get there
+	[[nodiscard]] Buffer create_device_local_buffer(
 		const Device& device,
 		const vk::raii::CommandPool& command_pool,
-		const Buffer& source,
-		const Buffer& destination,
-		vk::DeviceSize size);
+		std::span<const std::byte> contents,
+		vk::BufferUsageFlags usage);
 }

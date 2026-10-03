@@ -5,21 +5,26 @@
 
 #include <array>
 #include <cstdint> // std::uint#_t
-#include <cstring> // std::memcpy
 #include <exception>
 #include <limits>
+#include <span>
 #include <stdexcept> // std::runtime_error
 
 namespace quokka
 {
 	namespace
 	{
-		// Clockwise on screen, matching the front face of the pipeline
-		constexpr std::array triangle_vertices {
-			Vertex { .position { 0.0f, -0.5f }, .color { 1.0f, 0.0f, 0.0f } },
-			Vertex { .position { 0.5f, 0.5f }, .color { 0.0f, 1.0f, 0.0f } },
-			Vertex { .position { -0.5f, 0.5f }, .color { 0.0f, 0.0f, 1.0f } }
+		// Corners of the rectangle, clockwise from the top left (Vulkan's y axis points down)
+		constexpr std::array rectangle_vertices {
+			Vertex { .position { -0.5f, -0.5f }, .color { 1.0f, 0.0f, 0.0f } },
+			Vertex { .position { 0.5f, -0.5f }, .color { 0.0f, 1.0f, 0.0f } },
+			Vertex { .position { 0.5f, 0.5f }, .color { 0.0f, 0.0f, 1.0f } },
+			Vertex { .position { -0.5f, 0.5f }, .color { 1.0f, 1.0f, 1.0f } }
 		};
+
+		// Two triangles sharing the diagonal, both clockwise on screen to match the front face of the pipeline
+		// 16-bit indices address up to 65536 vertices and take half the memory of 32-bit ones
+		constexpr std::array<std::uint16_t, 6> rectangle_indices { 0, 1, 2, 2, 3, 0 };
 
 		// Changes the layout of a color image after the source stages and accesses finish,
 		// and before the destination ones start
@@ -66,6 +71,7 @@ namespace quokka
 		create_command_pool();
 		create_command_buffers();
 		create_vertex_buffer();
+		create_index_buffer();
 		create_frame_sync_objects();
 	}
 
@@ -191,29 +197,22 @@ namespace quokka
 
 	void Renderer::create_vertex_buffer()
 	{
-		constexpr vk::DeviceSize buffer_size { sizeof(Vertex) * triangle_vertices.size() };
+		vertex_buffer_ = create_device_local_buffer(
+			device_,
+			command_pool_,
+			std::as_bytes(std::span { rectangle_vertices }),
+			vk::BufferUsageFlagBits::eVertexBuffer
+		);
+	}
 
-		// Host visible so the CPU can map it, and host coherent so its writes reach the GPU without explicit flushes
-		constexpr vk::MemoryPropertyFlags staging_memory_properties {
-			vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent
-		};
-
-		// Only lives until its contents are copied into the vertex buffer
-		const auto staging_buffer { create_buffer(device_, buffer_size, vk::BufferUsageFlagBits::eTransferSrc, staging_memory_properties) };
-
-		void* const data { staging_buffer.memory.mapMemory(0, buffer_size) };
-		std::memcpy(data, triangle_vertices.data(), buffer_size);
-		staging_buffer.memory.unmapMemory();
-
-		// Also a transfer destination, since its contents are copied from the staging buffer
-		constexpr vk::BufferUsageFlags vertex_buffer_usage {
-			vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst
-		};
-
-		// Device local memory is the fastest for the GPU to read, but on a dedicated GPU the CPU can't map it
-		vertex_buffer_ = create_buffer(device_, buffer_size, vertex_buffer_usage, vk::MemoryPropertyFlagBits::eDeviceLocal);
-
-		copy_buffer(device_, command_pool_, staging_buffer, vertex_buffer_, buffer_size);
+	void Renderer::create_index_buffer()
+	{
+		index_buffer_ = create_device_local_buffer(
+			device_,
+			command_pool_,
+			std::as_bytes(std::span { rectangle_indices }),
+			vk::BufferUsageFlagBits::eIndexBuffer
+		);
 	}
 
 	void Renderer::create_frame_sync_objects()
@@ -287,6 +286,9 @@ namespace quokka
 		// Starting at binding 0, with the vertex data at the start of the buffer
 		command_buffer.bindVertexBuffers(0, *vertex_buffer_.handle, { 0 });
 
+		// Offset 0, and the index type must match the element type of rectangle_indices
+		command_buffer.bindIndexBuffer(*index_buffer_.handle, 0, vk::IndexType::eUint16);
+
 		// Viewport and scissor are dynamic states, so they must be set before drawing
 		const vk::Viewport viewport {
 			.x { 0.0f },
@@ -300,8 +302,8 @@ namespace quokka
 		command_buffer.setViewport(0, viewport);
 		command_buffer.setScissor(0, full_image_area);
 
-		// Every vertex in the buffer, 1 instance, starting at the first vertex and instance
-		command_buffer.draw(static_cast<std::uint32_t>(triangle_vertices.size()), 1, 0, 0);
+		// Every index in the buffer, 1 instance, starting at the first index, vertex and instance
+		command_buffer.drawIndexed(static_cast<std::uint32_t>(rectangle_indices.size()), 1, 0, 0, 0);
 
 		command_buffer.endRendering();
 
