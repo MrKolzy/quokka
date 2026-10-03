@@ -60,10 +60,34 @@ namespace quokka
 			return device.createShaderModule(create_info);
 		}
 
-		vk::raii::PipelineLayout create_pipeline_layout(const vk::raii::Device& device)
+		vk::raii::DescriptorSetLayout create_descriptor_set_layout(const vk::raii::Device& device)
 		{
-			// Required even when empty, no descriptor set layouts or push constants yet
-			constexpr vk::PipelineLayoutCreateInfo pipeline_layout_info {};
+			// The transformation matrices, read only by the vertex shader
+			constexpr vk::DescriptorSetLayoutBinding transforms_binding {
+				.binding { 0 },
+				.descriptorType { vk::DescriptorType::eUniformBuffer },
+				// A single uniform buffer, not an array of them
+				.descriptorCount { 1 },
+				.stageFlags { vk::ShaderStageFlagBits::eVertex }
+			};
+
+			const vk::DescriptorSetLayoutCreateInfo create_info {
+				.bindingCount { 1 },
+				.pBindings { &transforms_binding }
+			};
+
+			return device.createDescriptorSetLayout(create_info);
+		}
+
+		vk::raii::PipelineLayout create_pipeline_layout(
+			const vk::raii::Device& device,
+			const vk::raii::DescriptorSetLayout& descriptor_set_layout)
+		{
+			// A single descriptor set, set 0 in the shader, and no push constants yet
+			const vk::PipelineLayoutCreateInfo pipeline_layout_info {
+				.setLayoutCount { 1 },
+				.pSetLayouts { &*descriptor_set_layout }
+			};
 
 			return device.createPipelineLayout(pipeline_layout_info);
 		}
@@ -122,8 +146,8 @@ namespace quokka
 				// Any mode other than fill requires a GPU feature
 				.polygonMode { vk::PolygonMode::eFill },
 				.cullMode { vk::CullModeFlagBits::eBack },
-				// The triangle vertices are listed in clockwise order on screen
-				.frontFace { vk::FrontFace::eClockwise },
+				// Counterclockwise on screen, the convention GLM's matrices assume, kept by the flipped viewport
+				.frontFace { vk::FrontFace::eCounterClockwise },
 				// Mainly used for shadow mapping
 				.depthBiasEnable { vk::False },
 				// Any width other than 1.0 requires a GPU feature
@@ -195,9 +219,20 @@ namespace quokka
 	// ***
 
 	GraphicsPipeline::GraphicsPipeline(const Device& device, vk::Format color_format)
-		: pipeline_layout_ { create_pipeline_layout(device.logical_device()) }
+		: descriptor_set_layout_ { create_descriptor_set_layout(device.logical_device()) }
+		, pipeline_layout_ { create_pipeline_layout(device.logical_device(), descriptor_set_layout_) }
 		, graphics_pipeline_ { create_graphics_pipeline(device.logical_device(), pipeline_layout_, color_format) }
 	{
+	}
+
+	const vk::raii::DescriptorSetLayout& GraphicsPipeline::descriptor_set_layout() const noexcept
+	{
+		return descriptor_set_layout_;
+	}
+
+	const vk::raii::PipelineLayout& GraphicsPipeline::pipeline_layout() const noexcept
+	{
+		return pipeline_layout_;
 	}
 
 	const vk::raii::Pipeline& GraphicsPipeline::handle() const noexcept

@@ -3,8 +3,13 @@
 #include "quokka/constants.hpp"
 #include "quokka/vertex.hpp"
 
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp> // glm::rotate, glm::lookAt, glm::perspective
+
 #include <array>
+#include <chrono>
 #include <cstdint> // std::uint#_t
+#include <cstring> // std::memcpy
 #include <exception>
 #include <limits>
 #include <span>
@@ -14,7 +19,7 @@ namespace quokka
 {
 	namespace
 	{
-		// Corners of the rectangle, clockwise from the top left (Vulkan's y axis points down)
+		// Corners of the rectangle in the xy plane, counterclockwise as seen from the +z side
 		constexpr std::array rectangle_vertices {
 			Vertex { .position { -0.5f, -0.5f }, .color { 1.0f, 0.0f, 0.0f } },
 			Vertex { .position { 0.5f, -0.5f }, .color { 0.0f, 1.0f, 0.0f } },
@@ -22,9 +27,18 @@ namespace quokka
 			Vertex { .position { -0.5f, 0.5f }, .color { 1.0f, 1.0f, 1.0f } }
 		};
 
-		// Two triangles sharing the diagonal, both clockwise on screen to match the front face of the pipeline
+		// Two triangles sharing the diagonal, both counterclockwise as seen from the +z side to match the front face of the pipeline
 		// 16-bit indices address up to 65536 vertices and take half the memory of 32-bit ones
 		constexpr std::array<std::uint16_t, 6> rectangle_indices { 0, 1, 2, 2, 3, 0 };
+
+		// Must match TransformUniforms in the shader
+		// Only 4x4 matrices, which already meet the 16-byte alignment uniform buffers require
+		struct TransformUniforms
+		{
+			glm::mat4 model;
+			glm::mat4 view;
+			glm::mat4 projection;
+		};
 
 		// Changes the layout of a color image after the source stages and accesses finish,
 		// and before the destination ones start
@@ -72,6 +86,9 @@ namespace quokka
 		create_command_buffers();
 		create_vertex_buffer();
 		create_index_buffer();
+		create_uniform_buffers();
+		create_descriptor_pool();
+		create_descriptor_sets();
 		create_frame_sync_objects();
 	}
 
@@ -98,6 +115,8 @@ namespace quokka
 		const auto& in_flight_fence { in_flight_fences_[frame_index_] };
 		const auto& image_available_semaphore { image_available_semaphores_[frame_index_] };
 		const auto& command_buffer { command_buffers_[frame_index_] };
+		const auto& descriptor_set { descriptor_sets_[frame_index_] };
+		void* const mapped_uniform_buffer { mapped_uniform_buffers_[frame_index_] };
 
 		// Wait until the GPU finishes this frame's previous submission, so its command buffer can be recorded again
 		if (device_.logical_device().waitForFences(*in_flight_fence, vk::True, no_timeout) != vk::Result::eSuccess)
@@ -120,8 +139,11 @@ namespace quokka
 		// Reset only once work is sure to be submitted, otherwise an early return would leave it unsignaled forever
 		device_.logical_device().resetFences(*in_flight_fence);
 
+		// The fence wait above guarantees the GPU is no longer reading this frame's uniform buffer
+		update_uniform_buffer(mapped_uniform_buffer);
+
 		// Beginning the command buffer implicitly resets it, since the pool has the reset flag
-		record_command_buffer(command_buffer, image_index);
+		record_command_buffer(command_buffer, descriptor_set, image_index);
 
 		// Indexed by image, not by frame, since it's tied to the presentation of that image
 		const auto& render_finished_semaphore { swapchain_.render_finished_semaphore(image_index) };
@@ -215,6 +237,85 @@ namespace quokka
 		);
 	}
 
+	void Renderer::create_uniform_buffers()
+	{
+		constexpr vk::DeviceSize buffer_size { sizeof(TransformUniforms) };
+
+		// Written every frame, so the CPU writes them directly instead of going through a staging buffer
+		// Host visible so the CPU can map them, and host coherent so its writes reach the GPU without explicit flushes
+		constexpr vk::MemoryPropertyFlags memory_properties {
+			vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent
+		};
+
+		uniform_buffers_.reserve(constants::max_frames_in_flight);
+		mapped_uniform_buffers_.reserve(constants::max_frames_in_flight);
+
+		for (std::uint32_t index { 0 }; index < constants::max_frames_in_flight; ++index)
+		{
+			uniform_buffers_.push_back(create_buffer(device_, buffer_size, vk::BufferUsageFlagBits::eUniformBuffer, memory_properties));
+
+			// Never unmapped explicitly, freeing the memory unmaps it
+			mapped_uniform_buffers_.push_back(uniform_buffers_.back().memory.mapMemory(0, buffer_size));
+		}
+	}
+
+	void Renderer::create_descriptor_pool()
+	{
+		// One uniform buffer descriptor per frame in flight
+		constexpr vk::DescriptorPoolSize pool_size {
+			.type { vk::DescriptorType::eUniformBuffer },
+			.descriptorCount { constants::max_frames_in_flight }
+		};
+
+		const vk::DescriptorPoolCreateInfo create_info {
+			// vk::raii::DescriptorSet frees its set when destroyed, which requires this flag
+			.flags { vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet },
+			.maxSets { constants::max_frames_in_flight },
+			.poolSizeCount { 1 },
+			.pPoolSizes { &pool_size }
+		};
+
+		descriptor_pool_ = device_.logical_device().createDescriptorPool(create_info);
+	}
+
+	void Renderer::create_descriptor_sets()
+	{
+		// Every set has the same layout, but the allocation takes one per set
+		// Parentheses, not braces: this is the count constructor
+		const std::vector<vk::DescriptorSetLayout> layouts(constants::max_frames_in_flight, *graphics_pipeline_.descriptor_set_layout());
+
+		const vk::DescriptorSetAllocateInfo allocate_info {
+			.descriptorPool { *descriptor_pool_ },
+			.descriptorSetCount { constants::max_frames_in_flight },
+			.pSetLayouts { layouts.data() }
+		};
+
+		descriptor_sets_ = device_.logical_device().allocateDescriptorSets(allocate_info);
+
+		// Point each set at the uniform buffer of its frame
+		for (std::uint32_t index { 0 }; index < constants::max_frames_in_flight; ++index)
+		{
+			const vk::DescriptorBufferInfo buffer_info {
+				.buffer { *uniform_buffers_[index].handle },
+				.offset { 0 },
+				.range { sizeof(TransformUniforms) }
+			};
+
+			const vk::WriteDescriptorSet descriptor_write {
+				.dstSet { *descriptor_sets_[index] },
+				.dstBinding { 0 },
+				// Not an array, so the first and only element
+				.dstArrayElement { 0 },
+				.descriptorCount { 1 },
+				.descriptorType { vk::DescriptorType::eUniformBuffer },
+				.pBufferInfo { &buffer_info }
+			};
+
+			// No copies from other descriptor sets
+			device_.logical_device().updateDescriptorSets(descriptor_write, {});
+		}
+	}
+
 	void Renderer::create_frame_sync_objects()
 	{
 		// Created signaled, so the first frames don't wait forever for a submission that never happened
@@ -233,7 +334,29 @@ namespace quokka
 		}
 	}
 
-	void Renderer::record_command_buffer(const vk::raii::CommandBuffer& command_buffer, std::uint32_t image_index) const
+	void Renderer::update_uniform_buffer(void* mapped_memory) const
+	{
+		// In seconds, as a float so the rotation is smooth
+		const std::chrono::duration<float> elapsed_time { std::chrono::steady_clock::now() - start_time_ };
+
+		const float aspect_ratio { static_cast<float>(swapchain_.extent().width) / static_cast<float>(swapchain_.extent().height) };
+
+		const TransformUniforms transforms {
+			// Rotates 90 degrees per second around the z axis
+			.model { glm::rotate(glm::mat4 { 1.0f }, elapsed_time.count() * glm::radians(90.0f), glm::vec3 { 0.0f, 0.0f, 1.0f }) },
+			// Looks at the origin diagonally from (2, 2, 2), with the z axis pointing up
+			.view { glm::lookAt(glm::vec3 { 2.0f, 2.0f, 2.0f }, glm::vec3 { 0.0f, 0.0f, 0.0f }, glm::vec3 { 0.0f, 0.0f, 1.0f }) },
+			// 45 degree vertical field of view, with the near and far planes at 0.1 and 10
+			.projection { glm::perspective(glm::radians(45.0f), aspect_ratio, 0.1f, 10.0f) }
+		};
+
+		std::memcpy(mapped_memory, &transforms, sizeof(transforms));
+	}
+
+	void Renderer::record_command_buffer(
+		const vk::raii::CommandBuffer& command_buffer,
+		const vk::raii::DescriptorSet& descriptor_set,
+		std::uint32_t image_index) const
 	{
 		// Re-recorded every frame, so each recording is submitted only once
 		command_buffer.begin({ .flags { vk::CommandBufferUsageFlagBits::eOneTimeSubmit } });
@@ -289,12 +412,22 @@ namespace quokka
 		// Offset 0, and the index type must match the element type of rectangle_indices
 		command_buffer.bindIndexBuffer(*index_buffer_.handle, 0, vk::IndexType::eUint16);
 
+		// Set 0, with no dynamic offsets
+		command_buffer.bindDescriptorSets(
+			vk::PipelineBindPoint::eGraphics,
+			*graphics_pipeline_.pipeline_layout(),
+			0,
+			*descriptor_set,
+			{}
+		);
+
 		// Viewport and scissor are dynamic states, so they must be set before drawing
+		// Negative height flips the y axis to point up like in GLM's projection, so it starts at the bottom edge
 		const vk::Viewport viewport {
 			.x { 0.0f },
-			.y { 0.0f },
+			.y { static_cast<float>(swapchain_.extent().height) },
 			.width { static_cast<float>(swapchain_.extent().width) },
-			.height { static_cast<float>(swapchain_.extent().height) },
+			.height { -static_cast<float>(swapchain_.extent().height) },
 			.minDepth { 0.0f },
 			.maxDepth { 1.0f }
 		};

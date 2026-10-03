@@ -7,6 +7,7 @@
 
 #include <vulkan/vulkan_raii.hpp>
 
+#include <chrono>
 #include <cstdint> // std::uint32_t
 #include <vector>
 
@@ -33,9 +34,16 @@ namespace quokka
 		void create_command_buffers();
 		void create_vertex_buffer();
 		void create_index_buffer();
+		void create_uniform_buffers();
+		void create_descriptor_pool();
+		void create_descriptor_sets();
 		void create_frame_sync_objects();
 
-		void record_command_buffer(const vk::raii::CommandBuffer& command_buffer, std::uint32_t image_index) const;
+		void update_uniform_buffer(void* mapped_memory) const;
+		void record_command_buffer(
+			const vk::raii::CommandBuffer& command_buffer,
+			const vk::raii::DescriptorSet& descriptor_set,
+			std::uint32_t image_index) const;
 
 		const Device& device_;
 		const Swapchain& swapchain_;
@@ -53,6 +61,16 @@ namespace quokka
 		// Indices into vertex_buffer_, so vertices shared by several triangles are stored only once
 		Buffer index_buffer_ {};
 
+		// Transformation matrices, one per frame in flight so the CPU never overwrites one the GPU may still be reading
+		std::vector<Buffer> uniform_buffers_ {};
+		// Mapped once and kept mapped, since they're written every frame
+		std::vector<void*> mapped_uniform_buffers_ {};
+
+		// Allocates the memory of the descriptor sets
+		vk::raii::DescriptorPool descriptor_pool_ { nullptr };
+		// One per frame in flight, each pointing to that frame's uniform buffer
+		std::vector<vk::raii::DescriptorSet> descriptor_sets_ {};
+
 		// Signaled by acquireNextImage, waited on by the submission, one per frame in flight
 		std::vector<vk::raii::Semaphore> image_available_semaphores_ {};
 		// Signaled by the submission, waited on by the CPU, one per frame in flight
@@ -60,5 +78,8 @@ namespace quokka
 
 		// Frame in flight currently being recorded, cycles from 0 to max_frames_in_flight - 1
 		std::uint32_t frame_index_ {};
+
+		// The rectangle rotates according to the time elapsed since then
+		std::chrono::steady_clock::time_point start_time_ { std::chrono::steady_clock::now() };
 	};
 }

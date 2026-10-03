@@ -1,3 +1,14 @@
+// Must match TransformUniforms in renderer.cpp, and binding 0 of set 0 in the descriptor set layout
+struct TransformUniforms
+{
+	float4x4 model;
+	float4x4 view;
+	float4x4 projection;
+};
+
+[[vk::binding(0, 0)]]
+ConstantBuffer<TransformUniforms> transforms;
+
 // Read from the vertex buffer, locations follow declaration order and must match Vertex::attribute_descriptions
 struct VertexInput
 {
@@ -16,7 +27,8 @@ struct VertexOutput
 VertexOutput vert_main(VertexInput input)
 {
 	VertexOutput output;
-	output.position = float4(input.position, 0.0, 1.0);
+	// Model to world, world to view and view to clip space, applied from right to left
+	output.position = mul(transforms.projection, mul(transforms.view, mul(transforms.model, float4(input.position, 0.0, 1.0))));
 	output.color = input.color;
 
 	return output;
