@@ -193,37 +193,27 @@ namespace quokka
 	{
 		constexpr vk::DeviceSize buffer_size { sizeof(Vertex) * triangle_vertices.size() };
 
-		constexpr vk::BufferCreateInfo buffer_info {
-			.size { buffer_size },
-			.usage { vk::BufferUsageFlagBits::eVertexBuffer },
-			// Only accessed from the graphics queue family
-			.sharingMode { vk::SharingMode::eExclusive }
-		};
-
-		vertex_buffer_ = device_.logical_device().createBuffer(buffer_info);
-
-		// The size may be larger than requested, and memoryTypeBits limits which memory types can back the buffer
-		const auto memory_requirements { vertex_buffer_.getMemoryRequirements() };
-
 		// Host visible so the CPU can map it, and host coherent so its writes reach the GPU without explicit flushes
-		constexpr vk::MemoryPropertyFlags memory_properties {
+		constexpr vk::MemoryPropertyFlags staging_memory_properties {
 			vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent
 		};
 
-		const vk::MemoryAllocateInfo allocate_info {
-			.allocationSize { memory_requirements.size },
-			.memoryTypeIndex { device_.find_memory_type(memory_requirements.memoryTypeBits, memory_properties) }
+		// Only lives until its contents are copied into the vertex buffer
+		const auto staging_buffer { create_buffer(device_, buffer_size, vk::BufferUsageFlagBits::eTransferSrc, staging_memory_properties) };
+
+		void* const data { staging_buffer.memory.mapMemory(0, buffer_size) };
+		std::memcpy(data, triangle_vertices.data(), buffer_size);
+		staging_buffer.memory.unmapMemory();
+
+		// Also a transfer destination, since its contents are copied from the staging buffer
+		constexpr vk::BufferUsageFlags vertex_buffer_usage {
+			vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst
 		};
 
-		vertex_buffer_memory_ = device_.logical_device().allocateMemory(allocate_info);
+		// Device local memory is the fastest for the GPU to read, but on a dedicated GPU the CPU can't map it
+		vertex_buffer_ = create_buffer(device_, buffer_size, vertex_buffer_usage, vk::MemoryPropertyFlagBits::eDeviceLocal);
 
-		// Offset 0, since the whole allocation belongs to this buffer
-		vertex_buffer_.bindMemory(*vertex_buffer_memory_, 0);
-
-		// Coherent memory guarantees the copy is visible to the GPU by the next submission
-		void* const data { vertex_buffer_memory_.mapMemory(0, buffer_size) };
-		std::memcpy(data, triangle_vertices.data(), buffer_size);
-		vertex_buffer_memory_.unmapMemory();
+		copy_buffer(device_, command_pool_, staging_buffer, vertex_buffer_, buffer_size);
 	}
 
 	void Renderer::create_frame_sync_objects()
@@ -295,7 +285,7 @@ namespace quokka
 		command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphics_pipeline_.handle());
 
 		// Starting at binding 0, with the vertex data at the start of the buffer
-		command_buffer.bindVertexBuffers(0, *vertex_buffer_, { 0 });
+		command_buffer.bindVertexBuffers(0, *vertex_buffer_.handle, { 0 });
 
 		// Viewport and scissor are dynamic states, so they must be set before drawing
 		const vk::Viewport viewport {

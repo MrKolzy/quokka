@@ -1,5 +1,6 @@
 #pragma once
 
+#include "quokka/buffer.hpp"
 #include "quokka/device.hpp"
 #include "quokka/graphics_pipeline.hpp"
 #include "quokka/swapchain.hpp"
@@ -11,7 +12,7 @@
 
 namespace quokka
 {
-	// Records the commands of each frame, submits them and presents the result
+	// Uploads the geometry it draws, records the commands of each frame, submits them and presents the result
 	class Renderer
 	{
 	public:
@@ -46,10 +47,8 @@ namespace quokka
 		// One per frame in flight
 		std::vector<vk::raii::CommandBuffer> command_buffers_ {};
 
-		// Vertices of the triangle, read by the vertex shader through binding 0
-		vk::raii::Buffer vertex_buffer_ { nullptr };
-		// Backs vertex_buffer_, freed first since it's allocated after it
-		vk::raii::DeviceMemory vertex_buffer_memory_ { nullptr };
+		// Vertices of the triangle in device local memory, read by the vertex shader through binding 0
+		Buffer vertex_buffer_ {};
 
 		// Signaled by acquireNextImage, waited on by the submission, one per frame in flight
 		std::vector<vk::raii::Semaphore> image_available_semaphores_ {};
