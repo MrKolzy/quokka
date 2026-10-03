@@ -5,13 +5,12 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp> // glm::translate, glm::rotate, glm::scale, glm::lookAt, glm::perspective
-#include <stb_image.h>
+#include <ktx.h>
 
 #include <algorithm> // std::max
 #include <array>
 #include <bit> // std::bit_width
 #include <chrono>
-#include <cstddef> // std::size_t
 #include <cstdint> // std::int32_t, std::uint#_t
 #include <cstring> // std::memcpy
 #include <exception>
@@ -60,9 +59,6 @@ namespace quokka
 			Transform { .position { -2.0f, 0.0f, -1.0f }, .rotation { 0.0f, glm::radians(45.0f), 0.0f }, .scale { 0.75f, 0.75f, 0.75f } },
 			Transform { .position { 2.0f, 0.0f, -1.0f }, .rotation { 0.0f, glm::radians(-45.0f), 0.0f }, .scale { 0.75f, 0.75f, 0.75f } }
 		};
-
-		// sRGB like the texture file, so sampling converts the colors to linear
-		constexpr vk::Format texture_format { vk::Format::eR8G8B8A8Srgb };
 
 		// Changes the layout of part of an image after the source stages and accesses finish,
 		// and before the destination ones start
@@ -342,14 +338,8 @@ namespace quokka
 
 	void Renderer::load_model()
 	{
-		mesh_ = load_obj(constants::model_path);
-
-		// The viking room is stored with z pointing up, but the world uses y up like glTF,
-		// so it's rotated -90 degrees around x once here instead of in every model matrix
-		for (auto& vertex : mesh_.vertices)
-		{
-			vertex.position = { vertex.position.x, vertex.position.z, -vertex.position.y };
-		}
+		// glTF uses y up like the world, so unlike the OBJ version the vertices need no conversion
+		mesh_ = load_gltf(constants::model_path);
 	}
 
 	void Renderer::create_vertex_buffer()
@@ -374,45 +364,84 @@ namespace quokka
 
 	void Renderer::create_texture_image()
 	{
-		int width {};
-		int height {};
-		int channels {};
-
-		// Always 4 channels (RGBA), even if the file has fewer, so every texel matches the image format
-		// Owned by a unique_ptr, so stbi_image_free also runs if an exception is thrown before the end
-		const std::unique_ptr<stbi_uc, decltype(&stbi_image_free)> pixels {
-			stbi_load(constants::texture_path, &width, &height, &channels, STBI_rgb_alpha),
-			&stbi_image_free
-		};
-
-		if (!pixels)
+		// Also inflates the texels if the file is supercompressed with zstd
+		ktxTexture2* loaded_texture { nullptr };
+		if (ktxTexture2_CreateFromNamedFile(constants::texture_path, KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &loaded_texture) != KTX_SUCCESS)
 		{
 			throw std::runtime_error(std::string { "Failed to load texture file: " } + constants::texture_path);
 		}
 
+		// Owned by a unique_ptr, so ktxTexture2_Destroy also runs if an exception is thrown before the end
+		const std::unique_ptr<ktxTexture2, decltype(&ktxTexture2_Destroy)> texture { loaded_texture, &ktxTexture2_Destroy };
+
+		// Block compressed formats need a GPU feature, and Basis Universal ones transcoding into one of them first
+		if (texture->isCompressed || ktxTexture2_NeedsTranscoding(texture.get()))
+		{
+			throw std::runtime_error(std::string { "Compressed textures aren't supported yet: " } + constants::texture_path);
+		}
+
+		texture_format_ = static_cast<vk::Format>(texture->vkFormat);
+
 		const vk::Extent2D extent {
-			.width { static_cast<std::uint32_t>(width) },
-			.height { static_cast<std::uint32_t>(height) }
+			.width { texture->baseWidth },
+			.height { texture->baseHeight }
 		};
+
+		// The mipmaps stored in the file are used as they are, and only generated when it has just the full size level
+		const bool should_generate_mipmaps { texture->numLevels == 1 };
 
 		// Each level halves the previous one down to 1x1, so there are floor(log2(longest side)) + 1 levels,
 		// which is the number of bits needed to write the longest side
-		const auto mip_levels { static_cast<std::uint32_t>(std::bit_width(std::max(extent.width, extent.height))) };
+		const auto mip_levels {
+			should_generate_mipmaps
+				? static_cast<std::uint32_t>(std::bit_width(std::max(extent.width, extent.height)))
+				: texture->numLevels
+		};
 
-		// The blits that generate the mipmaps filter linearly, which practically every GPU supports for this format,
-		// but it's checked anyway in case texture_format changes
-		const auto format_properties { device_.physical_device().getFormatProperties(texture_format) };
-		if (!(format_properties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eSampledImageFilterLinear))
+		// The format comes from the file, so the GPU must be able to sample it,
+		// and to filter it linearly when the blits generate the mipmaps
+		const auto format_features { device_.physical_device().getFormatProperties(texture_format_).optimalTilingFeatures };
+		const bool is_format_supported {
+			(format_features & vk::FormatFeatureFlagBits::eSampledImage) &&
+			(!should_generate_mipmaps || (format_features & vk::FormatFeatureFlagBits::eSampledImageFilterLinear))
+		};
+		if (!is_format_supported)
 		{
-			throw std::runtime_error("The texture format doesn't support the linear filtering needed to generate its mipmaps");
+			throw std::runtime_error(std::string { "The GPU can't sample the format of the texture file: " } + constants::texture_path);
 		}
 
-		// One byte per channel
-		constexpr std::size_t bytes_per_texel { 4 };
-		const std::span<const stbi_uc> texels { pixels.get(), std::size_t { extent.width } * extent.height * bytes_per_texel };
+		// Every level stored in the file, one after another
+		const std::span<const ktx_uint8_t> texels { ktxTexture_GetData(ktxTexture(texture.get())), ktxTexture_GetDataSize(ktxTexture(texture.get())) };
 
 		// Only lives until its contents are copied into the image
 		const auto staging_buffer { create_staging_buffer(device_, std::as_bytes(texels)) };
+
+		// One copy per level stored in the file, each starting where that level is in the staging buffer
+		std::vector<vk::BufferImageCopy> copy_regions {};
+		copy_regions.reserve(texture->numLevels);
+
+		for (std::uint32_t mip_level { 0 }; mip_level < texture->numLevels; ++mip_level)
+		{
+			ktx_size_t level_offset {};
+			ktxTexture_GetImageOffset(ktxTexture(texture.get()), mip_level, 0, 0, &level_offset);
+
+			const vk::BufferImageCopy copy_region {
+				.bufferOffset { level_offset },
+				// 0 means the texels are tightly packed, without padding between rows
+				.bufferRowLength { 0 },
+				.bufferImageHeight { 0 },
+				.imageSubresource {
+					.aspectMask { vk::ImageAspectFlagBits::eColor },
+					.mipLevel { mip_level },
+					.baseArrayLayer { 0 },
+					.layerCount { 1 }
+				},
+				.imageOffset { .x { 0 }, .y { 0 }, .z { 0 } },
+				// Each level halves the previous one, but never goes below 1 texel
+				.imageExtent { .width { std::max(extent.width >> mip_level, 1u) }, .height { std::max(extent.height >> mip_level, 1u) }, .depth { 1 } }
+			};
+			copy_regions.push_back(copy_region);
+		}
 
 		// Transfer destination of the copy and the blits, transfer source of the blits, and sampled by the shaders afterwards
 		texture_image_ = create_image(
@@ -420,13 +449,13 @@ namespace quokka
 			extent,
 			mip_levels,
 			vk::SampleCountFlagBits::e1,
-			texture_format,
+			texture_format_,
 			vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
 			vk::MemoryPropertyFlagBits::eDeviceLocal
 		);
 
 		// The transitions, the copy and the mipmap generation go in a single submission
-		submit_one_time_commands(device_, command_pool_, [this, &staging_buffer, extent, mip_levels](const vk::raii::CommandBuffer& command_buffer)
+		submit_one_time_commands(device_, command_pool_, [this, &staging_buffer, &copy_regions, extent, mip_levels, should_generate_mipmaps](const vk::raii::CommandBuffer& command_buffer)
 		{
 			// Every mip level at once: nothing to wait for, the old contents are discarded, and the copy and the blits wait for it
 			transition_image_layout(
@@ -441,32 +470,34 @@ namespace quokka
 				vk::AccessFlagBits2::eTransferWrite
 			);
 
-			const vk::BufferImageCopy copy_region {
-				.bufferOffset { 0 },
-				// 0 means the texels are tightly packed, without padding between rows
-				.bufferRowLength { 0 },
-				.bufferImageHeight { 0 },
-				.imageSubresource {
-					.aspectMask { vk::ImageAspectFlagBits::eColor },
-					// The texels from the file go into the full size level, the others are generated from it
-					.mipLevel { 0 },
-					.baseArrayLayer { 0 },
-					.layerCount { 1 }
-				},
-				.imageOffset { .x { 0 }, .y { 0 }, .z { 0 } },
-				.imageExtent { .width { extent.width }, .height { extent.height }, .depth { 1 } }
-			};
+			command_buffer.copyBufferToImage(*staging_buffer.handle, *texture_image_.handle, vk::ImageLayout::eTransferDstOptimal, copy_regions);
 
-			command_buffer.copyBufferToImage(*staging_buffer.handle, *texture_image_.handle, vk::ImageLayout::eTransferDstOptimal, copy_region);
-
-			// Also leaves every mip level ready to be sampled by the fragment shader
-			generate_mipmaps(command_buffer, *texture_image_.handle, extent, mip_levels);
+			if (should_generate_mipmaps)
+			{
+				// Also leaves every mip level ready to be sampled by the fragment shader
+				generate_mipmaps(command_buffer, *texture_image_.handle, extent, mip_levels);
+			}
+			else
+			{
+				// Every level came from the file, so they can all be sampled once the copy is done
+				transition_image_layout(
+					command_buffer,
+					*texture_image_.handle,
+					full_subresource_range(vk::ImageAspectFlagBits::eColor),
+					vk::ImageLayout::eTransferDstOptimal,
+					vk::ImageLayout::eShaderReadOnlyOptimal,
+					vk::PipelineStageFlagBits2::eTransfer,
+					vk::AccessFlagBits2::eTransferWrite,
+					vk::PipelineStageFlagBits2::eFragmentShader,
+					vk::AccessFlagBits2::eShaderRead
+				);
+			}
 		});
 	}
 
 	void Renderer::create_texture_image_view()
 	{
-		texture_image_view_ = create_image_view(device_, *texture_image_.handle, texture_format, vk::ImageAspectFlagBits::eColor);
+		texture_image_view_ = create_image_view(device_, *texture_image_.handle, texture_format_, vk::ImageAspectFlagBits::eColor);
 	}
 
 	void Renderer::create_texture_sampler()

@@ -8,13 +8,14 @@
 
 namespace quokka
 {
-	// Geometry ready to be uploaded to a vertex and an index buffer, with every distinct vertex stored only once
+	// Geometry ready to be uploaded to a vertex and an index buffer
 	struct Mesh
 	{
 		std::vector<Vertex> vertices {};
 		std::vector<std::uint32_t> indices {};
 	};
 
-	// Merges every shape of the file into a single mesh, with white vertex colors since OBJ files don't have them
-	[[nodiscard]] Mesh load_obj(const std::filesystem::path& path);
+	// Merges the triangles of every mesh in a .gltf or .glb file into a single mesh, with white vertex colors
+	// Like in the tutorial, node transforms, materials and images are ignored, so every mesh is placed at the origin
+	[[nodiscard]] Mesh load_gltf(const std::filesystem::path& path);
 }

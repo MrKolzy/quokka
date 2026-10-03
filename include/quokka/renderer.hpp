@@ -68,6 +68,8 @@ namespace quokka
 		Buffer vertex_buffer_ {};
 		// Indices into vertex_buffer_, so vertices shared by several triangles are stored only once
 		Buffer index_buffer_ {};
+		// Read from the texture file, which can store its texels in any format
+		vk::Format texture_format_ {};
 		// Texels of the texture in device local memory, ready to be sampled by the fragment shader
 		Image texture_image_ {};
 		// How shaders see texture_image_, as a 2D color texture

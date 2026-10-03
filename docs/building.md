@@ -7,8 +7,8 @@
 - Visual Studio Community 2026 Insiders
 - [Vulkan SDK](https://vulkan.lunarg.com/) 1.4.357.0 with the GLM headers component (sets the `VULKAN_SDK` environment variable)
 - [GLFW](https://www.glfw.org/download.html) 3.5.1, 64-bit Windows binaries
-- [stb_image](https://github.com/nothings/stb) 2.30, the single header `stb_image.h`
-- [tinyobjloader](https://github.com/tinyobjloader/tinyobjloader) 2.0, the single header `tiny_obj_loader.h`
+- [tinygltf](https://github.com/syoyo/tinygltf) 2.9.7, the header `tiny_gltf.h` and the `json.hpp` it includes
+- [KTX-Software](https://github.com/KhronosGroup/KTX-Software/releases) 4.4.2, installed with the **Development** component, which isn't selected by default
 
 ## Project Setup
 
@@ -32,15 +32,15 @@ Right-click the **Quokka** project in **Solution Explorer**, select **Properties
 
 When adding values, keep the existing and inherited ones.
 
-`<GLFW>`, `<stb>` and `<tinyobjloader>` stand for your local GLFW, stb_image and tinyobjloader folders.
+`<GLFW>`, `<tinygltf>` and `<KTX-Software>` stand for your local GLFW, tinygltf and KTX-Software folders. KTX-Software installs to `C:\Program Files\KTX-Software` by default.
 
 ### C/C++
 
 | Property | Value |
 |---|---|
-| General > Additional Include Directories | `$(ProjectDir)include`<br>`$(VULKAN_SDK)\Include`<br>`<GLFW>\include`<br>`<stb>`<br>`<tinyobjloader>` |
+| General > Additional Include Directories | `$(ProjectDir)include`<br>`$(VULKAN_SDK)\Include`<br>`<GLFW>\include`<br>`<tinygltf>`<br>`<KTX-Software>\include` |
 | General > Multi-processor Compilation | `Yes (/MP)` |
-| Preprocessor > Preprocessor Definitions | `VULKAN_HPP_NO_CONSTRUCTORS`<br>`VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS`<br>`GLFW_INCLUDE_VULKAN`<br>`GLM_FORCE_DEPTH_ZERO_TO_ONE` |
+| Preprocessor > Preprocessor Definitions | `VULKAN_HPP_NO_CONSTRUCTORS`<br>`VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS`<br>`GLFW_INCLUDE_VULKAN`<br>`GLM_FORCE_DEPTH_ZERO_TO_ONE`<br>`TINYGLTF_NO_STB_IMAGE`<br>`TINYGLTF_NO_STB_IMAGE_WRITE`<br>`TINYGLTF_NO_EXTERNAL_IMAGE` |
 | Language > C++ Language Standard | `Preview - Features from the Latest C++ Working Draft (/std:c++latest)` |
 | Precompiled Headers > Precompiled Header | `Use (/Yu)` |
 | Precompiled Headers > Precompiled Header File | `pch.hpp` |
@@ -52,10 +52,11 @@ When adding values, keep the existing and inherited ones.
 - `VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS` returns `eErrorOutOfDateKHR` instead of throwing an exception, so the engine can recreate the swapchain when it becomes out of date.
 - `GLFW_INCLUDE_VULKAN` makes GLFW include Vulkan and declare `glfwCreateWindowSurface`.
 - `GLM_FORCE_DEPTH_ZERO_TO_ONE` makes GLM's projection matrices use Vulkan's 0 to 1 depth range instead of OpenGL's -1 to 1.
+- `TINYGLTF_NO_STB_IMAGE`, `TINYGLTF_NO_STB_IMAGE_WRITE` and `TINYGLTF_NO_EXTERNAL_IMAGE` stop tinygltf from decoding, writing or reading images, since the textures come from KTX2 files instead. They go here and not in a source file because they change declarations in `tiny_gltf.h`, so every source file must see the same ones.
 - `/std:c++latest` is required for `std::println` (C++23).
 - `/MP` compiles the source files in parallel.
 - The precompiled header compiles Vulkan-Hpp once instead of once per source file. Forced Include adds it at the start of every source file, so they don't need to include it.
-- Headers included with angle brackets are treated as external, so the warning level 3 applies to them instead of `/W4`, and third-party code like stb_image doesn't break the build with `/WX`.
+- Headers included with angle brackets are treated as external, so the warning level 3 applies to them instead of `/W4`, and third-party code like tinygltf doesn't break the build with `/WX`.
 
 Then right-click `src/pch.cpp` in **Solution Explorer**, select **Properties**, and set **C/C++ > Precompiled Headers > Precompiled Header** to `Create (/Yc)`.
 
@@ -63,8 +64,8 @@ Then right-click `src/pch.cpp` in **Solution Explorer**, select **Properties**, 
 
 | Property | Value |
 |---|---|
-| General > Additional Library Directories | `<GLFW>\lib-vc2026` |
-| Input > Additional Dependencies | `glfw3dll.lib` |
+| General > Additional Library Directories | `<GLFW>\lib-vc2026`<br>`<KTX-Software>\lib` |
+| Input > Additional Dependencies | `glfw3dll.lib`<br>`ktx.lib` |
 
 ### Build Events
 
@@ -72,9 +73,10 @@ Then right-click `src/pch.cpp` in **Solution Explorer**, select **Properties**, 
 
     "$(VULKAN_SDK)\Bin\slangc.exe" "$(ProjectDir)shaders\shader.slang" -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name -entry vert_main -entry frag_main -o "$(ProjectDir)shaders\shader.spv"
 
-**Post-Build Event > Command Line** copies the GLFW runtime next to the executable:
+**Post-Build Event > Command Line** copies the GLFW and KTX runtimes next to the executable:
 
     copy /Y "<GLFW>\lib-vc2026\glfw3.dll" "$(OutDir)"
+    copy /Y "<KTX-Software>\bin\ktx.dll" "$(OutDir)"
 
 ## Build Configurations
 
@@ -85,4 +87,4 @@ Select the configuration from the **Solution Configurations** dropdown in the to
 
 ## Running
 
-Run from Visual Studio, whose working directory is the project folder, so `shaders/shader.spv`, `models/viking_room.obj` and `textures/viking_room.png` are found.
+Run from Visual Studio, whose working directory is the project folder, so `shaders/shader.spv`, `models/viking_room.glb` and `textures/viking_room.ktx2` are found.

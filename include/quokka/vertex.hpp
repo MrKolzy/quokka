@@ -15,9 +15,6 @@ namespace quokka
 		glm::vec3 color;
 		glm::vec2 texture_coordinates;
 
-		// Compares every attribute, so identical vertices can be merged when loading a model
-		[[nodiscard]] bool operator==(const Vertex&) const = default;
-
 		// How to step through the vertex buffer, one Vertex at a time from binding 0
 		[[nodiscard]] static constexpr vk::VertexInputBindingDescription binding_description() noexcept
 		{
