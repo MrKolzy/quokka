@@ -6,14 +6,17 @@
 
 namespace quokka
 {
-	// Color, no mipmapping and a single layer, the whole of a swapchain image or a texture without mipmaps
-	inline constexpr vk::ImageSubresourceRange color_subresource_range {
-		.aspectMask { vk::ImageAspectFlagBits::eColor },
-		.baseMipLevel { 0 },
-		.levelCount { 1 },
-		.baseArrayLayer { 0 },
-		.layerCount { 1 }
-	};
+	// The whole of an image without mipmaps or array layers, for the given aspect (color or depth)
+	[[nodiscard]] constexpr vk::ImageSubresourceRange full_subresource_range(vk::ImageAspectFlags aspect) noexcept
+	{
+		return {
+			.aspectMask { aspect },
+			.baseMipLevel { 0 },
+			.levelCount { 1 },
+			.baseArrayLayer { 0 },
+			.layerCount { 1 }
+		};
+	}
 
 	// Like Buffer, each image gets its own allocation
 	struct Image
@@ -31,6 +34,10 @@ namespace quokka
 		vk::ImageUsageFlags usage,
 		vk::MemoryPropertyFlags properties);
 
-	// 2D view of the whole color image, reading each channel as itself
-	[[nodiscard]] vk::raii::ImageView create_image_view(const Device& device, vk::Image image, vk::Format format);
+	// 2D view of the whole image for the given aspect, reading each channel as itself
+	[[nodiscard]] vk::raii::ImageView create_image_view(
+		const Device& device,
+		vk::Image image,
+		vk::Format format,
+		vk::ImageAspectFlags aspect);
 }

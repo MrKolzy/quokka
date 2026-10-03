@@ -105,7 +105,8 @@ namespace quokka
 		vk::raii::Pipeline create_graphics_pipeline(
 			const vk::raii::Device& device,
 			const vk::raii::PipelineLayout& pipeline_layout,
-			vk::Format color_format)
+			vk::Format color_format,
+			vk::Format depth_format)
 		{
 			// Both entry points live in the same compiled module
 			const auto shader_module { create_shader_module(device, read_shader_file(constants::shader_path)) };
@@ -170,6 +171,17 @@ namespace quokka
 				.sampleShadingEnable { vk::False }
 			};
 
+			// Fragments behind what's already drawn are discarded, and the closer ones replace the stored depth
+			constexpr vk::PipelineDepthStencilStateCreateInfo depth_stencil_info {
+				.depthTestEnable { vk::True },
+				.depthWriteEnable { vk::True },
+				// Smaller depth is closer, since the depth image is cleared to the far plane (1.0)
+				.depthCompareOp { vk::CompareOp::eLess },
+				// Only keeps fragments whose stored depth is within a range, not needed
+				.depthBoundsTestEnable { vk::False },
+				.stencilTestEnable { vk::False }
+			};
+
 			// No blending, the fragment color overwrites the framebuffer, but every channel is still written
 			constexpr vk::PipelineColorBlendAttachmentState color_blend_attachment {
 				.blendEnable { vk::False },
@@ -208,6 +220,7 @@ namespace quokka
 					.pViewportState { &viewport_state_info },
 					.pRasterizationState { &rasterization_info },
 					.pMultisampleState { &multisample_info },
+					.pDepthStencilState { &depth_stencil_info },
 					.pColorBlendState { &color_blend_info },
 					.pDynamicState { &dynamic_state_info },
 					.layout { *pipeline_layout },
@@ -217,7 +230,9 @@ namespace quokka
 				{
 					// A single color attachment, the swapchain image, with its exact format
 					.colorAttachmentCount { 1 },
-					.pColorAttachmentFormats { &color_format }
+					.pColorAttachmentFormats { &color_format },
+					// The swapchain's depth image, without stencil
+					.depthAttachmentFormat { depth_format }
 				}
 			};
 
@@ -228,10 +243,10 @@ namespace quokka
 
 	// ***
 
-	GraphicsPipeline::GraphicsPipeline(const Device& device, vk::Format color_format)
+	GraphicsPipeline::GraphicsPipeline(const Device& device, vk::Format color_format, vk::Format depth_format)
 		: descriptor_set_layout_ { create_descriptor_set_layout(device.logical_device()) }
 		, pipeline_layout_ { create_pipeline_layout(device.logical_device(), descriptor_set_layout_) }
-		, graphics_pipeline_ { create_graphics_pipeline(device.logical_device(), pipeline_layout_, color_format) }
+		, graphics_pipeline_ { create_graphics_pipeline(device.logical_device(), pipeline_layout_, color_format, depth_format) }
 	{
 	}
 

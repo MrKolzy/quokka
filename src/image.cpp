@@ -45,7 +45,11 @@ namespace quokka
 		return image;
 	}
 
-	vk::raii::ImageView create_image_view(const Device& device, vk::Image image, vk::Format format)
+	vk::raii::ImageView create_image_view(
+		const Device& device,
+		vk::Image image,
+		vk::Format format,
+		vk::ImageAspectFlags aspect)
 	{
 		const vk::ImageViewCreateInfo create_info {
 			.image { image },
@@ -54,7 +58,7 @@ namespace quokka
 			.format { format },
 			// Default mapping: each channel is read as itself (identity), no swizzling
 			.components {},
-			.subresourceRange { color_subresource_range }
+			.subresourceRange { full_subresource_range(aspect) }
 		};
 
 		return device.logical_device().createImageView(create_info);

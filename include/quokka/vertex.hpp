@@ -11,7 +11,7 @@ namespace quokka
 	// Interleaved: all the attributes of a vertex are stored together in a single buffer
 	struct Vertex
 	{
-		glm::vec2 position;
+		glm::vec3 position;
 		glm::vec3 color;
 		glm::vec2 texture_coordinates;
 
@@ -30,11 +30,11 @@ namespace quokka
 		// How to extract each attribute from a Vertex, the locations must match the shader inputs
 		[[nodiscard]] static constexpr std::array<vk::VertexInputAttributeDescription, 3> attribute_descriptions() noexcept
 		{
-			// float2 in the shader
+			// float3 in the shader
 			constexpr vk::VertexInputAttributeDescription position_attribute {
 				.location { 0 },
 				.binding { 0 },
-				.format { vk::Format::eR32G32Sfloat },
+				.format { vk::Format::eR32G32B32Sfloat },
 				.offset { offsetof(Vertex, position) }
 			};
 

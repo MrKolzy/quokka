@@ -1,6 +1,7 @@
 #pragma once
 
 #include "quokka/device.hpp"
+#include "quokka/image.hpp"
 #include "quokka/window.hpp"
 
 #include <vulkan/vulkan_raii.hpp>
@@ -31,16 +32,22 @@ namespace quokka
 		[[nodiscard]] vk::Extent2D extent() const noexcept;
 		[[nodiscard]] vk::Image image(std::uint32_t index) const noexcept;
 		[[nodiscard]] const vk::raii::ImageView& image_view(std::uint32_t index) const noexcept;
+		[[nodiscard]] vk::Format depth_format() const noexcept;
+		[[nodiscard]] vk::Image depth_image() const noexcept;
+		[[nodiscard]] const vk::raii::ImageView& depth_image_view() const noexcept;
 		[[nodiscard]] const vk::raii::Semaphore& render_finished_semaphore(std::uint32_t index) const noexcept;
 
 	private:
 		void create_swapchain();
 		void create_image_views();
+		void create_depth_resources();
 		void create_render_finished_semaphores();
 		void cleanup_swapchain() noexcept;
 
 		const Device& device_;
 		const Window& window_;
+		// Chosen once in the constructor, since it only depends on the GPU
+		vk::Format depth_format_;
 
 		// Declared in creation order: members are destroyed in reverse order,
 		// so every object is destroyed before the one it was created from
@@ -52,6 +59,9 @@ namespace quokka
 		vk::Extent2D extent_ {};
 		// Describe how to access each swapchain image
 		std::vector<vk::raii::ImageView> image_views_ {};
+		// Depth of the closest fragment drawn so far at each pixel, shared by every frame in flight
+		Image depth_image_ {};
+		vk::raii::ImageView depth_image_view_ { nullptr };
 
 		// Signaled by the submission, waited on by presentation, at least one per swapchain image
 		std::vector<vk::raii::Semaphore> render_finished_semaphores_ {};

@@ -16,7 +16,7 @@ Sampler2D texture;
 // Read from the vertex buffer, locations follow declaration order and must match Vertex::attribute_descriptions
 struct VertexInput
 {
-	float2 position;
+	float3 position;
 	float3 color;
 	float2 texture_coordinates;
 };
@@ -34,7 +34,7 @@ VertexOutput vert_main(VertexInput input)
 {
 	VertexOutput output;
 	// Model to world, world to view and view to clip space, applied from right to left
-	output.position = mul(transforms.projection, mul(transforms.view, mul(transforms.model, float4(input.position, 0.0, 1.0))));
+	output.position = mul(transforms.projection, mul(transforms.view, mul(transforms.model, float4(input.position, 1.0))));
 	output.color = input.color;
 	output.texture_coordinates = input.texture_coordinates;
 

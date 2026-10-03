@@ -24,18 +24,27 @@ namespace quokka
 {
 	namespace
 	{
-		// Corners of the rectangle in the xy plane, counterclockwise as seen from the +z side
+		// Two rectangles parallel to the xy plane, the second one half a unit below the first
+		// Both counterclockwise as seen from the +z side, where the camera is
 		// Texture coordinates go from (0, 0) at the top left of the image to (1, 1) at the bottom right
-		constexpr std::array rectangle_vertices {
-			Vertex { .position { -0.5f, -0.5f }, .color { 1.0f, 0.0f, 0.0f }, .texture_coordinates { 1.0f, 0.0f } },
-			Vertex { .position { 0.5f, -0.5f }, .color { 0.0f, 1.0f, 0.0f }, .texture_coordinates { 0.0f, 0.0f } },
-			Vertex { .position { 0.5f, 0.5f }, .color { 0.0f, 0.0f, 1.0f }, .texture_coordinates { 0.0f, 1.0f } },
-			Vertex { .position { -0.5f, 0.5f }, .color { 1.0f, 1.0f, 1.0f }, .texture_coordinates { 1.0f, 1.0f } }
+		constexpr std::array scene_vertices {
+			Vertex { .position { -0.5f, -0.5f, 0.0f }, .color { 1.0f, 0.0f, 0.0f }, .texture_coordinates { 1.0f, 0.0f } },
+			Vertex { .position { 0.5f, -0.5f, 0.0f }, .color { 0.0f, 1.0f, 0.0f }, .texture_coordinates { 0.0f, 0.0f } },
+			Vertex { .position { 0.5f, 0.5f, 0.0f }, .color { 0.0f, 0.0f, 1.0f }, .texture_coordinates { 0.0f, 1.0f } },
+			Vertex { .position { -0.5f, 0.5f, 0.0f }, .color { 1.0f, 1.0f, 1.0f }, .texture_coordinates { 1.0f, 1.0f } },
+
+			Vertex { .position { -0.5f, -0.5f, -0.5f }, .color { 1.0f, 0.0f, 0.0f }, .texture_coordinates { 1.0f, 0.0f } },
+			Vertex { .position { 0.5f, -0.5f, -0.5f }, .color { 0.0f, 1.0f, 0.0f }, .texture_coordinates { 0.0f, 0.0f } },
+			Vertex { .position { 0.5f, 0.5f, -0.5f }, .color { 0.0f, 0.0f, 1.0f }, .texture_coordinates { 0.0f, 1.0f } },
+			Vertex { .position { -0.5f, 0.5f, -0.5f }, .color { 1.0f, 1.0f, 1.0f }, .texture_coordinates { 1.0f, 1.0f } }
 		};
 
-		// Two triangles sharing the diagonal, both counterclockwise as seen from the +z side to match the front face of the pipeline
+		// Two triangles per rectangle, sharing its diagonal, to match the front face of the pipeline
 		// 16-bit indices address up to 65536 vertices and take half the memory of 32-bit ones
-		constexpr std::array<std::uint16_t, 6> rectangle_indices { 0, 1, 2, 2, 3, 0 };
+		constexpr std::array<std::uint16_t, 12> scene_indices {
+			0, 1, 2, 2, 3, 0,
+			4, 5, 6, 6, 7, 4
+		};
 
 		// Must match TransformUniforms in the shader
 		// Only 4x4 matrices, which already meet the 16-byte alignment uniform buffers require
@@ -49,11 +58,12 @@ namespace quokka
 		// sRGB like the texture file, so sampling converts the colors to linear
 		constexpr vk::Format texture_format { vk::Format::eR8G8B8A8Srgb };
 
-		// Changes the layout of a color image after the source stages and accesses finish,
+		// Changes the layout of an image after the source stages and accesses finish,
 		// and before the destination ones start
 		void transition_image_layout(
 			const vk::raii::CommandBuffer& command_buffer,
 			vk::Image image,
+			vk::ImageAspectFlags aspect,
 			vk::ImageLayout old_layout,
 			vk::ImageLayout new_layout,
 			vk::PipelineStageFlags2 src_stage_mask,
@@ -72,7 +82,7 @@ namespace quokka
 				.srcQueueFamilyIndex { vk::QueueFamilyIgnored },
 				.dstQueueFamilyIndex { vk::QueueFamilyIgnored },
 				.image { image },
-				.subresourceRange { color_subresource_range }
+				.subresourceRange { full_subresource_range(aspect) }
 			};
 
 			const vk::DependencyInfo dependency_info {
@@ -234,7 +244,7 @@ namespace quokka
 		vertex_buffer_ = create_device_local_buffer(
 			device_,
 			command_pool_,
-			std::as_bytes(std::span { rectangle_vertices }),
+			std::as_bytes(std::span { scene_vertices }),
 			vk::BufferUsageFlagBits::eVertexBuffer
 		);
 	}
@@ -244,7 +254,7 @@ namespace quokka
 		index_buffer_ = create_device_local_buffer(
 			device_,
 			command_pool_,
-			std::as_bytes(std::span { rectangle_indices }),
+			std::as_bytes(std::span { scene_indices }),
 			vk::BufferUsageFlagBits::eIndexBuffer
 		);
 	}
@@ -295,6 +305,7 @@ namespace quokka
 			transition_image_layout(
 				command_buffer,
 				*texture_image_.handle,
+				vk::ImageAspectFlagBits::eColor,
 				vk::ImageLayout::eUndefined,
 				vk::ImageLayout::eTransferDstOptimal,
 				vk::PipelineStageFlagBits2::eNone,
@@ -324,6 +335,7 @@ namespace quokka
 			transition_image_layout(
 				command_buffer,
 				*texture_image_.handle,
+				vk::ImageAspectFlagBits::eColor,
 				vk::ImageLayout::eTransferDstOptimal,
 				vk::ImageLayout::eShaderReadOnlyOptimal,
 				vk::PipelineStageFlagBits2::eTransfer,
@@ -336,7 +348,7 @@ namespace quokka
 
 	void Renderer::create_texture_image_view()
 	{
-		texture_image_view_ = create_image_view(device_, *texture_image_.handle, texture_format);
+		texture_image_view_ = create_image_view(device_, *texture_image_.handle, texture_format, vk::ImageAspectFlagBits::eColor);
 	}
 
 	void Renderer::create_texture_sampler()
@@ -524,12 +536,27 @@ namespace quokka
 		transition_image_layout(
 			command_buffer,
 			swapchain_.image(image_index),
+			vk::ImageAspectFlagBits::eColor,
 			vk::ImageLayout::eUndefined,
 			vk::ImageLayout::eColorAttachmentOptimal,
 			vk::PipelineStageFlagBits2::eColorAttachmentOutput,
 			{},
 			vk::PipelineStageFlagBits2::eColorAttachmentOutput,
 			vk::AccessFlagBits2::eColorAttachmentWrite
+		);
+
+		// Shared by every frame in flight, so wait for the depth tests of the previous frame before clearing it
+		// The old contents are discarded, so the old layout can be undefined
+		transition_image_layout(
+			command_buffer,
+			swapchain_.depth_image(),
+			vk::ImageAspectFlagBits::eDepth,
+			vk::ImageLayout::eUndefined,
+			vk::ImageLayout::eDepthAttachmentOptimal,
+			vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+			vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+			vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+			vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite
 		);
 
 		// Opaque black, used to clear the swapchain image before drawing
@@ -546,6 +573,20 @@ namespace quokka
 			.clearValue { clear_color }
 		};
 
+		// The far plane, so anything drawn is closer
+		constexpr vk::ClearValue clear_depth {
+			.depthStencil { .depth { 1.0f }, .stencil { 0 } }
+		};
+
+		// Cleared on load, and not stored since it's only needed while drawing this frame
+		const vk::RenderingAttachmentInfo depth_attachment_info {
+			.imageView { *swapchain_.depth_image_view() },
+			.imageLayout { vk::ImageLayout::eDepthAttachmentOptimal },
+			.loadOp { vk::AttachmentLoadOp::eClear },
+			.storeOp { vk::AttachmentStoreOp::eDontCare },
+			.clearValue { clear_depth }
+		};
+
 		// The whole swapchain image, used as both the render area and the scissor
 		const vk::Rect2D full_image_area {
 			.offset { .x { 0 }, .y { 0 } },
@@ -557,7 +598,8 @@ namespace quokka
 			.renderArea { full_image_area },
 			.layerCount { 1 },
 			.colorAttachmentCount { 1 },
-			.pColorAttachments { &color_attachment_info }
+			.pColorAttachments { &color_attachment_info },
+			.pDepthAttachment { &depth_attachment_info }
 		};
 
 		command_buffer.beginRendering(rendering_info);
@@ -567,7 +609,7 @@ namespace quokka
 		// Starting at binding 0, with the vertex data at the start of the buffer
 		command_buffer.bindVertexBuffers(0, *vertex_buffer_.handle, { 0 });
 
-		// Offset 0, and the index type must match the element type of rectangle_indices
+		// Offset 0, and the index type must match the element type of scene_indices
 		command_buffer.bindIndexBuffer(*index_buffer_.handle, 0, vk::IndexType::eUint16);
 
 		// Set 0, with no dynamic offsets
@@ -594,7 +636,7 @@ namespace quokka
 		command_buffer.setScissor(0, full_image_area);
 
 		// Every index in the buffer, 1 instance, starting at the first index, vertex and instance
-		command_buffer.drawIndexed(static_cast<std::uint32_t>(rectangle_indices.size()), 1, 0, 0, 0);
+		command_buffer.drawIndexed(static_cast<std::uint32_t>(scene_indices.size()), 1, 0, 0, 0);
 
 		command_buffer.endRendering();
 
@@ -602,6 +644,7 @@ namespace quokka
 		transition_image_layout(
 			command_buffer,
 			swapchain_.image(image_index),
+			vk::ImageAspectFlagBits::eColor,
 			vk::ImageLayout::eColorAttachmentOptimal,
 			vk::ImageLayout::ePresentSrcKHR,
 			vk::PipelineStageFlagBits2::eColorAttachmentOutput,

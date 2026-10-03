@@ -1,12 +1,13 @@
 #include "quokka/swapchain.hpp"
 
 #include "quokka/constants.hpp"
-#include "quokka/image.hpp"
 
 #include <algorithm> // std::clamp, std::max, std::ranges
+#include <array>
 #include <cstdint> // std::uint32_t
 #include <limits>
 #include <print>
+#include <stdexcept> // std::runtime_error
 #include <vector>
 
 namespace quokka
@@ -78,6 +79,25 @@ namespace quokka
 
 			return min_image_count;
 		}
+
+		// At least one of these is guaranteed to work as a depth attachment, and D32 has the most precision
+		// Neither has a stencil component, so the depth aspect alone covers the whole image
+		vk::Format choose_depth_format(const vk::raii::PhysicalDevice& physical_device)
+		{
+			constexpr std::array candidates { vk::Format::eD32Sfloat, vk::Format::eX8D24UnormPack32 };
+
+			for (const auto format : candidates)
+			{
+				// Optimal tiling, like every image created with create_image
+				const auto properties { physical_device.getFormatProperties(format) };
+				if (properties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eDepthStencilAttachment)
+				{
+					return format;
+				}
+			}
+
+			throw std::runtime_error("Failed to find a supported depth format");
+		}
 	}
 
 	// ***
@@ -85,9 +105,11 @@ namespace quokka
 	Swapchain::Swapchain(const Device& device, const Window& window)
 		: device_ { device }
 		, window_ { window }
+		, depth_format_ { choose_depth_format(device.physical_device()) }
 	{
 		create_swapchain();
 		create_image_views();
+		create_depth_resources();
 		create_render_finished_semaphores();
 	}
 
@@ -97,6 +119,7 @@ namespace quokka
 
 		create_swapchain();
 		create_image_views();
+		create_depth_resources();
 		create_render_finished_semaphores();
 	}
 
@@ -123,6 +146,21 @@ namespace quokka
 	const vk::raii::ImageView& Swapchain::image_view(std::uint32_t index) const noexcept
 	{
 		return image_views_[index];
+	}
+
+	vk::Format Swapchain::depth_format() const noexcept
+	{
+		return depth_format_;
+	}
+
+	vk::Image Swapchain::depth_image() const noexcept
+	{
+		return *depth_image_.handle;
+	}
+
+	const vk::raii::ImageView& Swapchain::depth_image_view() const noexcept
+	{
+		return depth_image_view_;
 	}
 
 	const vk::raii::Semaphore& Swapchain::render_finished_semaphore(std::uint32_t index) const noexcept
@@ -189,8 +227,15 @@ namespace quokka
 
 		for (const auto& image : images_)
 		{
-			image_views_.push_back(create_image_view(device_, image, surface_format_.format));
+			image_views_.push_back(create_image_view(device_, image, surface_format_.format, vk::ImageAspectFlagBits::eColor));
 		}
+	}
+
+	void Swapchain::create_depth_resources()
+	{
+		// Only used as an attachment while drawing, never sampled or copied
+		depth_image_ = create_image(device_, extent_, depth_format_, vk::ImageUsageFlagBits::eDepthStencilAttachment, vk::MemoryPropertyFlagBits::eDeviceLocal);
+		depth_image_view_ = create_image_view(device_, *depth_image_.handle, depth_format_, vk::ImageAspectFlagBits::eDepth);
 	}
 
 	void Swapchain::create_render_finished_semaphores()
@@ -207,6 +252,9 @@ namespace quokka
 
 	void Swapchain::cleanup_swapchain() noexcept
 	{
+		// Each view must be destroyed before the image it refers to
+		depth_image_view_ = nullptr;
+		depth_image_ = {};
 		// Image views must be destroyed before the swapchain that owns their images
 		image_views_.clear();
 		swapchain_ = nullptr;
