@@ -71,9 +71,19 @@ namespace quokka
 				.stageFlags { vk::ShaderStageFlagBits::eVertex }
 			};
 
+			// The texture and its sampler, read only by the fragment shader
+			constexpr vk::DescriptorSetLayoutBinding texture_binding {
+				.binding { 1 },
+				.descriptorType { vk::DescriptorType::eCombinedImageSampler },
+				.descriptorCount { 1 },
+				.stageFlags { vk::ShaderStageFlagBits::eFragment }
+			};
+
+			constexpr std::array bindings { transforms_binding, texture_binding };
+
 			const vk::DescriptorSetLayoutCreateInfo create_info {
-				.bindingCount { 1 },
-				.pBindings { &transforms_binding }
+				.bindingCount { static_cast<std::uint32_t>(bindings.size()) },
+				.pBindings { bindings.data() }
 			};
 
 			return device.createDescriptorSetLayout(create_info);

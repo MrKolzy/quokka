@@ -13,6 +13,7 @@ namespace quokka
 	{
 		glm::vec2 position;
 		glm::vec3 color;
+		glm::vec2 texture_coordinates;
 
 		// How to step through the vertex buffer, one Vertex at a time from binding 0
 		[[nodiscard]] static constexpr vk::VertexInputBindingDescription binding_description() noexcept
@@ -27,7 +28,7 @@ namespace quokka
 		}
 
 		// How to extract each attribute from a Vertex, the locations must match the shader inputs
-		[[nodiscard]] static constexpr std::array<vk::VertexInputAttributeDescription, 2> attribute_descriptions() noexcept
+		[[nodiscard]] static constexpr std::array<vk::VertexInputAttributeDescription, 3> attribute_descriptions() noexcept
 		{
 			// float2 in the shader
 			constexpr vk::VertexInputAttributeDescription position_attribute {
@@ -45,7 +46,15 @@ namespace quokka
 				.offset { offsetof(Vertex, color) }
 			};
 
-			return { position_attribute, color_attribute };
+			// float2 in the shader
+			constexpr vk::VertexInputAttributeDescription texture_coordinates_attribute {
+				.location { 2 },
+				.binding { 0 },
+				.format { vk::Format::eR32G32Sfloat },
+				.offset { offsetof(Vertex, texture_coordinates) }
+			};
+
+			return { position_attribute, color_attribute, texture_coordinates_attribute };
 		}
 	};
 }

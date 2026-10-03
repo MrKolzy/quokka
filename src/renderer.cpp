@@ -25,11 +25,12 @@ namespace quokka
 	namespace
 	{
 		// Corners of the rectangle in the xy plane, counterclockwise as seen from the +z side
+		// Texture coordinates go from (0, 0) at the top left of the image to (1, 1) at the bottom right
 		constexpr std::array rectangle_vertices {
-			Vertex { .position { -0.5f, -0.5f }, .color { 1.0f, 0.0f, 0.0f } },
-			Vertex { .position { 0.5f, -0.5f }, .color { 0.0f, 1.0f, 0.0f } },
-			Vertex { .position { 0.5f, 0.5f }, .color { 0.0f, 0.0f, 1.0f } },
-			Vertex { .position { -0.5f, 0.5f }, .color { 1.0f, 1.0f, 1.0f } }
+			Vertex { .position { -0.5f, -0.5f }, .color { 1.0f, 0.0f, 0.0f }, .texture_coordinates { 1.0f, 0.0f } },
+			Vertex { .position { 0.5f, -0.5f }, .color { 0.0f, 1.0f, 0.0f }, .texture_coordinates { 0.0f, 0.0f } },
+			Vertex { .position { 0.5f, 0.5f }, .color { 0.0f, 0.0f, 1.0f }, .texture_coordinates { 0.0f, 1.0f } },
+			Vertex { .position { -0.5f, 0.5f }, .color { 1.0f, 1.0f, 1.0f }, .texture_coordinates { 1.0f, 1.0f } }
 		};
 
 		// Two triangles sharing the diagonal, both counterclockwise as seen from the +z side to match the front face of the pipeline
@@ -393,18 +394,24 @@ namespace quokka
 
 	void Renderer::create_descriptor_pool()
 	{
-		// One uniform buffer descriptor per frame in flight
-		constexpr vk::DescriptorPoolSize pool_size {
-			.type { vk::DescriptorType::eUniformBuffer },
-			.descriptorCount { constants::max_frames_in_flight }
+		// One uniform buffer and one texture descriptor per frame in flight
+		constexpr std::array pool_sizes {
+			vk::DescriptorPoolSize {
+				.type { vk::DescriptorType::eUniformBuffer },
+				.descriptorCount { constants::max_frames_in_flight }
+			},
+			vk::DescriptorPoolSize {
+				.type { vk::DescriptorType::eCombinedImageSampler },
+				.descriptorCount { constants::max_frames_in_flight }
+			}
 		};
 
 		const vk::DescriptorPoolCreateInfo create_info {
 			// vk::raii::DescriptorSet frees its set when destroyed, which requires this flag
 			.flags { vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet },
 			.maxSets { constants::max_frames_in_flight },
-			.poolSizeCount { 1 },
-			.pPoolSizes { &pool_size }
+			.poolSizeCount { static_cast<std::uint32_t>(pool_sizes.size()) },
+			.pPoolSizes { pool_sizes.data() }
 		};
 
 		descriptor_pool_ = device_.logical_device().createDescriptorPool(create_info);
@@ -424,7 +431,15 @@ namespace quokka
 
 		descriptor_sets_ = device_.logical_device().allocateDescriptorSets(allocate_info);
 
-		// Point each set at the uniform buffer of its frame
+		// The same for every frame, since the texture is never written after loading
+		const vk::DescriptorImageInfo image_info {
+			.sampler { *texture_sampler_ },
+			.imageView { *texture_image_view_ },
+			// The layout the texture was left in after the upload
+			.imageLayout { vk::ImageLayout::eShaderReadOnlyOptimal }
+		};
+
+		// Point each set at the uniform buffer of its frame and at the texture
 		for (std::uint32_t index { 0 }; index < constants::max_frames_in_flight; ++index)
 		{
 			const vk::DescriptorBufferInfo buffer_info {
@@ -433,7 +448,7 @@ namespace quokka
 				.range { sizeof(TransformUniforms) }
 			};
 
-			const vk::WriteDescriptorSet descriptor_write {
+			const vk::WriteDescriptorSet transforms_write {
 				.dstSet { *descriptor_sets_[index] },
 				.dstBinding { 0 },
 				// Not an array, so the first and only element
@@ -443,8 +458,19 @@ namespace quokka
 				.pBufferInfo { &buffer_info }
 			};
 
+			const vk::WriteDescriptorSet texture_write {
+				.dstSet { *descriptor_sets_[index] },
+				.dstBinding { 1 },
+				.dstArrayElement { 0 },
+				.descriptorCount { 1 },
+				.descriptorType { vk::DescriptorType::eCombinedImageSampler },
+				.pImageInfo { &image_info }
+			};
+
+			const std::array descriptor_writes { transforms_write, texture_write };
+
 			// No copies from other descriptor sets
-			device_.logical_device().updateDescriptorSets(descriptor_write, {});
+			device_.logical_device().updateDescriptorSets(descriptor_writes, {});
 		}
 	}
 

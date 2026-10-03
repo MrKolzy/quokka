@@ -78,7 +78,7 @@ namespace quokka
 
 		// Allocates the memory of the descriptor sets
 		vk::raii::DescriptorPool descriptor_pool_ { nullptr };
-		// One per frame in flight, each pointing to that frame's uniform buffer
+		// One per frame in flight, each pointing to that frame's uniform buffer and to the texture
 		std::vector<vk::raii::DescriptorSet> descriptor_sets_ {};
 
 		// Signaled by acquireNextImage, waited on by the submission, one per frame in flight
