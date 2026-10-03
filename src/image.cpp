@@ -6,6 +6,7 @@ namespace quokka
 		const Device& device,
 		vk::Extent2D extent,
 		std::uint32_t mip_levels,
+		vk::SampleCountFlagBits sample_count,
 		vk::Format format,
 		vk::ImageUsageFlags usage,
 		vk::MemoryPropertyFlags properties)
@@ -17,7 +18,7 @@ namespace quokka
 			.mipLevels { mip_levels },
 			// No array layers yet
 			.arrayLayers { 1 },
-			.samples { vk::SampleCountFlagBits::e1 },
+			.samples { sample_count },
 			// Texels in an implementation defined order that's faster for the GPU, but the CPU can't access them directly
 			.tiling { vk::ImageTiling::eOptimal },
 			.usage { usage },

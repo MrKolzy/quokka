@@ -106,7 +106,8 @@ namespace quokka
 			const vk::raii::Device& device,
 			const vk::raii::PipelineLayout& pipeline_layout,
 			vk::Format color_format,
-			vk::Format depth_format)
+			vk::Format depth_format,
+			vk::SampleCountFlagBits sample_count)
 		{
 			// Both entry points live in the same compiled module
 			const auto shader_module { create_shader_module(device, read_shader_file(constants::shader_path)) };
@@ -165,9 +166,10 @@ namespace quokka
 				.lineWidth { 1.0f }
 			};
 
-			// Multisampling disabled, one sample per pixel
-			constexpr vk::PipelineMultisampleStateCreateInfo multisample_info {
-				.rasterizationSamples { vk::SampleCountFlagBits::e1 },
+			// Each pixel is rasterized at several sample positions, which smooths the edges of the geometry
+			// The fragment shader still runs once per pixel and its color is shared by the covered samples, which keeps the cost low
+			const vk::PipelineMultisampleStateCreateInfo multisample_info {
+				.rasterizationSamples { sample_count },
 				.sampleShadingEnable { vk::False }
 			};
 
@@ -243,10 +245,10 @@ namespace quokka
 
 	// ***
 
-	GraphicsPipeline::GraphicsPipeline(const Device& device, vk::Format color_format, vk::Format depth_format)
+	GraphicsPipeline::GraphicsPipeline(const Device& device, vk::Format color_format, vk::Format depth_format, vk::SampleCountFlagBits sample_count)
 		: descriptor_set_layout_ { create_descriptor_set_layout(device.logical_device()) }
 		, pipeline_layout_ { create_pipeline_layout(device.logical_device(), descriptor_set_layout_) }
-		, graphics_pipeline_ { create_graphics_pipeline(device.logical_device(), pipeline_layout_, color_format, depth_format) }
+		, graphics_pipeline_ { create_graphics_pipeline(device.logical_device(), pipeline_layout_, color_format, depth_format, sample_count) }
 	{
 	}
 

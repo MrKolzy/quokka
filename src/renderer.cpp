@@ -385,6 +385,7 @@ namespace quokka
 			device_,
 			extent,
 			mip_levels,
+			vk::SampleCountFlagBits::e1,
 			texture_format,
 			vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
 			vk::MemoryPropertyFlagBits::eDeviceLocal
@@ -628,6 +629,20 @@ namespace quokka
 			vk::AccessFlagBits2::eColorAttachmentWrite
 		);
 
+		// Shared by every frame in flight, so wait for the color writes and the resolve of the previous frame before clearing it
+		// The old contents are discarded, so the old layout can be undefined
+		transition_image_layout(
+			command_buffer,
+			swapchain_.msaa_color_image(),
+			full_subresource_range(vk::ImageAspectFlagBits::eColor),
+			vk::ImageLayout::eUndefined,
+			vk::ImageLayout::eColorAttachmentOptimal,
+			vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+			vk::AccessFlagBits2::eColorAttachmentWrite,
+			vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+			vk::AccessFlagBits2::eColorAttachmentWrite
+		);
+
 		// Shared by every frame in flight, so wait for the depth tests of the previous frame before clearing it
 		// The old contents are discarded, so the old layout can be undefined
 		transition_image_layout(
@@ -642,17 +657,21 @@ namespace quokka
 			vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite
 		);
 
-		// Opaque black, used to clear the swapchain image before drawing
+		// Opaque black, used to clear the multisampled image before drawing
 		constexpr vk::ClearValue clear_color {
 			.color { .float32 { std::array { 0.0f, 0.0f, 0.0f, 1.0f } } }
 		};
 
-		// The swapchain image is cleared on load and its result kept on store so it can be presented
+		// Drawn into the multisampled image, whose samples are averaged into the swapchain image when rendering ends
+		// Only that resolved result is presented, so the samples themselves aren't stored
 		const vk::RenderingAttachmentInfo color_attachment_info {
-			.imageView { *swapchain_.image_view(image_index) },
+			.imageView { *swapchain_.msaa_color_image_view() },
 			.imageLayout { vk::ImageLayout::eColorAttachmentOptimal },
+			.resolveMode { vk::ResolveModeFlagBits::eAverage },
+			.resolveImageView { *swapchain_.image_view(image_index) },
+			.resolveImageLayout { vk::ImageLayout::eColorAttachmentOptimal },
 			.loadOp { vk::AttachmentLoadOp::eClear },
-			.storeOp { vk::AttachmentStoreOp::eStore },
+			.storeOp { vk::AttachmentStoreOp::eDontCare },
 			.clearValue { clear_color }
 		};
 

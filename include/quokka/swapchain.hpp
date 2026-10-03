@@ -30,8 +30,11 @@ namespace quokka
 		[[nodiscard]] const vk::raii::SwapchainKHR& handle() const noexcept;
 		[[nodiscard]] const vk::SurfaceFormatKHR& surface_format() const noexcept;
 		[[nodiscard]] vk::Extent2D extent() const noexcept;
+		[[nodiscard]] vk::SampleCountFlagBits sample_count() const noexcept;
 		[[nodiscard]] vk::Image image(std::uint32_t index) const noexcept;
 		[[nodiscard]] const vk::raii::ImageView& image_view(std::uint32_t index) const noexcept;
+		[[nodiscard]] vk::Image msaa_color_image() const noexcept;
+		[[nodiscard]] const vk::raii::ImageView& msaa_color_image_view() const noexcept;
 		[[nodiscard]] vk::Format depth_format() const noexcept;
 		[[nodiscard]] vk::Image depth_image() const noexcept;
 		[[nodiscard]] const vk::raii::ImageView& depth_image_view() const noexcept;
@@ -40,14 +43,17 @@ namespace quokka
 	private:
 		void create_swapchain();
 		void create_image_views();
+		void create_msaa_color_resources();
 		void create_depth_resources();
 		void create_render_finished_semaphores();
 		void cleanup_swapchain() noexcept;
 
 		const Device& device_;
 		const Window& window_;
-		// Chosen once in the constructor, since it only depends on the GPU
+		// Chosen once in the constructor, since they only depend on the GPU
 		vk::Format depth_format_;
+		// Samples per pixel of the color and depth attachments
+		vk::SampleCountFlagBits sample_count_;
 
 		// Declared in creation order: members are destroyed in reverse order,
 		// so every object is destroyed before the one it was created from
@@ -59,7 +65,10 @@ namespace quokka
 		vk::Extent2D extent_ {};
 		// Describe how to access each swapchain image
 		std::vector<vk::raii::ImageView> image_views_ {};
-		// Depth of the closest fragment drawn so far at each pixel, shared by every frame in flight
+		// Drawn into with several samples per pixel and then resolved into the swapchain image, shared by every frame in flight
+		Image msaa_color_image_ {};
+		vk::raii::ImageView msaa_color_image_view_ { nullptr };
+		// Depth of the closest fragment drawn so far at each sample, shared by every frame in flight
 		Image depth_image_ {};
 		vk::raii::ImageView depth_image_view_ { nullptr };
 

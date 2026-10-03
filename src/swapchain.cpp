@@ -98,6 +98,31 @@ namespace quokka
 
 			throw std::runtime_error("Failed to find a supported depth format");
 		}
+
+		// The most samples per pixel the GPU supports for both color and depth attachments
+		vk::SampleCountFlagBits choose_sample_count(const vk::raii::PhysicalDevice& physical_device) noexcept
+		{
+			const auto limits { physical_device.getProperties().limits };
+			const auto supported_counts { limits.framebufferColorSampleCounts & limits.framebufferDepthSampleCounts };
+
+			constexpr std::array candidates {
+				vk::SampleCountFlagBits::e64,
+				vk::SampleCountFlagBits::e32,
+				vk::SampleCountFlagBits::e16,
+				vk::SampleCountFlagBits::e8
+			};
+
+			for (const auto count : candidates)
+			{
+				if (supported_counts & count)
+				{
+					return count;
+				}
+			}
+
+			// The Vulkan specification requires every GPU to support 4 samples for both
+			return vk::SampleCountFlagBits::e4;
+		}
 	}
 
 	// ***
@@ -106,9 +131,11 @@ namespace quokka
 		: device_ { device }
 		, window_ { window }
 		, depth_format_ { choose_depth_format(device.physical_device()) }
+		, sample_count_ { choose_sample_count(device.physical_device()) }
 	{
 		create_swapchain();
 		create_image_views();
+		create_msaa_color_resources();
 		create_depth_resources();
 		create_render_finished_semaphores();
 	}
@@ -119,6 +146,7 @@ namespace quokka
 
 		create_swapchain();
 		create_image_views();
+		create_msaa_color_resources();
 		create_depth_resources();
 		create_render_finished_semaphores();
 	}
@@ -138,6 +166,11 @@ namespace quokka
 		return extent_;
 	}
 
+	vk::SampleCountFlagBits Swapchain::sample_count() const noexcept
+	{
+		return sample_count_;
+	}
+
 	vk::Image Swapchain::image(std::uint32_t index) const noexcept
 	{
 		return images_[index];
@@ -146,6 +179,16 @@ namespace quokka
 	const vk::raii::ImageView& Swapchain::image_view(std::uint32_t index) const noexcept
 	{
 		return image_views_[index];
+	}
+
+	vk::Image Swapchain::msaa_color_image() const noexcept
+	{
+		return *msaa_color_image_.handle;
+	}
+
+	const vk::raii::ImageView& Swapchain::msaa_color_image_view() const noexcept
+	{
+		return msaa_color_image_view_;
 	}
 
 	vk::Format Swapchain::depth_format() const noexcept
@@ -217,6 +260,7 @@ namespace quokka
 			std::println("\t- Present mode: {}", vk::to_string(present_mode));
 			std::println("\t- Extent: {}x{}", extent_.width, extent_.height);
 			std::println("\t- Images: {}", images_.size());
+			std::println("\t- Samples per pixel: {}", vk::to_string(sample_count_));
 			std::println();
 		}
 	}
@@ -231,13 +275,31 @@ namespace quokka
 		}
 	}
 
+	void Swapchain::create_msaa_color_resources()
+	{
+		// Drawn into instead of the swapchain image, and averaged into it when rendering ends
+		// Transient, since only that averaged result is kept and its own contents never need to be stored in memory
+		msaa_color_image_ = create_image(
+			device_,
+			extent_,
+			1,
+			sample_count_,
+			surface_format_.format,
+			vk::ImageUsageFlagBits::eTransientAttachment | vk::ImageUsageFlagBits::eColorAttachment,
+			vk::MemoryPropertyFlagBits::eDeviceLocal
+		);
+		msaa_color_image_view_ = create_image_view(device_, *msaa_color_image_.handle, surface_format_.format, vk::ImageAspectFlagBits::eColor);
+	}
+
 	void Swapchain::create_depth_resources()
 	{
 		// Only used as an attachment while drawing, never sampled or copied, so a single mip level is enough
+		// Every attachment drawn to at once must have the same number of samples as the color image
 		depth_image_ = create_image(
 			device_,
 			extent_,
 			1,
+			sample_count_,
 			depth_format_,
 			vk::ImageUsageFlagBits::eDepthStencilAttachment,
 			vk::MemoryPropertyFlagBits::eDeviceLocal
@@ -262,6 +324,8 @@ namespace quokka
 		// Each view must be destroyed before the image it refers to
 		depth_image_view_ = nullptr;
 		depth_image_ = {};
+		msaa_color_image_view_ = nullptr;
+		msaa_color_image_ = {};
 		// Image views must be destroyed before the swapchain that owns their images
 		image_views_.clear();
 		swapchain_ = nullptr;

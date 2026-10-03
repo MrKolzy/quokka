@@ -6,11 +6,11 @@
 
 namespace quokka
 {
-	// Owns the graphics pipeline and the layouts of the resources it accesses, built once for given color and depth formats
+	// Owns the graphics pipeline and the layouts of the resources it accesses, built once for given attachment formats and sample count
 	class GraphicsPipeline
 	{
 	public:
-		GraphicsPipeline(const Device& device, vk::Format color_format, vk::Format depth_format);
+		GraphicsPipeline(const Device& device, vk::Format color_format, vk::Format depth_format, vk::SampleCountFlagBits sample_count);
 
 		[[nodiscard]] const vk::raii::DescriptorSetLayout& descriptor_set_layout() const noexcept;
 		[[nodiscard]] const vk::raii::PipelineLayout& pipeline_layout() const noexcept;

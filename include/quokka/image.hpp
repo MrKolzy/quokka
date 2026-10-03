@@ -41,11 +41,12 @@ namespace quokka
 		vk::raii::DeviceMemory memory { nullptr };
 	};
 
-	// 2D with optimal tiling and no multisampling, exclusive to one queue family and backed by a new allocation
+	// 2D with optimal tiling, exclusive to one queue family and backed by a new allocation
 	[[nodiscard]] Image create_image(
 		const Device& device,
 		vk::Extent2D extent,
 		std::uint32_t mip_levels,
+		vk::SampleCountFlagBits sample_count,
 		vk::Format format,
 		vk::ImageUsageFlags usage,
 		vk::MemoryPropertyFlags properties);

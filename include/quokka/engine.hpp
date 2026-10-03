@@ -32,7 +32,7 @@ namespace quokka
 		Window window_ {};
 		Device device_ { window_ };
 		Swapchain swapchain_ { device_, window_ };
-		GraphicsPipeline graphics_pipeline_ { device_, swapchain_.surface_format().format, swapchain_.depth_format() };
+		GraphicsPipeline graphics_pipeline_ { device_, swapchain_.surface_format().format, swapchain_.depth_format(), swapchain_.sample_count() };
 		Renderer renderer_ { device_, swapchain_, graphics_pipeline_ };
 
 		FrameTimer frame_timer_ {};
