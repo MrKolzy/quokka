@@ -52,13 +52,32 @@ namespace quokka
 			}
 		};
 
-		// Copies of the model drawn every frame: one in the center and two smaller ones behind it to the sides,
-		// turned 45 degrees in opposite directions
-		constexpr std::array object_transforms {
-			Transform { .position { 0.0f, 0.0f, 0.0f }, .rotation { 0.0f, 0.0f, 0.0f }, .scale { 1.0f, 1.0f, 1.0f } },
-			Transform { .position { -2.0f, 0.0f, -1.0f }, .rotation { 0.0f, glm::radians(45.0f), 0.0f }, .scale { 0.75f, 0.75f, 0.75f } },
-			Transform { .position { 2.0f, 0.0f, -1.0f }, .rotation { 0.0f, glm::radians(-45.0f), 0.0f }, .scale { 0.75f, 0.75f, 0.75f } }
-		};
+		constexpr std::uint32_t grid_object_count { constants::object_grid_side * constants::object_grid_side };
+
+		// Distance between the centers of neighboring copies, a bit more than the width of the model
+		constexpr float object_spacing { 2.0f };
+
+		// Where each copy of the model goes: a square grid on the ground centered at the origin, each one turned differently
+		[[nodiscard]] constexpr Transform object_transform(std::uint32_t object_index) noexcept
+		{
+			const std::uint32_t row { object_index / constants::object_grid_side };
+			const std::uint32_t column { object_index % constants::object_grid_side };
+			const float grid_offset { static_cast<float>(constants::object_grid_side - 1) * object_spacing / 2.0f };
+
+			return {
+				.position { static_cast<float>(column) * object_spacing - grid_offset, 0.0f, static_cast<float>(row) * object_spacing - grid_offset },
+				.rotation { 0.0f, static_cast<float>(object_index) * glm::radians(40.0f), 0.0f }
+			};
+		}
+
+		// The whole of an image of the given size, used as a render area and as a scissor
+		[[nodiscard]] constexpr vk::Rect2D full_area(vk::Extent2D extent) noexcept
+		{
+			return {
+				.offset { .x { 0 }, .y { 0 } },
+				.extent { extent }
+			};
+		}
 
 		// Changes the layout of part of an image after the source stages and accesses finish,
 		// and before the destination ones start
@@ -196,9 +215,11 @@ namespace quokka
 		: device_ { device }
 		, swapchain_ { swapchain }
 		, graphics_pipeline_ { graphics_pipeline }
+		, recording_threads_ { constants::recording_thread_count }
 	{
 		create_command_pool();
 		create_command_buffers();
+		create_secondary_command_buffers();
 		load_model();
 		create_vertex_buffer();
 		create_index_buffer();
@@ -334,6 +355,33 @@ namespace quokka
 		};
 
 		command_buffers_ = device_.logical_device().allocateCommandBuffers(allocate_info);
+	}
+
+	void Renderer::create_secondary_command_buffers()
+	{
+		const vk::CommandPoolCreateInfo pool_info {
+			// Lets each command buffer be reset individually, since it's re-recorded every frame
+			.flags { vk::CommandPoolCreateFlagBits::eResetCommandBuffer },
+			// Its command buffers can only be submitted to queues of this family
+			.queueFamilyIndex { device_.queue_family_index() }
+		};
+
+		recording_command_pools_.reserve(constants::recording_thread_count);
+		secondary_command_buffers_.reserve(constants::recording_thread_count);
+
+		for (std::uint32_t thread_index { 0 }; thread_index < constants::recording_thread_count; ++thread_index)
+		{
+			recording_command_pools_.push_back(device_.logical_device().createCommandPool(pool_info));
+
+			// One per frame in flight, since a frame can't re-record a secondary buffer the GPU may still be executing
+			const vk::CommandBufferAllocateInfo allocate_info {
+				.commandPool { *recording_command_pools_.back() },
+				.level { vk::CommandBufferLevel::eSecondary },
+				.commandBufferCount { constants::max_frames_in_flight }
+			};
+
+			secondary_command_buffers_.push_back(device_.logical_device().allocateCommandBuffers(allocate_info));
+		}
 	}
 
 	void Renderer::load_model()
@@ -657,11 +705,15 @@ namespace quokka
 	{
 		const float aspect_ratio { static_cast<float>(swapchain_.extent().width) / static_cast<float>(swapchain_.extent().height) };
 
+		// Back and above the grid, far enough to see all of it, whatever its size
+		constexpr float grid_size { static_cast<float>(constants::object_grid_side) * object_spacing };
+		constexpr glm::vec3 camera_position { 0.0f, grid_size * 0.7f + 1.0f, grid_size * 1.3f + 2.0f };
+
 		const CameraUniforms camera {
-			// Looks at the origin from (2, 2, 6), above and to the right of the objects, with the y axis pointing up
-			.view { glm::lookAt(glm::vec3 { 2.0f, 2.0f, 6.0f }, glm::vec3 { 0.0f, 0.0f, 0.0f }, glm::vec3 { 0.0f, 1.0f, 0.0f }) },
-			// 45 degree vertical field of view, with the near and far planes at 0.1 and 20
-			.projection { glm::perspective(glm::radians(45.0f), aspect_ratio, 0.1f, 20.0f) }
+			// Looks at the center of the grid, with the y axis pointing up
+			.view { glm::lookAt(camera_position, glm::vec3 { 0.0f, 0.0f, 0.0f }, glm::vec3 { 0.0f, 1.0f, 0.0f }) },
+			// 45 degree vertical field of view, with the far plane well behind the farthest copies
+			.projection { glm::perspective(glm::radians(45.0f), aspect_ratio, 0.1f, grid_size * 2.0f + 10.0f) }
 		};
 
 		std::memcpy(mapped_memory, &camera, sizeof(camera));
@@ -670,7 +722,7 @@ namespace quokka
 	void Renderer::record_command_buffer(
 		const vk::raii::CommandBuffer& command_buffer,
 		const vk::raii::DescriptorSet& descriptor_set,
-		std::uint32_t image_index) const
+		std::uint32_t image_index)
 	{
 		// Re-recorded every frame, so each recording is submitted only once
 		command_buffer.begin({ .flags { vk::CommandBufferUsageFlagBits::eOneTimeSubmit } });
@@ -749,15 +801,11 @@ namespace quokka
 			.clearValue { clear_depth }
 		};
 
-		// The whole swapchain image, used as both the render area and the scissor
-		const vk::Rect2D full_image_area {
-			.offset { .x { 0 }, .y { 0 } },
-			.extent { swapchain_.extent() }
-		};
-
 		// Without framebuffers, the attachments are given when rendering begins
+		// The draws come from secondary command buffers, which is all this rendering can contain
 		const vk::RenderingInfo rendering_info {
-			.renderArea { full_image_area },
+			.flags { vk::RenderingFlagBits::eContentsSecondaryCommandBuffers },
+			.renderArea { full_area(swapchain_.extent()) },
 			.layerCount { 1 },
 			.colorAttachmentCount { 1 },
 			.pColorAttachments { &color_attachment_info },
@@ -766,6 +814,82 @@ namespace quokka
 
 		command_buffer.beginRendering(rendering_info);
 
+		// In seconds, as a float so the rotation is smooth, and measured once so every thread uses the same time
+		const std::chrono::duration<float> elapsed_time { std::chrono::steady_clock::now() - start_time_ };
+
+		// Each thread records the draws of its share of the objects into its own secondary command buffer,
+		// and run() returns once all of them are done
+		recording_threads_.run([this, &descriptor_set, &elapsed_time](std::uint32_t thread_index)
+		{
+			// Contiguous shares, as even as possible
+			const std::uint32_t first_object { grid_object_count * thread_index / constants::recording_thread_count };
+			const std::uint32_t end_object { grid_object_count * (thread_index + 1) / constants::recording_thread_count };
+
+			record_object_draws(
+				secondary_command_buffers_[thread_index][frame_index_],
+				descriptor_set,
+				first_object,
+				end_object - first_object,
+				elapsed_time.count()
+			);
+		});
+
+		// In the order of the threads, which is also the order of the objects
+		std::array<vk::CommandBuffer, constants::recording_thread_count> frame_secondary_command_buffers {};
+		for (std::uint32_t thread_index { 0 }; thread_index < constants::recording_thread_count; ++thread_index)
+		{
+			frame_secondary_command_buffers[thread_index] = *secondary_command_buffers_[thread_index][frame_index_];
+		}
+
+		command_buffer.executeCommands(frame_secondary_command_buffers);
+
+		command_buffer.endRendering();
+
+		// Wait for every color write to finish before the presentation engine reads the image
+		transition_image_layout(
+			command_buffer,
+			swapchain_.image(image_index),
+			full_subresource_range(vk::ImageAspectFlagBits::eColor),
+			vk::ImageLayout::eColorAttachmentOptimal,
+			vk::ImageLayout::ePresentSrcKHR,
+			vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+			vk::AccessFlagBits2::eColorAttachmentWrite,
+			vk::PipelineStageFlagBits2::eBottomOfPipe,
+			{}
+		);
+
+		command_buffer.end();
+	}
+
+	void Renderer::record_object_draws(
+		const vk::raii::CommandBuffer& command_buffer,
+		const vk::raii::DescriptorSet& descriptor_set,
+		std::uint32_t first_object,
+		std::uint32_t object_count,
+		float elapsed_seconds) const
+	{
+		const vk::Format color_format { swapchain_.surface_format().format };
+
+		// Continues the rendering begun by the primary command buffer, so it must match its attachments
+		const vk::StructureChain<vk::CommandBufferInheritanceInfo, vk::CommandBufferInheritanceRenderingInfo> inheritance_info_chain {
+			{},
+			{
+				.colorAttachmentCount { 1 },
+				.pColorAttachmentFormats { &color_format },
+				.depthAttachmentFormat { swapchain_.depth_format() },
+				.rasterizationSamples { swapchain_.sample_count() }
+			}
+		};
+
+		const vk::CommandBufferBeginInfo begin_info {
+			// Re-recorded every frame, and only executed inside the rendering of the primary command buffer
+			.flags { vk::CommandBufferUsageFlagBits::eOneTimeSubmit | vk::CommandBufferUsageFlagBits::eRenderPassContinue },
+			.pInheritanceInfo { &inheritance_info_chain.get<vk::CommandBufferInheritanceInfo>() }
+		};
+
+		command_buffer.begin(begin_info);
+
+		// A secondary command buffer inherits no state from the primary one, so it binds and sets everything it uses
 		command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphics_pipeline_.handle());
 
 		// Starting at binding 0, with the vertex data at the start of the buffer
@@ -795,39 +919,21 @@ namespace quokka
 		};
 
 		command_buffer.setViewport(0, viewport);
-		command_buffer.setScissor(0, full_image_area);
-
-		// In seconds, as a float so the rotation is smooth
-		const std::chrono::duration<float> elapsed_time { std::chrono::steady_clock::now() - start_time_ };
+		command_buffer.setScissor(0, full_area(swapchain_.extent()));
 
 		// Every object shares the mesh, the texture and the camera, so only the pushed model matrix changes between draws
-		for (const auto& transform : object_transforms)
+		for (std::uint32_t object_index { first_object }; object_index < first_object + object_count; ++object_index)
 		{
 			// Each one also turns around its own vertical axis, 30 degrees per second
-			Transform animated_transform { transform };
-			animated_transform.rotation.y += elapsed_time.count() * glm::radians(30.0f);
+			Transform transform { object_transform(object_index) };
+			transform.rotation.y += elapsed_seconds * glm::radians(30.0f);
 
-			const ObjectConstants object_constants { .model { animated_transform.model_matrix() } };
+			const ObjectConstants object_constants { .model { transform.model_matrix() } };
 			command_buffer.pushConstants<ObjectConstants>(*graphics_pipeline_.pipeline_layout(), vk::ShaderStageFlagBits::eVertex, 0, object_constants);
 
 			// Every index in the buffer, 1 instance, starting at the first index, vertex and instance
 			command_buffer.drawIndexed(static_cast<std::uint32_t>(mesh_.indices.size()), 1, 0, 0, 0);
 		}
-
-		command_buffer.endRendering();
-
-		// Wait for every color write to finish before the presentation engine reads the image
-		transition_image_layout(
-			command_buffer,
-			swapchain_.image(image_index),
-			full_subresource_range(vk::ImageAspectFlagBits::eColor),
-			vk::ImageLayout::eColorAttachmentOptimal,
-			vk::ImageLayout::ePresentSrcKHR,
-			vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-			vk::AccessFlagBits2::eColorAttachmentWrite,
-			vk::PipelineStageFlagBits2::eBottomOfPipe,
-			{}
-		);
 
 		command_buffer.end();
 	}

@@ -32,4 +32,12 @@ namespace quokka::constants
 	// Frames the CPU can record while the GPU is still working on previous ones
 	// Not higher, so the CPU doesn't get too far ahead of the GPU and add latency
 	inline constexpr std::uint32_t max_frames_in_flight { 2 };
+
+	// Copies of the model drawn in a square grid, this many per side, raised to stress the recording of draw commands
+	inline constexpr std::uint32_t object_grid_side { 10 };
+	static_assert(object_grid_side > 0);
+
+	// Threads that record the draw commands of each frame in parallel, 1 to compare against recording them on one thread
+	inline constexpr std::uint32_t recording_thread_count { 4 };
+	static_assert(recording_thread_count > 0);
 }

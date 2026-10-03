@@ -6,6 +6,7 @@
 #include "quokka/image.hpp"
 #include "quokka/mesh.hpp"
 #include "quokka/swapchain.hpp"
+#include "quokka/worker_threads.hpp"
 
 #include <vulkan/vulkan_raii.hpp>
 
@@ -15,7 +16,7 @@
 
 namespace quokka
 {
-	// Uploads the geometry it draws, records the commands of each frame, submits them and presents the result
+	// Uploads the geometry it draws, records the commands of each frame on several threads, submits them and presents the result
 	class Renderer
 	{
 	public:
@@ -34,6 +35,7 @@ namespace quokka
 	private:
 		void create_command_pool();
 		void create_command_buffers();
+		void create_secondary_command_buffers();
 		void load_model();
 		void create_vertex_buffer();
 		void create_index_buffer();
@@ -49,7 +51,14 @@ namespace quokka
 		void record_command_buffer(
 			const vk::raii::CommandBuffer& command_buffer,
 			const vk::raii::DescriptorSet& descriptor_set,
-			std::uint32_t image_index) const;
+			std::uint32_t image_index);
+		// Called from the recording threads at the same time, so it must only read shared state
+		void record_object_draws(
+			const vk::raii::CommandBuffer& command_buffer,
+			const vk::raii::DescriptorSet& descriptor_set,
+			std::uint32_t first_object,
+			std::uint32_t object_count,
+			float elapsed_seconds) const;
 
 		const Device& device_;
 		const Swapchain& swapchain_;
@@ -61,6 +70,10 @@ namespace quokka
 		vk::raii::CommandPool command_pool_ { nullptr };
 		// One per frame in flight
 		std::vector<vk::raii::CommandBuffer> command_buffers_ {};
+		// One per recording thread, since a command pool and its command buffers can only be used by one thread at a time
+		std::vector<vk::raii::CommandPool> recording_command_pools_ {};
+		// Indexed by recording thread and then by frame in flight, executed from the primary command buffer of the frame
+		std::vector<std::vector<vk::raii::CommandBuffer>> secondary_command_buffers_ {};
 
 		// Loaded from the model file, uploaded to vertex_buffer_ and index_buffer_
 		Mesh mesh_ {};
@@ -97,5 +110,9 @@ namespace quokka
 
 		// The objects rotate according to the time elapsed since then
 		std::chrono::steady_clock::time_point start_time_ { std::chrono::steady_clock::now() };
+
+		// Record the draws of each frame into secondary_command_buffers_
+		// Declared last, so its threads are joined before anything they record into is destroyed
+		WorkerThreads recording_threads_;
 	};
 }
