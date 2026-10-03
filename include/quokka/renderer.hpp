@@ -4,6 +4,7 @@
 #include "quokka/device.hpp"
 #include "quokka/graphics_pipeline.hpp"
 #include "quokka/image.hpp"
+#include "quokka/mesh.hpp"
 #include "quokka/swapchain.hpp"
 
 #include <vulkan/vulkan_raii.hpp>
@@ -33,6 +34,7 @@ namespace quokka
 	private:
 		void create_command_pool();
 		void create_command_buffers();
+		void load_model();
 		void create_vertex_buffer();
 		void create_index_buffer();
 		void create_texture_image();
@@ -60,6 +62,8 @@ namespace quokka
 		// One per frame in flight
 		std::vector<vk::raii::CommandBuffer> command_buffers_ {};
 
+		// Loaded from the model file, uploaded to vertex_buffer_ and index_buffer_
+		Mesh mesh_ {};
 		// Vertices in device local memory, read by the vertex shader through binding 0
 		Buffer vertex_buffer_ {};
 		// Indices into vertex_buffer_, so vertices shared by several triangles are stored only once
@@ -89,7 +93,7 @@ namespace quokka
 		// Frame in flight currently being recorded, cycles from 0 to max_frames_in_flight - 1
 		std::uint32_t frame_index_ {};
 
-		// The rectangle rotates according to the time elapsed since then
+		// The model rotates according to the time elapsed since then
 		std::chrono::steady_clock::time_point start_time_ { std::chrono::steady_clock::now() };
 	};
 }

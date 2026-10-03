@@ -8,6 +8,7 @@
 - [Vulkan SDK](https://vulkan.lunarg.com/) 1.4.357.0 with the GLM headers component (sets the `VULKAN_SDK` environment variable)
 - [GLFW](https://www.glfw.org/download.html) 3.5.1, 64-bit Windows binaries
 - [stb_image](https://github.com/nothings/stb) 2.30, the single header `stb_image.h`
+- [tinyobjloader](https://github.com/tinyobjloader/tinyobjloader) 2.0, the single header `tiny_obj_loader.h`
 
 ## Project Setup
 
@@ -31,13 +32,13 @@ Right-click the **Quokka** project in **Solution Explorer**, select **Properties
 
 When adding values, keep the existing and inherited ones.
 
-`<GLFW>` and `<stb>` stand for your local GLFW and stb_image folders.
+`<GLFW>`, `<stb>` and `<tinyobjloader>` stand for your local GLFW, stb_image and tinyobjloader folders.
 
 ### C/C++
 
 | Property | Value |
 |---|---|
-| General > Additional Include Directories | `$(ProjectDir)include`<br>`$(VULKAN_SDK)\Include`<br>`<GLFW>\include`<br>`<stb>` |
+| General > Additional Include Directories | `$(ProjectDir)include`<br>`$(VULKAN_SDK)\Include`<br>`<GLFW>\include`<br>`<stb>`<br>`<tinyobjloader>` |
 | General > Multi-processor Compilation | `Yes (/MP)` |
 | Preprocessor > Preprocessor Definitions | `VULKAN_HPP_NO_CONSTRUCTORS`<br>`VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS`<br>`GLFW_INCLUDE_VULKAN`<br>`GLM_FORCE_DEPTH_ZERO_TO_ONE` |
 | Language > C++ Language Standard | `Preview - Features from the Latest C++ Working Draft (/std:c++latest)` |
@@ -84,4 +85,4 @@ Select the configuration from the **Solution Configurations** dropdown in the to
 
 ## Running
 
-Run from Visual Studio, whose working directory is the project folder, so `shaders/shader.spv` and `textures/texture.png` are found.
+Run from Visual Studio, whose working directory is the project folder, so `shaders/shader.spv`, `models/viking_room.obj` and `textures/viking_room.png` are found.

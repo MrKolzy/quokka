@@ -2,7 +2,6 @@
 
 #include "quokka/constants.hpp"
 #include "quokka/one_time_commands.hpp"
-#include "quokka/vertex.hpp"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp> // glm::rotate, glm::lookAt, glm::perspective
@@ -24,28 +23,6 @@ namespace quokka
 {
 	namespace
 	{
-		// Two rectangles parallel to the xy plane, the second one half a unit below the first
-		// Both counterclockwise as seen from the +z side, where the camera is
-		// Texture coordinates go from (0, 0) at the top left of the image to (1, 1) at the bottom right
-		constexpr std::array scene_vertices {
-			Vertex { .position { -0.5f, -0.5f, 0.0f }, .color { 1.0f, 0.0f, 0.0f }, .texture_coordinates { 1.0f, 0.0f } },
-			Vertex { .position { 0.5f, -0.5f, 0.0f }, .color { 0.0f, 1.0f, 0.0f }, .texture_coordinates { 0.0f, 0.0f } },
-			Vertex { .position { 0.5f, 0.5f, 0.0f }, .color { 0.0f, 0.0f, 1.0f }, .texture_coordinates { 0.0f, 1.0f } },
-			Vertex { .position { -0.5f, 0.5f, 0.0f }, .color { 1.0f, 1.0f, 1.0f }, .texture_coordinates { 1.0f, 1.0f } },
-
-			Vertex { .position { -0.5f, -0.5f, -0.5f }, .color { 1.0f, 0.0f, 0.0f }, .texture_coordinates { 1.0f, 0.0f } },
-			Vertex { .position { 0.5f, -0.5f, -0.5f }, .color { 0.0f, 1.0f, 0.0f }, .texture_coordinates { 0.0f, 0.0f } },
-			Vertex { .position { 0.5f, 0.5f, -0.5f }, .color { 0.0f, 0.0f, 1.0f }, .texture_coordinates { 0.0f, 1.0f } },
-			Vertex { .position { -0.5f, 0.5f, -0.5f }, .color { 1.0f, 1.0f, 1.0f }, .texture_coordinates { 1.0f, 1.0f } }
-		};
-
-		// Two triangles per rectangle, sharing its diagonal, to match the front face of the pipeline
-		// 16-bit indices address up to 65536 vertices and take half the memory of 32-bit ones
-		constexpr std::array<std::uint16_t, 12> scene_indices {
-			0, 1, 2, 2, 3, 0,
-			4, 5, 6, 6, 7, 4
-		};
-
 		// Must match TransformUniforms in the shader
 		// Only 4x4 matrices, which already meet the 16-byte alignment uniform buffers require
 		struct TransformUniforms
@@ -103,6 +80,7 @@ namespace quokka
 	{
 		create_command_pool();
 		create_command_buffers();
+		load_model();
 		create_vertex_buffer();
 		create_index_buffer();
 		create_texture_image();
@@ -239,12 +217,17 @@ namespace quokka
 		command_buffers_ = device_.logical_device().allocateCommandBuffers(allocate_info);
 	}
 
+	void Renderer::load_model()
+	{
+		mesh_ = load_obj(constants::model_path);
+	}
+
 	void Renderer::create_vertex_buffer()
 	{
 		vertex_buffer_ = create_device_local_buffer(
 			device_,
 			command_pool_,
-			std::as_bytes(std::span { scene_vertices }),
+			std::as_bytes(std::span { mesh_.vertices }),
 			vk::BufferUsageFlagBits::eVertexBuffer
 		);
 	}
@@ -254,7 +237,7 @@ namespace quokka
 		index_buffer_ = create_device_local_buffer(
 			device_,
 			command_pool_,
-			std::as_bytes(std::span { scene_indices }),
+			std::as_bytes(std::span { mesh_.indices }),
 			vk::BufferUsageFlagBits::eIndexBuffer
 		);
 	}
@@ -609,8 +592,8 @@ namespace quokka
 		// Starting at binding 0, with the vertex data at the start of the buffer
 		command_buffer.bindVertexBuffers(0, *vertex_buffer_.handle, { 0 });
 
-		// Offset 0, and the index type must match the element type of scene_indices
-		command_buffer.bindIndexBuffer(*index_buffer_.handle, 0, vk::IndexType::eUint16);
+		// Offset 0, with the index type deduced from the element type of the mesh indices
+		command_buffer.bindIndexBuffer(*index_buffer_.handle, 0, vk::IndexTypeValue<decltype(mesh_.indices)::value_type>::value);
 
 		// Set 0, with no dynamic offsets
 		command_buffer.bindDescriptorSets(
@@ -636,7 +619,7 @@ namespace quokka
 		command_buffer.setScissor(0, full_image_area);
 
 		// Every index in the buffer, 1 instance, starting at the first index, vertex and instance
-		command_buffer.drawIndexed(static_cast<std::uint32_t>(scene_indices.size()), 1, 0, 0, 0);
+		command_buffer.drawIndexed(static_cast<std::uint32_t>(mesh_.indices.size()), 1, 0, 0, 0);
 
 		command_buffer.endRendering();
 

@@ -25,8 +25,9 @@ namespace quokka::constants
 
 	// Compiled SPIR-V shaders, relative to the working directory
 	inline constexpr const char* shader_path { "shaders/shader.spv" };
-	// Image applied to the rectangle, relative to the working directory
-	inline constexpr const char* texture_path { "textures/texture.png" };
+	// Model drawn by the renderer and its texture, relative to the working directory
+	inline constexpr const char* model_path { "models/viking_room.obj" };
+	inline constexpr const char* texture_path { "textures/viking_room.png" };
 
 	// Frames the CPU can record while the GPU is still working on previous ones
 	// Not higher, so the CPU doesn't get too far ahead of the GPU and add latency
