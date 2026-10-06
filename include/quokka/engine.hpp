@@ -16,7 +16,7 @@ namespace quokka
 		Engine() = default;
 		~Engine() = default;
 
-		// Not copyable or movable: members reference each other
+		// Members reference each other, so it can't be copied or moved
 		Engine(const Engine&) = delete;
 		Engine& operator=(const Engine&) = delete;
 		Engine(Engine&&) = delete;
@@ -27,7 +27,7 @@ namespace quokka
 	private:
 		void recreate_swapchain();
 
-		// Order matters: each member uses the ones above it, and they're destroyed in reverse
+		// Each member uses the ones above it and is destroyed before them, so don't reorder
 		Window window_ {};
 		Device device_ { window_ };
 		Swapchain swapchain_ { device_, window_ };
