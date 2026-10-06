@@ -2,8 +2,8 @@
 
 #include <cstdio> // stderr
 #include <cstdlib> // EXIT_FAILURE, EXIT_SUCCESS
-#include <exception>
-#include <print>
+#include <exception> // std::exception
+#include <print> // std::println
 
 int main()
 {
