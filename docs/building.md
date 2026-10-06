@@ -22,7 +22,7 @@ Add the files in the `src`, `include/quokka` and `shaders` folders with **Add > 
 
 ## Properties
 
-In the project **Properties**, set **All Configurations** and **x64**. When adding values, keep the inherited ones.
+In the project **Properties**, set **Configuration** to `All Configurations` and **Platform** to `x64`. When adding values, keep the inherited ones.
 
 `<GLFW>`, `<tinygltf>` and `<KTX>` are your local folders.
 
