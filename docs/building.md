@@ -6,12 +6,15 @@
 - Visual Studio Community 2026 Insiders
 - [Vulkan SDK](https://vulkan.lunarg.com/) 1.4.363.0 with the **GLM headers** component
 - [GLFW](https://www.glfw.org/download.html) 3.5.1 (64-bit Windows binaries)
-- [tinygltf](https://github.com/syoyo/tinygltf) 3.0.1 (only the `tiny_gltf.h` and `json.hpp` headers)
-- [KTX-Software](https://github.com/KhronosGroup/KTX-Software/releases) 4.4.2 with the **Development** component
+- [tinygltf](https://github.com/syoyo/tinygltf) 3.0.1
+  (only the `tiny_gltf.h` and `json.hpp` headers)
+- [KTX-Software](https://github.com/KhronosGroup/KTX-Software/releases) 4.4.2
+  with the **Development** component
 
 ## Setup
 
-Create a Visual Studio **Empty Project** named `Quokka` with the solution in the same directory and run in its folder:
+Create a Visual Studio **Empty Project** named `Quokka` with the solution in the same directory
+and run in its folder:
 
 	git init
 	git remote add origin https://github.com/MrKolzy/quokka.git
@@ -22,7 +25,8 @@ Add the files in the `src`, `include/quokka` and `shaders` folders with **Add > 
 
 ## Properties
 
-In the project **Properties**, set **Configuration** to `All Configurations` and **Platform** to `x64`. When adding values, keep the inherited ones.
+In the project **Properties**, set **Configuration** to `All Configurations`
+and **Platform** to `x64`. When adding values, keep the inherited ones.
 
 `<GLFW>`, `<tinygltf>` and `<KTX>` are your local folders.
 
@@ -43,7 +47,8 @@ In the project **Properties**, set **Configuration** to `All Configurations` and
 | Linker > General > Additional Library Directories | `<GLFW>\lib-vc2026`<br>`<KTX>\lib` |
 | Linker > Input > Additional Dependencies | `glfw3dll.lib`<br>`ktx.lib` |
 
-In the properties of `src/pch.cpp`, set **C/C++ > Precompiled Headers > Precompiled Header** to `Create (/Yc)`.
+In the properties of `src/pch.cpp`,
+set **C/C++ > Precompiled Headers > Precompiled Header** to `Create (/Yc)`.
 
 **Build Events > Pre-Build Event > Command Line:**
 
