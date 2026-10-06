@@ -57,7 +57,7 @@ In the properties of `src/pch.cpp`, set **C/C++ > Precompiled Headers > Precompi
 
 ## Running
 
-Run from Visual Studio so the `shaders`, `models` and `textures` folders are found.
+Start Quokka from Visual Studio so the `shaders`, `models` and `textures` folders are found.
 
 - **Debug** enables the validation layers.
 - **Release** is optimized and is the one to measure performance with.
