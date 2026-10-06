@@ -2,7 +2,7 @@
 
 #include "quokka/constants.hpp"
 
-#include <format>
+#include <format> // std::format
 
 namespace quokka
 {
@@ -14,7 +14,7 @@ namespace quokka
 
 			const bool is_swapchain_outdated { renderer_.draw_frame() };
 
-			// The resize flag is also checked, since not every driver reports out of date after a resize
+			// Not every platform reports out of date after a resize
 			if (is_swapchain_outdated || window_.was_resized())
 			{
 				recreate_swapchain();
@@ -25,7 +25,8 @@ namespace quokka
 				if (frame_timer_.tick())
 				{
 					window_.set_title(std::format("{} | {:.0f} FPS | {:.2f} ms",
-						constants::app_name, frame_timer_.average_fps(), frame_timer_.average_frame_time_ms()));
+						constants::app_name, frame_timer_.average_fps(),
+						frame_timer_.average_frame_time_ms()));
 				}
 			}
 		}
@@ -33,11 +34,11 @@ namespace quokka
 
 	void Engine::recreate_swapchain()
 	{
-		// A minimized window has an empty framebuffer, so wait until it's restored
+		// A minimized window has a 0x0 framebuffer, which a swapchain can't have
 		auto framebuffer_extent { window_.framebuffer_extent() };
 		while (framebuffer_extent.width == 0 || framebuffer_extent.height == 0)
 		{
-			// The window may be closed while minimized, in which case the main loop exits without recreating anything
+			// Otherwise closing while minimized would get stuck here
 			if (window_.should_close())
 			{
 				return;
@@ -47,10 +48,9 @@ namespace quokka
 			framebuffer_extent = window_.framebuffer_extent();
 		}
 
-		// The new swapchain queries the current size, so any resize up to this point is already handled
 		window_.clear_resized();
 
-		// Nothing may still be using the old swapchain or its image views
+		// The GPU may still be using the old swapchain
 		device_.logical_device().waitIdle();
 
 		swapchain_.recreate();
