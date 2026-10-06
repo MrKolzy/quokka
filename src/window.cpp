@@ -6,7 +6,7 @@
 
 #include <cstdint> // std::uint32_t
 #include <cstdio> // stderr
-#include <print>
+#include <print> // std::println
 #include <stdexcept> // std::runtime_error
 
 namespace quokka
@@ -33,16 +33,17 @@ namespace quokka
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 		glfwWindowHint(GLFW_RESIZABLE, constants::is_window_resizable ? GLFW_TRUE : GLFW_FALSE);
 
-		handle_ = glfwCreateWindow(constants::window_width, constants::window_height, constants::app_name, nullptr, nullptr);
+		handle_ = glfwCreateWindow(constants::window_width, constants::window_height,
+			constants::app_name, nullptr, nullptr);
 		if (!handle_)
 		{
-			// The destructor doesn't run if the constructor throws, so clean up here
+			// The destructor doesn't run if the constructor throws
 			glfwTerminate();
 
 			throw std::runtime_error("Failed to create GLFW window");
 		}
 
-		// GLFW callbacks only receive the GLFWwindow*, so store this to recover the Window
+		// Lets the static callback recover the Window from the GLFW window handle
 		glfwSetWindowUserPointer(handle_, this);
 		glfwSetFramebufferSizeCallback(handle_, &framebuffer_size_callback);
 	}
@@ -55,12 +56,14 @@ namespace quokka
 
 	vk::Extent2D Window::framebuffer_extent() const noexcept
 	{
-		// Framebuffer size is in pixels, unlike glfwGetWindowSize, which returns screen coordinates
 		int width {};
 		int height {};
 		glfwGetFramebufferSize(handle_, &width, &height);
 
-		return { .width { static_cast<std::uint32_t>(width) }, .height { static_cast<std::uint32_t>(height) } };
+		return {
+			.width { static_cast<std::uint32_t>(width) },
+			.height { static_cast<std::uint32_t>(height) }
+		};
 	}
 
 	std::vector<const char*> Window::required_instance_extensions() const
@@ -69,27 +72,24 @@ namespace quokka
 		const auto glfw_extensions { glfwGetRequiredInstanceExtensions(&glfw_extension_count) };
 		if (!glfw_extensions)
 		{
-			throw std::runtime_error("Failed to get the Vulkan instance extensions required by GLFW");
+			throw std::runtime_error("Failed to get the instance extensions required by GLFW");
 		}
 
-		// Parentheses, not braces: this is the iterator-range constructor
-		std::vector<const char*> extensions(glfw_extensions, glfw_extensions + glfw_extension_count);
-
-		return extensions;
+		// Parentheses because braces could pick the initializer_list constructor
+		return std::vector<const char*>(glfw_extensions, glfw_extensions + glfw_extension_count);
 	}
 
 	vk::raii::SurfaceKHR Window::create_surface(const vk::raii::Instance& instance) const
 	{
-		// Raw C handle, since GLFW is a C library and doesn't know about vk::raii
 		VkSurfaceKHR raw_surface {};
 
-		// GLFW hides the platform-specific surface creation (Win32, X11, Wayland, ...)
+		// GLFW hides the surface creation of each platform, such as Win32, X11 or Wayland
 		if (glfwCreateWindowSurface(*instance, handle_, nullptr, &raw_surface) != VK_SUCCESS)
 		{
 			throw std::runtime_error("Failed to create window surface");
 		}
 
-		// Take ownership of the raw handle so it's destroyed automatically
+		// Wrap it so it's destroyed automatically
 		return vk::raii::SurfaceKHR { instance, raw_surface };
 	}
 
@@ -123,7 +123,7 @@ namespace quokka
 		was_resized_ = false;
 	}
 
-	void Window::framebuffer_size_callback(GLFWwindow* window, int /*width*/, int /*height*/) noexcept
+	void Window::framebuffer_size_callback(GLFWwindow* window, int, int) noexcept
 	{
 		// The engine queries the new size itself when recreating the swapchain
 		auto* self { static_cast<Window*>(glfwGetWindowUserPointer(window)) };

@@ -34,7 +34,7 @@ namespace quokka
 
 		void set_title(const std::string& title) noexcept;
 
-		// Run event callbacks, waiting for an event first (wait) or not (poll)
+		// Run event callbacks, wait first blocks until an event arrives and poll doesn't
 		void poll_events() noexcept;
 		void wait_events() noexcept;
 
