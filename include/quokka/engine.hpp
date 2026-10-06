@@ -10,14 +10,13 @@
 
 namespace quokka
 {
-	// Owns the window and every Vulkan object, and runs the main loop
 	class Engine
 	{
 	public:
 		Engine() = default;
 		~Engine() = default;
 
-		// Neither copyable nor movable: owns the Window, which isn't either
+		// Not copyable or movable: members reference each other
 		Engine(const Engine&) = delete;
 		Engine& operator=(const Engine&) = delete;
 		Engine(Engine&&) = delete;
@@ -28,13 +27,18 @@ namespace quokka
 	private:
 		void recreate_swapchain();
 
-		// Declared in creation order: members are destroyed in reverse order,
-		// so every object is destroyed before the one it was created from, and the window last
+		// Order matters: each member uses the ones above it, and they're destroyed in reverse
 		Window window_ {};
 		Device device_ { window_ };
 		Swapchain swapchain_ { device_, window_ };
-		GraphicsPipeline graphics_pipeline_ { device_, swapchain_.surface_format().format, swapchain_.depth_format(), swapchain_.sample_count() };
-		ParticleSystem particle_system_ { device_, graphics_pipeline_, swapchain_.surface_format().format, swapchain_.depth_format(), swapchain_.sample_count() };
+		GraphicsPipeline graphics_pipeline_ {
+			device_, swapchain_.surface_format().format,
+			swapchain_.depth_format(), swapchain_.sample_count()
+		};
+		ParticleSystem particle_system_ {
+			device_, graphics_pipeline_, swapchain_.surface_format().format,
+			swapchain_.depth_format(), swapchain_.sample_count()
+		};
 		Renderer renderer_ { device_, swapchain_, graphics_pipeline_, particle_system_ };
 
 		FrameTimer frame_timer_ {};
