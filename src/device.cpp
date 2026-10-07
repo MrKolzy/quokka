@@ -4,38 +4,41 @@
 #include "quokka/window.hpp"
 
 #include <algorithm> // std::ranges
-#include <array>
+#include <array> // std::array
 #include <cstdint> // std::uint32_t
 #include <cstdio> // stderr
 #include <cstring> // std::strcmp
-#include <optional>
-#include <print>
+#include <optional> // std::nullopt, std::optional
+#include <print> // std::println
 #include <stdexcept> // std::runtime_error
-#include <string>
-#include <vector>
+#include <string> // std::string
+#include <vector> // std::vector
 
 namespace quokka
 {
 	namespace
 	{
-		// Names are C strings, and == between two char pointers compares addresses instead of the text
-		bool is_extension_available(const std::vector<vk::ExtensionProperties>& available_extensions, const char* name) noexcept
+		// Names are C strings, so comparing the pointers would compare addresses, not the text
+		bool is_extension_available(
+			const std::vector<vk::ExtensionProperties>& available_extensions,
+			const char* name) noexcept
 		{
-			return std::ranges::any_of(available_extensions, [name](const vk::ExtensionProperties& extension)
+			return std::ranges::any_of(available_extensions, [name](const auto& extension)
 			{
 				return std::strcmp(extension.extensionName.data(), name) == 0;
 			});
 		}
 
-		bool is_layer_available(const std::vector<vk::LayerProperties>& available_layers, const char* name) noexcept
+		bool is_layer_available(
+			const std::vector<vk::LayerProperties>& available_layers,
+			const char* name) noexcept
 		{
-			return std::ranges::any_of(available_layers, [name](const vk::LayerProperties& layer)
+			return std::ranges::any_of(available_layers, [name](const auto& layer)
 			{
 				return std::strcmp(layer.layerName.data(), name) == 0;
 			});
 		}
 
-		// GLFW's surface extensions for the current platform, plus debug utils when validation is enabled
 		std::vector<const char*> get_required_instance_extensions(const Window& window)
 		{
 			auto extensions { window.required_instance_extensions() };
@@ -49,12 +52,12 @@ namespace quokka
 			return extensions;
 		}
 
-		// Validation layers when they're enabled, none otherwise
 		std::vector<const char*> get_required_instance_layers()
 		{
 			if constexpr (constants::should_enable_validation_layers)
 			{
-				return std::vector<const char*>(constants::validation_layers.begin(), constants::validation_layers.end());
+				return std::vector<const char*>(
+					constants::validation_layers.begin(), constants::validation_layers.end());
 			}
 			else
 			{
@@ -62,12 +65,11 @@ namespace quokka
 			}
 		}
 
-		// Called by the validation layers whenever they have something to report
 		VKAPI_ATTR vk::Bool32 VKAPI_CALL debug_callback(
 			vk::DebugUtilsMessageSeverityFlagBitsEXT severity,
 			vk::DebugUtilsMessageTypeFlagsEXT type,
 			const vk::DebugUtilsMessengerCallbackDataEXT* callback_data,
-			void* /*user_data*/) noexcept
+			void*) noexcept
 		{
 			std::println(stderr, "[Quokka] Validation layer ({}, {}): {}",
 				vk::to_string(severity), vk::to_string(type), callback_data->pMessage);
@@ -76,7 +78,7 @@ namespace quokka
 			return vk::False;
 		}
 
-		// Messenger configuration, shared by instance creation and the debug messenger
+		// Shared by instance creation and the debug messenger
 		constexpr vk::DebugUtilsMessengerCreateInfoEXT debug_messenger_create_info {
 			// eVerbose and eInfo are left out, they're mostly noise unless debugging the loader
 			.messageSeverity {
@@ -93,7 +95,6 @@ namespace quokka
 
 		vk::raii::Instance create_instance(const vk::raii::Context& context, const Window& window)
 		{
-			// Application metadata for the driver and the highest Vulkan version to use
 			constexpr vk::ApplicationInfo app_info {
 				.pApplicationName { constants::app_name },
 				.applicationVersion { vk::makeApiVersion(0, 1, 0, 0) },
@@ -118,7 +119,8 @@ namespace quokka
 			{
 				if (!is_extension_available(available_extensions, extension))
 				{
-					throw std::runtime_error("Required Vulkan instance extension is not supported: " + std::string(extension));
+					throw std::runtime_error(
+						"Unsupported Vulkan instance extension: " + std::string(extension));
 				}
 			}
 
@@ -144,24 +146,29 @@ namespace quokka
 			{
 				if (!is_layer_available(available_layers, layer))
 				{
-					throw std::runtime_error("Required Vulkan instance layer is not supported: " + std::string(layer));
+					throw std::runtime_error(
+						"Unsupported Vulkan instance layer: " + std::string(layer));
 				}
 			}
 
 			const vk::InstanceCreateInfo create_info {
 				// Also captures messages from instance creation and destruction
-				.pNext { constants::should_enable_validation_layers ? &debug_messenger_create_info : nullptr },
+				.pNext {
+					constants::should_enable_validation_layers ?
+						&debug_messenger_create_info : nullptr
+				},
 				.pApplicationInfo { &app_info },
 				.enabledLayerCount { static_cast<std::uint32_t>(required_instance_layers.size()) },
 				.ppEnabledLayerNames { required_instance_layers.data() },
-				.enabledExtensionCount { static_cast<std::uint32_t>(required_instance_extensions.size()) },
+				.enabledExtensionCount {
+					static_cast<std::uint32_t>(required_instance_extensions.size())
+				},
 				.ppEnabledExtensionNames { required_instance_extensions.data() }
 			};
 
 			return context.createInstance(create_info);
 		}
 
-		// Only created in debug builds, otherwise an empty handle
 		vk::raii::DebugUtilsMessengerEXT create_debug_messenger(const vk::raii::Instance& instance)
 		{
 			if constexpr (constants::should_enable_validation_layers)
@@ -176,10 +183,9 @@ namespace quokka
 
 		// ***
 
-		// Checked when picking the physical device and enabled when creating the logical device
+		// Shared by is_device_suitable and create_logical_device
 		constexpr std::array required_device_extensions { vk::KHRSwapchainExtensionName };
 
-		// Index of the first queue family that can execute graphics and compute commands and present to the surface, if any
 		std::optional<std::uint32_t> find_queue_family_index(
 			const vk::raii::PhysicalDevice& physical_device,
 			const vk::raii::SurfaceKHR& surface)
@@ -187,7 +193,7 @@ namespace quokka
 			const auto queue_families { physical_device.getQueueFamilyProperties() };
 			for (std::uint32_t index { 0 }; index < queue_families.size(); ++index)
 			{
-				// A single family for all of them keeps one queue for everything, which nearly every GPU supports
+				// One family for everything means a single queue, and nearly every GPU has one
 				if ((queue_families[index].queueFlags & vk::QueueFlagBits::eGraphics) &&
 					(queue_families[index].queueFlags & vk::QueueFlagBits::eCompute) &&
 					physical_device.getSurfaceSupportKHR(index, *surface))
@@ -199,7 +205,9 @@ namespace quokka
 			return std::nullopt;
 		}
 
-		bool is_device_suitable(const vk::raii::PhysicalDevice& physical_device, const vk::raii::SurfaceKHR& surface)
+		bool is_device_suitable(
+			const vk::raii::PhysicalDevice& physical_device,
+			const vk::raii::SurfaceKHR& surface)
 		{
 			// Dynamic rendering and synchronization2 are core in Vulkan 1.3
 			if (physical_device.getProperties().apiVersion < vk::ApiVersion13)
@@ -207,17 +215,21 @@ namespace quokka
 				return false;
 			}
 
-			const bool has_suitable_queue_family { find_queue_family_index(physical_device, surface).has_value() };
-
-			const auto available_extensions { physical_device.enumerateDeviceExtensionProperties() };
-			const bool has_required_extensions {
-				std::ranges::all_of(required_device_extensions, [&available_extensions](const char* extension)
-				{
-					return is_extension_available(available_extensions, extension);
-				})
+			const bool has_suitable_queue_family {
+				find_queue_family_index(physical_device, surface).has_value()
 			};
 
-			// The swapchain needs at least one image format and one presentation mode for the surface
+			const auto available_extensions {
+				physical_device.enumerateDeviceExtensionProperties()
+			};
+			const bool has_required_extensions {
+				std::ranges::all_of(required_device_extensions,
+					[&available_extensions](const char* extension)
+					{
+						return is_extension_available(available_extensions, extension);
+					})
+			};
+
 			const bool has_adequate_swapchain_support {
 				!physical_device.getSurfaceFormatsKHR(*surface).empty() &&
 				!physical_device.getSurfacePresentModesKHR(*surface).empty()
@@ -230,8 +242,8 @@ namespace quokka
 					vk::PhysicalDeviceVulkan13Features>()
 			};
 
-			// Large points let the particles be bigger than one pixel
 			const bool has_required_features {
+				// Large points let the particles be bigger than one pixel
 				features.get<vk::PhysicalDeviceFeatures2>().features.largePoints &&
 				features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy &&
 				features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 &&
@@ -242,8 +254,10 @@ namespace quokka
 				has_adequate_swapchain_support && has_required_features;
 		}
 
-		// Prefers a dedicated GPU, otherwise falls back to the first suitable one
-		vk::raii::PhysicalDevice pick_physical_device(const vk::raii::Instance& instance, const vk::raii::SurfaceKHR& surface)
+		// Prefers a discrete GPU, otherwise falls back to the first suitable one
+		vk::raii::PhysicalDevice pick_physical_device(
+			const vk::raii::Instance& instance,
+			const vk::raii::SurfaceKHR& surface)
 		{
 			const auto physical_devices { instance.enumeratePhysicalDevices() };
 			if (physical_devices.empty())
@@ -276,7 +290,8 @@ namespace quokka
 					has_suitable_device = true;
 				}
 
-				if (physical_device.getProperties().deviceType == vk::PhysicalDeviceType::eDiscreteGpu)
+				if (physical_device.getProperties().deviceType ==
+					vk::PhysicalDeviceType::eDiscreteGpu)
 				{
 					selected_physical_device = physical_device;
 					break;
@@ -298,9 +313,11 @@ namespace quokka
 			return selected_physical_device;
 		}
 
-		vk::raii::Device create_logical_device(const vk::raii::PhysicalDevice& physical_device, std::uint32_t queue_family_index)
+		vk::raii::Device create_logical_device(
+			const vk::raii::PhysicalDevice& physical_device,
+			std::uint32_t queue_family_index)
 		{
-			// Required by Vulkan even with a single queue, where any value in 0.0 to 1.0 works the same
+			// Required even with a single queue, where any value from 0.0 to 1.0 works the same
 			constexpr float queue_priority { 0.5f };
 
 			const vk::DeviceQueueCreateInfo queue_create_info {
@@ -313,7 +330,7 @@ namespace quokka
 			const vk::StructureChain<
 				vk::PhysicalDeviceFeatures2,
 				vk::PhysicalDeviceVulkan13Features> feature_chain {
-				{ .features { .largePoints { vk::True }, .samplerAnisotropy { vk::True } } }, // Vulkan 1.0 features, also the head of the chain
+				{ .features { .largePoints { vk::True }, .samplerAnisotropy { vk::True } } },
 				{ .synchronization2 { vk::True }, .dynamicRendering { vk::True } }
 			};
 
@@ -321,7 +338,9 @@ namespace quokka
 				.pNext { &feature_chain.get<vk::PhysicalDeviceFeatures2>() },
 				.queueCreateInfoCount { 1 },
 				.pQueueCreateInfos { &queue_create_info },
-				.enabledExtensionCount { static_cast<std::uint32_t>(required_device_extensions.size()) },
+				.enabledExtensionCount {
+					static_cast<std::uint32_t>(required_device_extensions.size())
+				},
 				.ppEnabledExtensionNames { required_device_extensions.data() }
 			};
 
@@ -339,7 +358,7 @@ namespace quokka
 		// The selected GPU already passed is_device_suitable, so this always has a value
 		, queue_family_index_ { find_queue_family_index(physical_device_, surface_).value() }
 		, logical_device_ { create_logical_device(physical_device_, queue_family_index_) }
-		// Only one queue was requested from the family, so its index is 0
+		// Only one queue was requested, so its index is 0
 		, queue_ { logical_device_.getQueue(queue_family_index_, 0) }
 	{
 	}
@@ -369,16 +388,22 @@ namespace quokka
 		return queue_;
 	}
 
-	std::uint32_t Device::find_memory_type(std::uint32_t type_filter, vk::MemoryPropertyFlags properties) const
+	std::uint32_t Device::find_memory_type(
+		std::uint32_t type_filter,
+		vk::MemoryPropertyFlags required_properties) const
 	{
 		const auto memory_properties { physical_device_.getMemoryProperties() };
-
 		for (std::uint32_t index { 0 }; index < memory_properties.memoryTypeCount; ++index)
 		{
-			// Bit i of the filter is set when memory type i can back the resource
-			const bool is_type_allowed { (type_filter & (1u << index)) != 0 };
-			const bool has_properties { (memory_properties.memoryTypes[index].propertyFlags & properties) == properties };
-			if (is_type_allowed && has_properties)
+			const bool is_type_allowed {
+				// Bit i of the filter is set when memory type i can back the resource
+				(type_filter & (1u << index)) != 0
+			};
+			const bool has_required_properties {
+				(memory_properties.memoryTypes[index].propertyFlags & required_properties) ==
+					required_properties
+			};
+			if (is_type_allowed && has_required_properties)
 			{
 				return index;
 			}

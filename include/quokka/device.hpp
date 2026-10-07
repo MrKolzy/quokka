@@ -26,9 +26,9 @@ namespace quokka
 		[[nodiscard]] const vk::raii::Device& logical_device() const noexcept;
 		[[nodiscard]] const vk::raii::Queue& queue() const noexcept;
 
-		// Index of a memory type allowed by type_filter that has all the given properties
+		// Index of a memory type allowed by type_filter that has all the required_properties
 		[[nodiscard]] std::uint32_t find_memory_type(
-			std::uint32_t type_filter, vk::MemoryPropertyFlags properties) const;
+			std::uint32_t type_filter, vk::MemoryPropertyFlags required_properties) const;
 
 	private:
 		// Each member uses the ones above it and is destroyed before them, so don't reorder
