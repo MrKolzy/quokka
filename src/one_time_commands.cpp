@@ -1,5 +1,7 @@
 #include "quokka/one_time_commands.hpp"
 
+#include "quokka/device.hpp"
+
 #include <utility> // std::move
 
 namespace quokka

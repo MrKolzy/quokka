@@ -1,15 +1,14 @@
 #pragma once
 
-#include "quokka/device.hpp"
-
 #include <vulkan/vulkan_raii.hpp>
 
-#include <functional>
+#include <functional> // std::function
 
 namespace quokka
 {
-	// Records commands with record_commands into a temporary command buffer, submits it and waits until it finishes
-	// Meant for uploads while loading, not for per-frame work
+	class Device;
+
+	// Blocks until the GPU finishes, so it's meant for uploads while loading, not per-frame work
 	void submit_one_time_commands(
 		const Device& device,
 		const vk::raii::CommandPool& command_pool,
