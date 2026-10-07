@@ -1,6 +1,7 @@
 #include "quokka/graphics_pipeline.hpp"
 
 #include "quokka/constants.hpp"
+#include "quokka/device.hpp"
 #include "quokka/shader_module.hpp"
 #include "quokka/vertex.hpp"
 
