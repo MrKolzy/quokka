@@ -1,6 +1,7 @@
 #include "quokka/device.hpp"
 
 #include "quokka/constants.hpp"
+#include "quokka/window.hpp"
 
 #include <algorithm> // std::ranges
 #include <array>
