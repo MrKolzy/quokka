@@ -1,5 +1,6 @@
 #include "quokka/buffer.hpp"
 
+#include "quokka/device.hpp"
 #include "quokka/one_time_commands.hpp"
 
 #include <cstring> // std::memcpy
@@ -35,7 +36,7 @@ namespace quokka
 		const Device& device,
 		vk::DeviceSize size,
 		vk::BufferUsageFlags usage,
-		vk::MemoryPropertyFlags properties)
+		vk::MemoryPropertyFlags memory_properties)
 	{
 		const vk::BufferCreateInfo buffer_info {
 			.size { size },
@@ -52,7 +53,7 @@ namespace quokka
 
 		const vk::MemoryAllocateInfo allocate_info {
 			.allocationSize { memory_requirements.size },
-			.memoryTypeIndex { device.find_memory_type(memory_requirements.memoryTypeBits, properties) }
+			.memoryTypeIndex { device.find_memory_type(memory_requirements.memoryTypeBits, memory_properties) }
 		};
 
 		buffer.memory = device.logical_device().allocateMemory(allocate_info);
