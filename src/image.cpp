@@ -18,10 +18,10 @@ namespace quokka
 			.format { format },
 			.extent { .width { extent.width }, .height { extent.height }, .depth { 1 } },
 			.mipLevels { mip_levels },
-			// No array layers yet
+			// The subresource ranges in image.hpp rely on a single layer
 			.arrayLayers { 1 },
 			.samples { sample_count },
-			// Texels in an implementation defined order that's faster for the GPU, but the CPU can't access them directly
+			// Texels in a driver chosen order, faster for the GPU but the CPU can't access them
 			.tiling { vk::ImageTiling::eOptimal },
 			.usage { usage },
 			// The engine uses a single queue, so the image is never shared between queue families
@@ -33,12 +33,14 @@ namespace quokka
 		Image image {};
 		image.handle = device.logical_device().createImage(image_info);
 
-		// The size may be larger than requested, and memoryTypeBits limits which memory types can back the image
+		// The driver decides the size, and only some memory types can back the image
 		const auto memory_requirements { image.handle.getMemoryRequirements() };
 
 		const vk::MemoryAllocateInfo allocate_info {
 			.allocationSize { memory_requirements.size },
-			.memoryTypeIndex { device.find_memory_type(memory_requirements.memoryTypeBits, memory_properties) }
+			.memoryTypeIndex {
+				device.find_memory_type(memory_requirements.memoryTypeBits, memory_properties)
+			}
 		};
 
 		image.memory = device.logical_device().allocateMemory(allocate_info);
@@ -55,16 +57,15 @@ namespace quokka
 		vk::Format format,
 		vk::ImageAspectFlags aspect)
 	{
-		const vk::ImageViewCreateInfo create_info {
+		const vk::ImageViewCreateInfo view_info {
 			.image { image },
-			// Treat the image as a regular 2D texture
 			.viewType { vk::ImageViewType::e2D },
 			.format { format },
-			// Default mapping: each channel is read as itself (identity), no swizzling
+			// Identity swizzle, so each channel reads as itself
 			.components {},
 			.subresourceRange { full_subresource_range(aspect) }
 		};
 
-		return device.logical_device().createImageView(create_info);
+		return device.logical_device().createImageView(view_info);
 	}
 }
