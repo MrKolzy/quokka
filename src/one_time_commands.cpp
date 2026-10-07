@@ -17,8 +17,9 @@ namespace quokka
 			.commandBufferCount { 1 }
 		};
 
-		// Only needed for these commands, it's freed back to the pool when it goes out of scope
-		const auto command_buffer { std::move(device.logical_device().allocateCommandBuffers(allocate_info).front()) };
+		// Freed back to the pool when it goes out of scope
+		auto command_buffers { device.logical_device().allocateCommandBuffers(allocate_info) };
+		const auto command_buffer { std::move(command_buffers.front()) };
 
 		command_buffer.begin({ .flags { vk::CommandBufferUsageFlagBits::eOneTimeSubmit } });
 
@@ -35,10 +36,10 @@ namespace quokka
 			.pCommandBufferInfos { &command_buffer_info }
 		};
 
-		// Every queue family with graphics support can also do transfers, so no dedicated transfer queue is needed
+		// Graphics queues also support transfers, so no dedicated transfer queue is needed
 		device.queue().submit2(submit_info);
 
-		// Simplest way to wait, fine for a single upload while loading; a fence would let several copies run at once
+		// Simplest way to wait, while a fence would let several uploads overlap
 		device.queue().waitIdle();
 	}
 }
