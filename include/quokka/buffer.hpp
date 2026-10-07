@@ -9,8 +9,6 @@ namespace quokka
 {
 	class Device;
 
-	// Each buffer gets its own allocation, which is fine for a few buffers
-	// but maxMemoryAllocationCount can be as low as 4096
 	struct Buffer
 	{
 		vk::raii::Buffer handle { nullptr };
@@ -19,6 +17,7 @@ namespace quokka
 	};
 
 	// Exclusive to one queue family
+	// One allocation per buffer, fine for a few but maxMemoryAllocationCount can be as low as 4096
 	[[nodiscard]] Buffer create_buffer(
 		const Device& device,
 		vk::DeviceSize size,

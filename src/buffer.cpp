@@ -9,7 +9,6 @@ namespace quokka
 {
 	namespace
 	{
-		// Copies the first size bytes of source into destination, and waits until the copy finishes
 		void copy_buffer(
 			const Device& device,
 			const vk::raii::CommandPool& command_pool,
@@ -17,7 +16,7 @@ namespace quokka
 			const Buffer& destination,
 			vk::DeviceSize size)
 		{
-			submit_one_time_commands(device, command_pool, [&source, &destination, size](const vk::raii::CommandBuffer& command_buffer)
+			submit_one_time_commands(device, command_pool, [&](const auto& command_buffer)
 			{
 				const vk::BufferCopy copy_region {
 					.srcOffset { 0 },
@@ -48,12 +47,14 @@ namespace quokka
 		Buffer buffer {};
 		buffer.handle = device.logical_device().createBuffer(buffer_info);
 
-		// The size may be larger than requested, and memoryTypeBits limits which memory types can back the buffer
+		// The buffer may need more than size bytes, and only some memory types can back it
 		const auto memory_requirements { buffer.handle.getMemoryRequirements() };
 
 		const vk::MemoryAllocateInfo allocate_info {
 			.allocationSize { memory_requirements.size },
-			.memoryTypeIndex { device.find_memory_type(memory_requirements.memoryTypeBits, memory_properties) }
+			.memoryTypeIndex {
+				device.find_memory_type(memory_requirements.memoryTypeBits, memory_properties)
+			}
 		};
 
 		buffer.memory = device.logical_device().allocateMemory(allocate_info);
@@ -64,16 +65,24 @@ namespace quokka
 		return buffer;
 	}
 
-	Buffer create_staging_buffer(const Device& device, std::span<const std::byte> contents)
+	Buffer create_staging_buffer(
+		const Device& device,
+		std::span<const std::byte> contents)
 	{
 		const vk::DeviceSize buffer_size { contents.size_bytes() };
 
-		// Host visible so the CPU can map it, and host coherent so its writes reach the GPU without explicit flushes
+		// Host visible so the CPU can map it, and host coherent so writes don't need a flush
 		constexpr vk::MemoryPropertyFlags staging_memory_properties {
 			vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent
 		};
 
-		auto staging_buffer { create_buffer(device, buffer_size, vk::BufferUsageFlagBits::eTransferSrc, staging_memory_properties) };
+		auto staging_buffer {
+			create_buffer(
+				device,
+				buffer_size,
+				vk::BufferUsageFlagBits::eTransferSrc,
+				staging_memory_properties)
+		};
 
 		void* const data { staging_buffer.memory.mapMemory(0, buffer_size) };
 		std::memcpy(data, contents.data(), buffer_size);
@@ -90,14 +99,19 @@ namespace quokka
 	{
 		const vk::DeviceSize buffer_size { contents.size_bytes() };
 
-		// Only lives until its contents are copied into the final buffer
+		// Destroyed on return, which is safe because copy_buffer waits for the copy
 		const auto staging_buffer { create_staging_buffer(device, contents) };
 
-		// Also a transfer destination, since its contents are copied from the staging buffer
 		const vk::BufferUsageFlags buffer_usage { usage | vk::BufferUsageFlagBits::eTransferDst };
 
-		// Device local memory is the fastest for the GPU to read, but on a dedicated GPU the CPU can't map it
-		auto buffer { create_buffer(device, buffer_size, buffer_usage, vk::MemoryPropertyFlagBits::eDeviceLocal) };
+		// Fastest for the GPU to read, but on a dedicated GPU the CPU usually can't map it
+		auto buffer {
+			create_buffer(
+				device,
+				buffer_size,
+				buffer_usage,
+				vk::MemoryPropertyFlagBits::eDeviceLocal)
+		};
 
 		copy_buffer(device, command_pool, staging_buffer, buffer, buffer_size);
 
