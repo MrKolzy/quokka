@@ -1,15 +1,16 @@
 #pragma once
 
-#include "quokka/device.hpp"
-
 #include <vulkan/vulkan_raii.hpp>
 
 #include <cstdint> // std::uint32_t
 
 namespace quokka
 {
-	// Every mip level of an image without array layers, for the given aspect (color or depth)
-	[[nodiscard]] constexpr vk::ImageSubresourceRange full_subresource_range(vk::ImageAspectFlags aspect) noexcept
+	class Device;
+
+	// Every mip level and array layer, since the engine's images have a single layer
+	[[nodiscard]] constexpr vk::ImageSubresourceRange full_subresource_range(
+		vk::ImageAspectFlags aspect) noexcept
 	{
 		return {
 			.aspectMask { aspect },
@@ -21,8 +22,9 @@ namespace quokka
 		};
 	}
 
-	// A single mip level of an image without array layers, for the given aspect (color or depth)
-	[[nodiscard]] constexpr vk::ImageSubresourceRange mip_level_subresource_range(vk::ImageAspectFlags aspect, std::uint32_t mip_level) noexcept
+	[[nodiscard]] constexpr vk::ImageSubresourceRange mip_level_subresource_range(
+		vk::ImageAspectFlags aspect,
+		std::uint32_t mip_level) noexcept
 	{
 		return {
 			.aspectMask { aspect },
@@ -33,15 +35,15 @@ namespace quokka
 		};
 	}
 
-	// Like Buffer, each image gets its own allocation
 	struct Image
 	{
 		vk::raii::Image handle { nullptr };
-		// Backs handle, freed first since it's allocated after it
+		// Freed before handle is destroyed, which Vulkan allows if handle isn't used again
 		vk::raii::DeviceMemory memory { nullptr };
 	};
 
-	// 2D with optimal tiling, exclusive to one queue family and backed by a new allocation
+	// 2D with optimal tiling, exclusive to one queue family
+	// One allocation per image, like create_buffer
 	[[nodiscard]] Image create_image(
 		const Device& device,
 		vk::Extent2D extent,
@@ -49,9 +51,9 @@ namespace quokka
 		vk::SampleCountFlagBits sample_count,
 		vk::Format format,
 		vk::ImageUsageFlags usage,
-		vk::MemoryPropertyFlags properties);
+		vk::MemoryPropertyFlags memory_properties);
 
-	// 2D view of the whole image for the given aspect, reading each channel as itself
+	// 2D view of the whole image
 	[[nodiscard]] vk::raii::ImageView create_image_view(
 		const Device& device,
 		vk::Image image,

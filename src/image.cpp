@@ -1,5 +1,7 @@
 #include "quokka/image.hpp"
 
+#include "quokka/device.hpp"
+
 namespace quokka
 {
 	Image create_image(
@@ -9,7 +11,7 @@ namespace quokka
 		vk::SampleCountFlagBits sample_count,
 		vk::Format format,
 		vk::ImageUsageFlags usage,
-		vk::MemoryPropertyFlags properties)
+		vk::MemoryPropertyFlags memory_properties)
 	{
 		const vk::ImageCreateInfo image_info {
 			.imageType { vk::ImageType::e2D },
@@ -36,7 +38,7 @@ namespace quokka
 
 		const vk::MemoryAllocateInfo allocate_info {
 			.allocationSize { memory_requirements.size },
-			.memoryTypeIndex { device.find_memory_type(memory_requirements.memoryTypeBits, properties) }
+			.memoryTypeIndex { device.find_memory_type(memory_requirements.memoryTypeBits, memory_properties) }
 		};
 
 		image.memory = device.logical_device().allocateMemory(allocate_info);
