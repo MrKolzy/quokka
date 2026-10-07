@@ -1,30 +1,30 @@
 #pragma once
 
-#include "quokka/device.hpp"
 #include "quokka/image.hpp"
-#include "quokka/window.hpp"
 
 #include <vulkan/vulkan_raii.hpp>
 
 #include <cstdint> // std::uint32_t
-#include <vector>
+#include <vector> // std::vector
 
 namespace quokka
 {
-	// Owns the images presented to the window and everything that depends on their number or size
+	class Device;
+	class Window;
+
 	class Swapchain
 	{
 	public:
 		Swapchain(const Device& device, const Window& window);
 		~Swapchain() = default;
 
-		// Neither copyable nor movable: it's recreated in place with recreate(), never replaced
+		// Other modules keep references to it, so it can't be copied or moved
 		Swapchain(const Swapchain&) = delete;
 		Swapchain& operator=(const Swapchain&) = delete;
 		Swapchain(Swapchain&&) = delete;
 		Swapchain& operator=(Swapchain&&) = delete;
 
-		// Destroys the current swapchain and creates a new one for the current window size
+		// Destroys the current images right away, so wait until the GPU is idle first
 		void recreate();
 
 		[[nodiscard]] const vk::raii::SwapchainKHR& handle() const noexcept;
@@ -38,7 +38,8 @@ namespace quokka
 		[[nodiscard]] vk::Format depth_format() const noexcept;
 		[[nodiscard]] vk::Image depth_image() const noexcept;
 		[[nodiscard]] const vk::raii::ImageView& depth_image_view() const noexcept;
-		[[nodiscard]] const vk::raii::Semaphore& render_finished_semaphore(std::uint32_t index) const noexcept;
+		[[nodiscard]] const vk::raii::Semaphore& render_finished_semaphore(
+			std::uint32_t index) const noexcept;
 
 	private:
 		void create_swapchain();
@@ -50,29 +51,29 @@ namespace quokka
 
 		const Device& device_;
 		const Window& window_;
-		// Chosen once in the constructor, since they only depend on the GPU
+
+		// Only depend on the GPU, so recreate keeps them
 		vk::Format depth_format_;
-		// Samples per pixel of the color and depth attachments
 		vk::SampleCountFlagBits sample_count_;
 
-		// Declared in creation order: members are destroyed in reverse order,
-		// so every object is destroyed before the one it was created from
-		// Queue of images presented to the surface
-		vk::raii::SwapchainKHR swapchain_ { nullptr };
-		// Owned by the swapchain, implicitly destroyed with it
-		std::vector<vk::Image> images_ {};
 		vk::SurfaceFormatKHR surface_format_ {};
 		vk::Extent2D extent_ {};
-		// Describe how to access each swapchain image
+
+		// Each one is destroyed before the object it came from, so don't reorder
+		vk::raii::SwapchainKHR swapchain_ { nullptr };
+
+		// Owned and destroyed by the swapchain
+		std::vector<vk::Image> images_ {};
+
 		std::vector<vk::raii::ImageView> image_views_ {};
-		// Drawn into with several samples per pixel and then resolved into the swapchain image, shared by every frame in flight
+
+		// Shared by every frame in flight, because the GPU draws them one at a time
 		Image msaa_color_image_ {};
 		vk::raii::ImageView msaa_color_image_view_ { nullptr };
-		// Depth of the closest fragment drawn so far at each sample, shared by every frame in flight
 		Image depth_image_ {};
 		vk::raii::ImageView depth_image_view_ { nullptr };
 
-		// Signaled by the submission, waited on by presentation, at least one per swapchain image
+		// Waited on by presentation, one per swapchain image
 		std::vector<vk::raii::Semaphore> render_finished_semaphores_ {};
 	};
 }

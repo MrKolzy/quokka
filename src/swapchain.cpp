@@ -1,6 +1,8 @@
 #include "quokka/swapchain.hpp"
 
 #include "quokka/constants.hpp"
+#include "quokka/device.hpp"
+#include "quokka/window.hpp"
 
 #include <algorithm> // std::clamp, std::max, std::ranges
 #include <array>
