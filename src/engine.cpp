@@ -2,6 +2,7 @@
 
 #include "quokka/constants.hpp"
 
+#include <chrono> // std::chrono::duration, std::chrono::steady_clock
 #include <format> // std::format
 
 namespace quokka
@@ -12,7 +13,17 @@ namespace quokka
 		{
 			window_.poll_events();
 
-			const bool is_swapchain_outdated { renderer_.draw_frame() };
+			// Measured once, so the particles and every recording thread use the same time
+			const auto frame_time { std::chrono::steady_clock::now() };
+
+			// In seconds, as floats so the motion is smooth
+			const std::chrono::duration<float> elapsed_time { frame_time - start_time_ };
+			const std::chrono::duration<float> delta_time { frame_time - previous_frame_time_ };
+			previous_frame_time_ = frame_time;
+
+			const bool is_swapchain_outdated {
+				renderer_.draw_frame(elapsed_time.count(), delta_time.count())
+			};
 
 			// Not every platform reports out of date after a resize
 			if (is_swapchain_outdated || window_.was_resized())

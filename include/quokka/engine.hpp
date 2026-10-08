@@ -9,6 +9,8 @@
 #include "quokka/swapchain.hpp"
 #include "quokka/window.hpp"
 
+#include <chrono> // std::chrono::steady_clock
+
 namespace quokka
 {
 	class Engine
@@ -46,5 +48,13 @@ namespace quokka
 		};
 
 		FrameTimer frame_timer_ {};
+
+		// The objects rotate according to the time elapsed since then
+		std::chrono::steady_clock::time_point start_time_ { std::chrono::steady_clock::now() };
+
+		// The particles move according to the time elapsed since then
+		std::chrono::steady_clock::time_point previous_frame_time_ {
+			std::chrono::steady_clock::now()
+		};
 	};
 }

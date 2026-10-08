@@ -6,7 +6,6 @@
 
 #include <vulkan/vulkan_raii.hpp>
 
-#include <chrono> // std::chrono::steady_clock
 #include <cstdint> // std::uint32_t
 #include <vector> // std::vector
 
@@ -37,7 +36,7 @@ namespace quokka
 		Renderer& operator=(Renderer&&) = delete;
 
 		// Returns true when the swapchain must be recreated before the next frame
-		[[nodiscard]] bool draw_frame();
+		[[nodiscard]] bool draw_frame(float elapsed_seconds, float delta_seconds);
 
 	private:
 		void create_command_pool();
@@ -58,7 +57,9 @@ namespace quokka
 		void record_command_buffer(
 			const vk::raii::CommandBuffer& command_buffer,
 			const vk::raii::DescriptorSet& descriptor_set,
-			std::uint32_t image_index);
+			std::uint32_t image_index,
+			float elapsed_seconds,
+			float delta_seconds);
 
 		// Called from several recording threads at once, so they must only read shared state
 		void begin_secondary_command_buffer(const vk::raii::CommandBuffer& command_buffer) const;
@@ -123,14 +124,6 @@ namespace quokka
 		std::vector<vk::raii::Fence> in_flight_fences_ {};
 
 		std::uint32_t frame_index_ {};
-
-		// The objects rotate according to the time elapsed since then
-		std::chrono::steady_clock::time_point start_time_ { std::chrono::steady_clock::now() };
-
-		// The particles move according to the time elapsed since then
-		std::chrono::steady_clock::time_point previous_frame_time_ {
-			std::chrono::steady_clock::now()
-		};
 
 		// Declared last, so its threads are joined before anything they record into is destroyed
 		WorkerThreads recording_threads_;

@@ -16,7 +16,6 @@
 #include <algorithm> // std::max
 #include <array> // std::array
 #include <bit> // std::bit_width
-#include <chrono> // std::chrono::duration, std::chrono::steady_clock
 #include <cstdint> // std::int32_t, std::uint32_t, std::uint64_t
 #include <cstring> // std::memcpy
 #include <exception> // std::exception
@@ -272,7 +271,7 @@ namespace quokka
 		}
 	}
 
-	bool Renderer::draw_frame()
+	bool Renderer::draw_frame(float elapsed_seconds, float delta_seconds)
 	{
 		constexpr auto no_timeout { std::numeric_limits<std::uint64_t>::max() };
 
@@ -313,7 +312,13 @@ namespace quokka
 		update_uniform_buffer(mapped_uniform_buffer);
 
 		// Beginning the command buffer implicitly resets it, since the pool has the reset flag
-		record_command_buffer(command_buffer, descriptor_set, image_index);
+		record_command_buffer(
+			command_buffer,
+			descriptor_set,
+			image_index,
+			elapsed_seconds,
+			delta_seconds
+		);
 
 		// Indexed by image, not by frame, since it's tied to the presentation of that image
 		const auto& render_finished_semaphore { swapchain_.render_finished_semaphore(image_index) };
@@ -821,7 +826,9 @@ namespace quokka
 	void Renderer::record_command_buffer(
 		const vk::raii::CommandBuffer& command_buffer,
 		const vk::raii::DescriptorSet& descriptor_set,
-		std::uint32_t image_index)
+		std::uint32_t image_index,
+		float elapsed_seconds,
+		float delta_seconds)
 	{
 		// Re-recorded every frame, so each recording is submitted only once
 		command_buffer.begin({ .flags { vk::CommandBufferUsageFlagBits::eOneTimeSubmit } });
@@ -882,16 +889,8 @@ namespace quokka
 			depth_accesses
 		);
 
-		// Measured once, so the particles and every recording thread use the same time
-		const auto frame_time { std::chrono::steady_clock::now() };
-
-		// In seconds, as floats so the motion is smooth
-		const std::chrono::duration<float> elapsed_time { frame_time - start_time_ };
-		const std::chrono::duration<float> delta_time { frame_time - previous_frame_time_ };
-		previous_frame_time_ = frame_time;
-
 		// Before the rendering begins, since compute work can't be recorded inside one
-		particle_system_.record_update(command_buffer, frame_index_, delta_time.count());
+		particle_system_.record_update(command_buffer, frame_index_, delta_seconds);
 
 		gpu_timer_.record_timestamp(command_buffer, frame_index_, GpuTimestamp::particles_updated);
 
@@ -948,7 +947,7 @@ namespace quokka
 
 		// Each thread records its share of the objects into its own secondary command buffer,
 		// and run returns once all of them are done
-		recording_threads_.run([this, &descriptor_set, &elapsed_time](std::uint32_t thread_index)
+		recording_threads_.run([this, &descriptor_set, elapsed_seconds](std::uint32_t thread_index)
 		{
 			// Contiguous shares, as even as possible
 			const std::uint32_t first_object {
@@ -963,7 +962,7 @@ namespace quokka
 				descriptor_set,
 				first_object,
 				end_object - first_object,
-				elapsed_time.count()
+				elapsed_seconds
 			);
 		});
 
