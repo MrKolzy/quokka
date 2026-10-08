@@ -6,7 +6,7 @@
 - Visual Studio Community 2026 Insiders
 - [Vulkan SDK](https://vulkan.lunarg.com/) 1.4.363.0 with the **GLM headers** component
 - [GLFW](https://www.glfw.org/download.html) 3.5.1 (64-bit Windows binaries)
-- [tinygltf](https://github.com/syoyo/tinygltf) 3.0.1
+- [tinygltf](https://github.com/syoyo/tinygltf) 2.9.7
   (only the `tiny_gltf.h` and `json.hpp` headers)
 - [KTX-Software](https://github.com/KhronosGroup/KTX-Software/releases) 4.4.2
   with the **Development** component
