@@ -1,11 +1,10 @@
 #pragma once
 
-#include <chrono>
+#include <chrono> // std::chrono::steady_clock
 #include <cstdint> // std::uint32_t
 
 namespace quokka
 {
-	// Measures frame times and averages them over fixed intervals
 	class FrameTimer
 	{
 	public:
