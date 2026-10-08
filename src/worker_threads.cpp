@@ -1,15 +1,16 @@
 #include "quokka/worker_threads.hpp"
 
+#include <algorithm> // std::ranges::fill
 #include <cstddef> // std::ptrdiff_t
-#include <utility> // std::exchange
+#include <exception> // std::current_exception, std::rethrow_exception
 
 namespace quokka
 {
 	WorkerThreads::WorkerThreads(std::uint32_t thread_count)
-		// The threads plus the caller of run()
+		// The threads plus the caller of run
 		: start_barrier_ { static_cast<std::ptrdiff_t>(thread_count) + 1 }
 		, finish_barrier_ { static_cast<std::ptrdiff_t>(thread_count) + 1 }
-		// Parentheses, not braces: this is the count constructor
+		// Parentheses because braces could take thread_count as an element
 		, exceptions_(thread_count)
 	{
 		threads_.reserve(thread_count);
@@ -22,7 +23,7 @@ namespace quokka
 
 	WorkerThreads::~WorkerThreads()
 	{
-		// Releases the threads waiting for a job, which see the flag and return, so the jthreads can join them
+		// Releases the waiting threads so they see the flag and return, or the join would hang
 		should_stop_ = true;
 		start_barrier_.arrive_and_wait();
 	}
@@ -31,16 +32,19 @@ namespace quokka
 	{
 		job_ = &job;
 
-		// Releases the threads, and then waits until every one of them has finished the job
+		// Releases the threads, then waits until all of them finish the job
 		start_barrier_.arrive_and_wait();
 		finish_barrier_.arrive_and_wait();
 
-		for (auto& exception : exceptions_)
+		for (const auto& exception : exceptions_)
 		{
 			if (exception)
 			{
-				// Cleared as it's rethrown, so the next run() doesn't throw it again
-				std::rethrow_exception(std::exchange(exception, nullptr));
+				// Clears them all, so the next run doesn't rethrow one from this run
+				const std::exception_ptr first_exception { exception };
+				std::ranges::fill(exceptions_, nullptr);
+
+				std::rethrow_exception(first_exception);
 			}
 		}
 	}
