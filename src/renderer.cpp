@@ -1,7 +1,11 @@
 #include "quokka/renderer.hpp"
 
 #include "quokka/constants.hpp"
+#include "quokka/device.hpp"
+#include "quokka/graphics_pipeline.hpp"
 #include "quokka/one_time_commands.hpp"
+#include "quokka/particle_system.hpp"
+#include "quokka/swapchain.hpp"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp> // glm::translate, glm::rotate, glm::scale, glm::lookAt, glm::perspective

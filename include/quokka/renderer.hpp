@@ -1,23 +1,23 @@
 #pragma once
 
 #include "quokka/buffer.hpp"
-#include "quokka/device.hpp"
-#include "quokka/graphics_pipeline.hpp"
 #include "quokka/image.hpp"
 #include "quokka/mesh.hpp"
-#include "quokka/particle_system.hpp"
-#include "quokka/swapchain.hpp"
 #include "quokka/worker_threads.hpp"
 
 #include <vulkan/vulkan_raii.hpp>
 
-#include <chrono>
+#include <chrono> // std::chrono::steady_clock
 #include <cstdint> // std::uint32_t
-#include <vector>
+#include <vector> // std::vector
 
 namespace quokka
 {
-	// Uploads the geometry it draws, records the commands of each frame on several threads, submits them and presents the result
+	class Device;
+	class GraphicsPipeline;
+	class ParticleSystem;
+	class Swapchain;
+
 	class Renderer
 	{
 	public:
@@ -28,7 +28,7 @@ namespace quokka
 			const ParticleSystem& particle_system);
 		~Renderer();
 
-		// Neither copyable nor movable: holds references to the modules it draws with
+		// recording_threads_ can't be copied or moved, so neither can it
 		Renderer(const Renderer&) = delete;
 		Renderer& operator=(const Renderer&) = delete;
 		Renderer(Renderer&&) = delete;
@@ -57,10 +57,9 @@ namespace quokka
 			const vk::raii::CommandBuffer& command_buffer,
 			const vk::raii::DescriptorSet& descriptor_set,
 			std::uint32_t image_index);
-		// Begins a secondary command buffer inside the rendering of the primary one, with the viewport and scissor set
-		// Called from the recording threads at the same time, so it must only read shared state
+
+		// Called from several recording threads at once, so they must only read shared state
 		void begin_secondary_command_buffer(const vk::raii::CommandBuffer& command_buffer) const;
-		// Called from the recording threads at the same time, so it must only read shared state
 		void record_object_draws(
 			const vk::raii::CommandBuffer& command_buffer,
 			const vk::raii::DescriptorSet& descriptor_set,
@@ -73,58 +72,61 @@ namespace quokka
 		const GraphicsPipeline& graphics_pipeline_;
 		const ParticleSystem& particle_system_;
 
-		// Declared in creation order: members are destroyed in reverse order,
-		// so every object is destroyed before the one it was created from
-		// Allocates the memory of the command buffers
+		// Each one is destroyed before the object it came from, so don't reorder
 		vk::raii::CommandPool command_pool_ { nullptr };
+
 		// One per frame in flight
 		std::vector<vk::raii::CommandBuffer> command_buffers_ {};
-		// One per recording thread, since a command pool and its command buffers can only be used by one thread at a time
+
+		// One per recording thread, because a command pool can't be used by two threads at once
 		std::vector<vk::raii::CommandPool> recording_command_pools_ {};
-		// Indexed by recording thread and then by frame in flight, executed from the primary command buffer of the frame
+
+		// Indexed by recording thread, then by frame in flight
 		std::vector<std::vector<vk::raii::CommandBuffer>> secondary_command_buffers_ {};
-		// One per frame in flight, with the particle draws, executed after the secondary command buffers of the objects
+
+		// One per frame in flight
 		std::vector<vk::raii::CommandBuffer> particle_command_buffers_ {};
 
-		// Loaded from the model file, uploaded to vertex_buffer_ and index_buffer_
 		Mesh mesh_ {};
-		// Vertices in device local memory, read by the vertex shader through binding 0
 		Buffer vertex_buffer_ {};
-		// Indices into vertex_buffer_, so vertices shared by several triangles are stored only once
+
+		// Vertices shared by several triangles are stored only once
 		Buffer index_buffer_ {};
+
 		// Read from the texture file, which can store its texels in any format
 		vk::Format texture_format_ {};
-		// Texels of the texture in device local memory, ready to be sampled by the fragment shader
+
 		Image texture_image_ {};
-		// How shaders see texture_image_, as a 2D color texture
 		vk::raii::ImageView texture_image_view_ { nullptr };
-		// How texels are filtered and addressed when sampled, independent of any particular image
 		vk::raii::Sampler texture_sampler_ { nullptr };
 
-		// Camera matrices, one per frame in flight so the CPU never overwrites one the GPU may still be reading
+		// Camera matrices, one per frame in flight so the CPU never overwrites one in use
 		std::vector<Buffer> uniform_buffers_ {};
-		// Mapped once and kept mapped, since they're written every frame
+
+		// Kept mapped, since they're written every frame
 		std::vector<void*> mapped_uniform_buffers_ {};
 
-		// Allocates the memory of the descriptor sets
 		vk::raii::DescriptorPool descriptor_pool_ { nullptr };
-		// One per frame in flight, each pointing to that frame's uniform buffer and to the texture
+
+		// One per frame in flight, because each points to its frame's uniform buffer
 		std::vector<vk::raii::DescriptorSet> descriptor_sets_ {};
 
 		// Signaled by acquireNextImage, waited on by the submission, one per frame in flight
 		std::vector<vk::raii::Semaphore> image_available_semaphores_ {};
+
 		// Signaled by the submission, waited on by the CPU, one per frame in flight
 		std::vector<vk::raii::Fence> in_flight_fences_ {};
 
-		// Frame in flight currently being recorded, cycles from 0 to max_frames_in_flight - 1
 		std::uint32_t frame_index_ {};
 
 		// The objects rotate according to the time elapsed since then
 		std::chrono::steady_clock::time_point start_time_ { std::chrono::steady_clock::now() };
-		// When the previous frame was recorded, the particles move according to the time elapsed since then
-		std::chrono::steady_clock::time_point previous_frame_time_ { std::chrono::steady_clock::now() };
 
-		// Record the draws of each frame into secondary_command_buffers_
+		// The particles move according to the time elapsed since then
+		std::chrono::steady_clock::time_point previous_frame_time_ {
+			std::chrono::steady_clock::now()
+		};
+
 		// Declared last, so its threads are joined before anything they record into is destroyed
 		WorkerThreads recording_threads_;
 	};
