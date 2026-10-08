@@ -68,6 +68,7 @@ namespace quokka
 		std::vector<vk::raii::ImageView> image_views_ {};
 
 		// Shared by every frame in flight, because the GPU draws them one at a time
+		// The MSAA ones stay null when sample_count_ is 1
 		Image msaa_color_image_ {};
 		vk::raii::ImageView msaa_color_image_view_ { nullptr };
 		Image depth_image_ {};

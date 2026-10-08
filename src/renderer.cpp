@@ -836,18 +836,23 @@ namespace quokka
 			vk::AccessFlagBits2::eColorAttachmentWrite
 		);
 
+		const bool is_multisampled { swapchain_.sample_count() != vk::SampleCountFlagBits::e1 };
+
 		// Shared by every frame in flight, so wait for the previous frame before clearing it
-		transition_image_layout(
-			command_buffer,
-			swapchain_.msaa_color_image(),
-			full_subresource_range(vk::ImageAspectFlagBits::eColor),
-			vk::ImageLayout::eUndefined,
-			vk::ImageLayout::eColorAttachmentOptimal,
-			vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-			vk::AccessFlagBits2::eColorAttachmentWrite,
-			vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-			vk::AccessFlagBits2::eColorAttachmentWrite
-		);
+		if (is_multisampled)
+		{
+			transition_image_layout(
+				command_buffer,
+				swapchain_.msaa_color_image(),
+				full_subresource_range(vk::ImageAspectFlagBits::eColor),
+				vk::ImageLayout::eUndefined,
+				vk::ImageLayout::eColorAttachmentOptimal,
+				vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+				vk::AccessFlagBits2::eColorAttachmentWrite,
+				vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+				vk::AccessFlagBits2::eColorAttachmentWrite
+			);
+		}
 
 		constexpr vk::PipelineStageFlags2 depth_test_stages {
 			vk::PipelineStageFlagBits2::eEarlyFragmentTests |
@@ -888,18 +893,25 @@ namespace quokka
 			.color { .float32 { std::array { 0.0f, 0.0f, 0.0f, 1.0f } } }
 		};
 
-		// Drawn into the multisampled image, whose samples are averaged into the swapchain image
-		// Only that resolved result is presented, so the samples aren't stored
-		const vk::RenderingAttachmentInfo color_attachment_info {
-			.imageView { *swapchain_.msaa_color_image_view() },
+		// Drawn straight into the swapchain image, which is stored so it can be presented
+		vk::RenderingAttachmentInfo color_attachment_info {
+			.imageView { *swapchain_.image_view(image_index) },
 			.imageLayout { vk::ImageLayout::eColorAttachmentOptimal },
-			.resolveMode { vk::ResolveModeFlagBits::eAverage },
-			.resolveImageView { *swapchain_.image_view(image_index) },
-			.resolveImageLayout { vk::ImageLayout::eColorAttachmentOptimal },
 			.loadOp { vk::AttachmentLoadOp::eClear },
-			.storeOp { vk::AttachmentStoreOp::eDontCare },
+			.storeOp { vk::AttachmentStoreOp::eStore },
 			.clearValue { clear_color }
 		};
+
+		// With MSAA, drawn into the multisampled image, whose samples are averaged into this one
+		// Only that result is presented, so the samples aren't stored
+		if (is_multisampled)
+		{
+			color_attachment_info.imageView = *swapchain_.msaa_color_image_view();
+			color_attachment_info.resolveMode = vk::ResolveModeFlagBits::eAverage;
+			color_attachment_info.resolveImageView = *swapchain_.image_view(image_index);
+			color_attachment_info.resolveImageLayout = vk::ImageLayout::eColorAttachmentOptimal;
+			color_attachment_info.storeOp = vk::AttachmentStoreOp::eDontCare;
+		}
 
 		// The far plane, so anything drawn is closer
 		constexpr vk::ClearValue clear_depth {

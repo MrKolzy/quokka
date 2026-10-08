@@ -109,7 +109,7 @@ namespace quokka
 			throw std::runtime_error("Failed to find a supported depth format");
 		}
 
-		// Highest count supported by both color and depth attachments
+		// Highest count up to max_sample_count supported by both color and depth attachments
 		vk::SampleCountFlagBits choose_sample_count(
 			const vk::raii::PhysicalDevice& physical_device) noexcept
 		{
@@ -122,19 +122,21 @@ namespace quokka
 				vk::SampleCountFlagBits::e64,
 				vk::SampleCountFlagBits::e32,
 				vk::SampleCountFlagBits::e16,
-				vk::SampleCountFlagBits::e8
+				vk::SampleCountFlagBits::e8,
+				vk::SampleCountFlagBits::e4,
+				vk::SampleCountFlagBits::e2
 			};
 
 			for (const auto count : candidates)
 			{
-				if (supported_counts & count)
+				if (count <= constants::max_sample_count && (supported_counts & count))
 				{
 					return count;
 				}
 			}
 
-			// Every GPU must support 4 samples for color and depth
-			return vk::SampleCountFlagBits::e4;
+			// No multisampling, which every GPU supports
+			return vk::SampleCountFlagBits::e1;
 		}
 	}
 
@@ -247,7 +249,7 @@ namespace quokka
 			.imageExtent { extent_ },
 			// More than 1 only for stereoscopic 3D
 			.imageArrayLayers { 1 },
-			// Written by the MSAA resolve, which counts as a color attachment write
+			// Written by the rendering or the MSAA resolve, both color attachment writes
 			.imageUsage { vk::ImageUsageFlagBits::eColorAttachment },
 			// One queue family renders and presents, so no sharing is needed
 			.imageSharingMode { vk::SharingMode::eExclusive },
@@ -291,6 +293,12 @@ namespace quokka
 
 	void Swapchain::create_msaa_color_resources()
 	{
+		// With 1 sample the rendering goes straight into the swapchain image
+		if (sample_count_ == vk::SampleCountFlagBits::e1)
+		{
+			return;
+		}
+
 		// Resolved into the swapchain image when rendering ends
 		// Transient, because its samples are discarded once they're averaged
 		msaa_color_image_ = create_image(

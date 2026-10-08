@@ -36,6 +36,9 @@ namespace quokka::constants
 	// which suits benchmarks, and Fifo is vertical sync, which saves power
 	inline constexpr vk::PresentModeKHR preferred_present_mode { vk::PresentModeKHR::eMailbox };
 
+	// Samples per pixel for MSAA, lowered if the GPU supports fewer, and 1 disables it
+	inline constexpr vk::SampleCountFlagBits max_sample_count { vk::SampleCountFlagBits::e4 };
+
 	// Frames the CPU can record ahead of the GPU, more would only add latency
 	inline constexpr std::uint32_t max_frames_in_flight { 2 };
 	static_assert(max_frames_in_flight > 0);
