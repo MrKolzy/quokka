@@ -8,51 +8,52 @@
 #include <glm/glm.hpp>
 
 #include <algorithm> // std::min
-#include <array>
+#include <array> // std::array
 #include <cmath> // std::cos, std::sin, std::sqrt
 #include <cstddef> // offsetof
 #include <cstdint> // std::uint32_t
 #include <numbers> // std::numbers::pi_v
-#include <random>
-#include <span>
-#include <vector>
+#include <random> // std::mt19937, std::uniform_real_distribution
+#include <span> // std::as_bytes, std::span
+#include <vector> // std::vector
 
 namespace quokka
 {
 	namespace
 	{
-		// Must match Particle in the shader, all vec4 so both sides agree on the layout, with w unused in the position and velocity
 		struct Particle
 		{
+			// Must match Particle in particles.slang
+			// All vec4 so both sides agree on the layout, with w unused in position and velocity
 			glm::vec4 position;
 			glm::vec4 velocity;
 			glm::vec4 color;
 		};
 
-		// Must match UpdateConstants in the shader, pushed before each dispatch
 		struct UpdateConstants
 		{
+			// Must match UpdateConstants in particles.slang
 			glm::vec4 box_min;
 			glm::vec4 box_max;
 			float delta_time;
 			std::uint32_t particle_count;
 		};
 
-		// Invocations per work group, must match numthreads in the shader
+		// Must match numthreads in particles.slang
 		constexpr std::uint32_t work_group_size { 256 };
 
 		// The box the particles fly in, centered on the grid of objects and about as wide as it
 		constexpr glm::vec3 box_min { -10.0f, 0.0f, -10.0f };
 		constexpr glm::vec3 box_max { 10.0f, 6.0f, 10.0f };
 
-		// The longest time a single update simulates, so the particles don't jump after a long frame, like while the window is dragged
+		// So the particles don't jump after a long frame, such as while the window is dragged
 		constexpr float max_delta_seconds { 0.1f };
 
-		// Random positions inside the box, moving in random directions with warm colors, like sparks
-		// From a fixed seed, so every run starts the same and measurements can be repeated
 		[[nodiscard]] std::vector<Particle> create_initial_particles()
 		{
+			// Fixed seed, so every run starts the same and measurements can be repeated
 			std::mt19937 random_engine { 2026 };
+
 			std::uniform_real_distribution<float> random_unit { 0.0f, 1.0f };
 
 			std::vector<Particle> particles {};
@@ -60,32 +61,41 @@ namespace quokka
 
 			for (std::uint32_t index { 0 }; index < constants::particle_count; ++index)
 			{
-				const glm::vec3 random_point { random_unit(random_engine), random_unit(random_engine), random_unit(random_engine) };
+				const glm::vec3 random_point {
+					random_unit(random_engine),
+					random_unit(random_engine),
+					random_unit(random_engine)
+				};
 				const glm::vec3 position { glm::mix(box_min, box_max, random_point) };
 
-				// Uniformly distributed over a sphere, from a random height and a random angle around the vertical axis
+				// Uniform over the sphere, using a random height and angle around the vertical axis
 				const float height { 2.0f * random_unit(random_engine) - 1.0f };
-				const float angle { 2.0f * std::numbers::pi_v<float> * random_unit(random_engine) };
+				const float angle { 2.0f * random_unit(random_engine) * std::numbers::pi_v<float> };
 				const float radius { std::sqrt(1.0f - height * height) };
-				const glm::vec3 direction { radius * std::cos(angle), height, radius * std::sin(angle) };
+				const glm::vec3 direction {
+					radius * std::cos(angle), height, radius * std::sin(angle)
+				};
 
 				// Between 1 and 3 units per second
 				const float speed { 1.0f + 2.0f * random_unit(random_engine) };
 
 				// From orange to yellow, fully opaque
-				const glm::vec4 color { 1.0f, 0.4f + 0.5f * random_unit(random_engine), 0.1f, 1.0f };
+				const glm::vec4 color {
+					1.0f, 0.4f + 0.5f * random_unit(random_engine), 0.1f, 1.0f
+				};
 
-				particles.push_back({
+				const Particle particle {
 					.position { position, 0.0f },
 					.velocity { direction * speed, 0.0f },
 					.color { color }
-				});
+				};
+
+				particles.push_back(particle);
 			}
 
 			return particles;
 		}
 
-		// The destination accesses of later commands wait for the source accesses of earlier ones, whose results they then see
 		void memory_barrier(
 			const vk::raii::CommandBuffer& command_buffer,
 			vk::PipelineStageFlags2 src_stage_mask,
@@ -124,11 +134,18 @@ namespace quokka
 		create_descriptor_pool();
 		create_update_descriptor_sets();
 
-		// The update and both drawing entry points live in the same compiled module
-		const auto shader_module { create_shader_module(device_.logical_device(), read_shader_file(constants::particle_shader_path)) };
+		// All three entry points live in the same compiled module
+		const auto shader_code { read_shader_file(constants::particle_shader_path) };
+		const auto shader_module { create_shader_module(device_.logical_device(), shader_code) };
 
 		create_update_pipeline(shader_module);
-		create_draw_pipeline(shader_module, graphics_pipeline.descriptor_set_layout(), color_format, depth_format, sample_count);
+		create_draw_pipeline(
+			shader_module,
+			graphics_pipeline.descriptor_set_layout(),
+			color_format,
+			depth_format,
+			sample_count
+		);
 	}
 
 	void ParticleSystem::record_update(
@@ -136,8 +153,8 @@ namespace quokka
 		std::uint32_t frame_index,
 		float delta_seconds) const
 	{
-		// The update reads what the previous update wrote, and overwrites what an earlier one wrote and read
-		// The draw that read this frame's buffer as vertices is already done, since this frame's fence was waited on
+		// Reads what the previous update wrote, and overwrites what an earlier one wrote and read
+		// The draw that read this buffer as vertices is done, since its fence was waited on
 		memory_barrier(
 			command_buffer,
 			vk::PipelineStageFlagBits2::eComputeShader,
@@ -164,10 +181,18 @@ namespace quokka
 			.particle_count { constants::particle_count }
 		};
 
-		command_buffer.pushConstants<UpdateConstants>(*update_pipeline_layout_, vk::ShaderStageFlagBits::eCompute, 0, update_constants);
+		command_buffer.pushConstants<UpdateConstants>(
+			*update_pipeline_layout_,
+			vk::ShaderStageFlagBits::eCompute,
+			0,
+			update_constants
+		);
 
 		// Enough work groups to cover every particle, rounding up
-		command_buffer.dispatch((constants::particle_count + work_group_size - 1) / work_group_size, 1, 1);
+		const std::uint32_t work_group_count {
+			(constants::particle_count + work_group_size - 1) / work_group_size
+		};
+		command_buffer.dispatch(work_group_count, 1, 1);
 
 		// The draw reads as vertices what the update just wrote
 		memory_barrier(
@@ -186,7 +211,7 @@ namespace quokka
 	{
 		command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *draw_pipeline_);
 
-		// The buffer the update of this frame wrote, starting at binding 0 with the particles at the start of the buffer
+		// This frame's updated buffer, at binding 0 and from the start of the buffer
 		command_buffer.bindVertexBuffers(0, *storage_buffers_[frame_index].handle, { 0 });
 
 		// Set 0, with no dynamic offsets
@@ -217,29 +242,36 @@ namespace quokka
 		const auto upload_command_pool { device_.logical_device().createCommandPool(pool_info) };
 
 		// Written by the compute shader, and read as vertices when drawing
-		constexpr vk::BufferUsageFlags usage { vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eVertexBuffer };
+		constexpr vk::BufferUsageFlags usage {
+			vk::BufferUsageFlagBits::eStorageBuffer |
+			vk::BufferUsageFlagBits::eVertexBuffer
+		};
 
 		storage_buffers_.reserve(constants::max_frames_in_flight);
 
-		// Every frame in flight starts with the same particles, so the first update can read any of them as the previous frame
+		// All start with the same particles, so the first update can read any as the previous frame
 		for (std::uint32_t index { 0 }; index < constants::max_frames_in_flight; ++index)
 		{
-			storage_buffers_.push_back(create_device_local_buffer(device_, upload_command_pool, std::as_bytes(std::span { particles }), usage));
+			storage_buffers_.push_back(create_device_local_buffer(
+				device_,
+				upload_command_pool,
+				std::as_bytes(std::span { particles }),
+				usage
+			));
 		}
 	}
 
 	void ParticleSystem::create_update_descriptor_set_layout()
 	{
-		// The particles of the previous frame, only read by the compute shader
+		// Must match previous_particles in particles.slang
 		constexpr vk::DescriptorSetLayoutBinding previous_particles_binding {
 			.binding { 1 },
 			.descriptorType { vk::DescriptorType::eStorageBuffer },
-			// A single storage buffer, not an array of them
 			.descriptorCount { 1 },
 			.stageFlags { vk::ShaderStageFlagBits::eCompute }
 		};
 
-		// The particles of the current frame, written by the compute shader
+		// Must match current_particles in particles.slang
 		constexpr vk::DescriptorSetLayoutBinding current_particles_binding {
 			.binding { 2 },
 			.descriptorType { vk::DescriptorType::eStorageBuffer },
@@ -247,7 +279,7 @@ namespace quokka
 			.stageFlags { vk::ShaderStageFlagBits::eCompute }
 		};
 
-		// Bindings 1 and 2, since binding 0 of the shader file is the camera used when drawing
+		// Bindings 1 and 2, since binding 0 in particles.slang is the camera used when drawing
 		constexpr std::array bindings { previous_particles_binding, current_particles_binding };
 
 		const vk::DescriptorSetLayoutCreateInfo create_info {
@@ -255,12 +287,13 @@ namespace quokka
 			.pBindings { bindings.data() }
 		};
 
-		update_descriptor_set_layout_ = device_.logical_device().createDescriptorSetLayout(create_info);
+		update_descriptor_set_layout_ =
+			device_.logical_device().createDescriptorSetLayout(create_info);
 	}
 
 	void ParticleSystem::create_descriptor_pool()
 	{
-		// Two storage buffer descriptors per frame in flight, the previous and the current particles
+		// Two storage buffers per frame in flight, the previous and the current particles
 		constexpr vk::DescriptorPoolSize pool_size {
 			.type { vk::DescriptorType::eStorageBuffer },
 			.descriptorCount { 2 * constants::max_frames_in_flight }
@@ -280,8 +313,11 @@ namespace quokka
 	void ParticleSystem::create_update_descriptor_sets()
 	{
 		// Every set has the same layout, but the allocation takes one per set
-		// Parentheses, not braces: this is the count constructor
-		const std::vector<vk::DescriptorSetLayout> layouts(constants::max_frames_in_flight, *update_descriptor_set_layout_);
+		// Parentheses because braces could take the arguments as elements
+		const std::vector<vk::DescriptorSetLayout> layouts(
+			constants::max_frames_in_flight,
+			*update_descriptor_set_layout_
+		);
 
 		const vk::DescriptorSetAllocateInfo allocate_info {
 			.descriptorPool { *descriptor_pool_ },
@@ -293,11 +329,12 @@ namespace quokka
 
 		constexpr vk::DeviceSize buffer_size { sizeof(Particle) * constants::particle_count };
 
-		// Point each set at the storage buffer of the previous frame to read and at the one of its own frame to write
 		for (std::uint32_t index { 0 }; index < constants::max_frames_in_flight; ++index)
 		{
 			// Wraps around, so the previous frame of the first one is the last
-			const std::uint32_t previous_index { (index + constants::max_frames_in_flight - 1) % constants::max_frames_in_flight };
+			const std::uint32_t previous_index {
+				(index + constants::max_frames_in_flight - 1) % constants::max_frames_in_flight
+			};
 
 			const vk::DescriptorBufferInfo previous_buffer_info {
 				.buffer { *storage_buffers_[previous_index].handle },
@@ -313,6 +350,7 @@ namespace quokka
 
 			const vk::WriteDescriptorSet previous_particles_write {
 				.dstSet { *update_descriptor_sets_[index] },
+				// Must match previous_particles_binding
 				.dstBinding { 1 },
 				// Not an array, so the first and only element
 				.dstArrayElement { 0 },
@@ -323,6 +361,7 @@ namespace quokka
 
 			const vk::WriteDescriptorSet current_particles_write {
 				.dstSet { *update_descriptor_sets_[index] },
+				// Must match current_particles_binding
 				.dstBinding { 2 },
 				.dstArrayElement { 0 },
 				.descriptorCount { 1 },
@@ -330,7 +369,9 @@ namespace quokka
 				.pBufferInfo { &current_buffer_info }
 			};
 
-			const std::array descriptor_writes { previous_particles_write, current_particles_write };
+			const std::array descriptor_writes {
+				previous_particles_write, current_particles_write
+			};
 
 			// No copies from other descriptor sets
 			device_.logical_device().updateDescriptorSets(descriptor_writes, {});
@@ -339,7 +380,7 @@ namespace quokka
 
 	void ParticleSystem::create_update_pipeline(const vk::raii::ShaderModule& shader_module)
 	{
-		// The box, the time step and the particle count, read only by the compute shader
+		// Pushed before each dispatch, so the time step needs no uniform buffer
 		constexpr vk::PushConstantRange update_constants_range {
 			.stageFlags { vk::ShaderStageFlagBits::eCompute },
 			.offset { 0 },
@@ -354,9 +395,10 @@ namespace quokka
 			.pPushConstantRanges { &update_constants_range }
 		};
 
-		update_pipeline_layout_ = device_.logical_device().createPipelineLayout(pipeline_layout_info);
+		update_pipeline_layout_ =
+			device_.logical_device().createPipelineLayout(pipeline_layout_info);
 
-		// Must match the entry point name in the shader and in the slangc command
+		// Must match the entry point in particles.slang and in the slangc command
 		const vk::PipelineShaderStageCreateInfo compute_shader_stage_info {
 			.stage { vk::ShaderStageFlagBits::eCompute },
 			.module { *shader_module },
@@ -387,7 +429,7 @@ namespace quokka
 
 		draw_pipeline_layout_ = device_.logical_device().createPipelineLayout(pipeline_layout_info);
 
-		// Must match the entry point names in the shader and in the slangc command
+		// Must match the entry points in particles.slang and in the slangc command
 		const vk::PipelineShaderStageCreateInfo vertex_shader_stage_info {
 			.stage { vk::ShaderStageFlagBits::eVertex },
 			.module { *shader_module },
@@ -428,7 +470,9 @@ namespace quokka
 		const vk::PipelineVertexInputStateCreateInfo vertex_input_info {
 			.vertexBindingDescriptionCount { 1 },
 			.pVertexBindingDescriptions { &binding_description },
-			.vertexAttributeDescriptionCount { static_cast<std::uint32_t>(attribute_descriptions.size()) },
+			.vertexAttributeDescriptionCount {
+				static_cast<std::uint32_t>(attribute_descriptions.size())
+			},
 			.pVertexAttributeDescriptions { attribute_descriptions.data() }
 		};
 
@@ -460,7 +504,7 @@ namespace quokka
 			.sampleShadingEnable { vk::False }
 		};
 
-		// Hidden behind the objects, but without writing depth, so the particles never hide each other
+		// Hidden behind the objects but don't write depth, so particles never hide each other
 		constexpr vk::PipelineDepthStencilStateCreateInfo depth_stencil_info {
 			.depthTestEnable { vk::True },
 			.depthWriteEnable { vk::False },
@@ -469,7 +513,7 @@ namespace quokka
 			.stencilTestEnable { vk::False }
 		};
 
-		// Additive: each particle adds its color weighted by its alpha, so overlapping ones glow and their order doesn't matter
+		// Additive, so overlapping particles glow and their drawing order doesn't matter
 		constexpr vk::PipelineColorBlendAttachmentState color_blend_attachment {
 			.blendEnable { vk::True },
 			.srcColorBlendFactor { vk::BlendFactor::eSrcAlpha },
@@ -494,7 +538,10 @@ namespace quokka
 		};
 
 		// Set when recording commands, like for the objects
-		constexpr std::array dynamic_states { vk::DynamicState::eViewport, vk::DynamicState::eScissor };
+		constexpr std::array dynamic_states {
+			vk::DynamicState::eViewport,
+			vk::DynamicState::eScissor
+		};
 
 		const vk::PipelineDynamicStateCreateInfo dynamic_state_info {
 			.dynamicStateCount { static_cast<std::uint32_t>(dynamic_states.size()) },
@@ -502,29 +549,29 @@ namespace quokka
 		};
 
 		// Drawn in the same rendering as the objects, so with the same attachment formats
-		const vk::StructureChain<vk::GraphicsPipelineCreateInfo, vk::PipelineRenderingCreateInfo> pipeline_info_chain {
-			{
-				.stageCount { static_cast<std::uint32_t>(shader_stages.size()) },
-				.pStages { shader_stages.data() },
-				.pVertexInputState { &vertex_input_info },
-				.pInputAssemblyState { &input_assembly_info },
-				.pViewportState { &viewport_state_info },
-				.pRasterizationState { &rasterization_info },
-				.pMultisampleState { &multisample_info },
-				.pDepthStencilState { &depth_stencil_info },
-				.pColorBlendState { &color_blend_info },
-				.pDynamicState { &dynamic_state_info },
-				.layout { *draw_pipeline_layout_ },
-				// Not used with dynamic rendering
-				.renderPass { nullptr }
-			},
-			{
-				.colorAttachmentCount { 1 },
-				.pColorAttachmentFormats { &color_format },
-				.depthAttachmentFormat { depth_format }
-			}
+		const vk::PipelineRenderingCreateInfo rendering_info {
+			.colorAttachmentCount { 1 },
+			.pColorAttachmentFormats { &color_format },
+			.depthAttachmentFormat { depth_format }
 		};
 
-		draw_pipeline_ = device_.logical_device().createGraphicsPipeline(nullptr, pipeline_info_chain.get<vk::GraphicsPipelineCreateInfo>());
+		const vk::GraphicsPipelineCreateInfo pipeline_info {
+			.pNext { &rendering_info },
+			.stageCount { static_cast<std::uint32_t>(shader_stages.size()) },
+			.pStages { shader_stages.data() },
+			.pVertexInputState { &vertex_input_info },
+			.pInputAssemblyState { &input_assembly_info },
+			.pViewportState { &viewport_state_info },
+			.pRasterizationState { &rasterization_info },
+			.pMultisampleState { &multisample_info },
+			.pDepthStencilState { &depth_stencil_info },
+			.pColorBlendState { &color_blend_info },
+			.pDynamicState { &dynamic_state_info },
+			.layout { *draw_pipeline_layout_ },
+			// Not used with dynamic rendering
+			.renderPass { nullptr }
+		};
+
+		draw_pipeline_ = device_.logical_device().createGraphicsPipeline(nullptr, pipeline_info);
 	}
 }
