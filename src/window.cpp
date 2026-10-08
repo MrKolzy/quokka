@@ -40,6 +40,14 @@ namespace quokka
 			// Every key is handled above
 			std::unreachable();
 		}
+
+		[[nodiscard]] glm::dvec2 cursor_position(GLFWwindow* window) noexcept
+		{
+			glm::dvec2 position {};
+			glfwGetCursorPos(window, &position.x, &position.y);
+
+			return position;
+		}
 	}
 
 	Window::Window()
@@ -69,6 +77,12 @@ namespace quokka
 		// Lets the static callback recover the Window from the GLFW window handle
 		glfwSetWindowUserPointer(handle_, this);
 		glfwSetFramebufferSizeCallback(handle_, &framebuffer_size_callback);
+
+		// Only applies while the cursor is captured, and skips the pointer acceleration of the OS
+		if (glfwRawMouseMotionSupported())
+		{
+			glfwSetInputMode(handle_, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+		}
 	}
 
 	Window::~Window()
@@ -126,6 +140,33 @@ namespace quokka
 		return glfwGetKey(handle_, glfw_key(key)) == GLFW_PRESS;
 	}
 
+	bool Window::is_right_mouse_button_pressed() const noexcept
+	{
+		return glfwGetMouseButton(handle_, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+	}
+
+	bool Window::is_cursor_captured() const noexcept
+	{
+		return glfwGetInputMode(handle_, GLFW_CURSOR) == GLFW_CURSOR_DISABLED;
+	}
+
+	void Window::set_cursor_captured(bool is_captured) noexcept
+	{
+		glfwSetInputMode(
+			handle_,
+			GLFW_CURSOR,
+			is_captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL
+		);
+
+		// Changing the mode moves the cursor, which must not count as an offset
+		previous_cursor_position_ = cursor_position(handle_);
+	}
+
+	glm::vec2 Window::cursor_offset() const noexcept
+	{
+		return cursor_offset_;
+	}
+
 	void Window::set_title(const std::string& title) noexcept
 	{
 		glfwSetWindowTitle(handle_, title.c_str());
@@ -134,6 +175,10 @@ namespace quokka
 	void Window::poll_events() noexcept
 	{
 		glfwPollEvents();
+
+		const glm::dvec2 position { cursor_position(handle_) };
+		cursor_offset_ = glm::vec2 { position - previous_cursor_position_ };
+		previous_cursor_position_ = position;
 	}
 
 	void Window::wait_events() noexcept

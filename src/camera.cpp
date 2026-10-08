@@ -2,6 +2,7 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <algorithm> // std::clamp
 #include <cmath> // std::atan2, std::cos, std::hypot, std::sin
 
 namespace quokka
@@ -17,6 +18,9 @@ namespace quokka
 		constexpr float far_plane { 500.0f };
 
 		constexpr glm::vec3 world_up { 0.0f, 1.0f, 0.0f };
+
+		// At 90 degrees forward would be parallel to world_up, which breaks lookAt
+		constexpr float max_pitch { glm::radians(89.0f) };
 	}
 
 	// ***
@@ -43,6 +47,12 @@ namespace quokka
 	void Camera::move(const glm::vec3& offset) noexcept
 	{
 		position_ += right() * offset.x + world_up * offset.y + forward() * offset.z;
+	}
+
+	void Camera::rotate(float yaw_offset, float pitch_offset) noexcept
+	{
+		yaw_ += yaw_offset;
+		pitch_ = std::clamp(pitch_ + pitch_offset, -max_pitch, max_pitch);
 	}
 
 	glm::vec3 Camera::forward() const noexcept

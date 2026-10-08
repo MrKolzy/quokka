@@ -12,6 +12,9 @@ namespace quokka
 		// In world units per second, the copies of the grid are 2 units apart
 		constexpr float camera_speed { 5.0f };
 
+		// In radians per pixel, without the delta time because the offset already is a distance
+		constexpr float mouse_sensitivity { 0.002f };
+
 		// 1 or -1, or 0 when both keys or neither are pressed
 		[[nodiscard]] float key_axis(
 			const Window& window,
@@ -71,6 +74,24 @@ namespace quokka
 
 	void Engine::update_camera(float delta_seconds) noexcept
 	{
+		// Held to look around like in the Unity, Unreal and Godot editors, so the cursor is free
+		const bool is_looking { window_.is_right_mouse_button_pressed() };
+		if (is_looking != window_.is_cursor_captured())
+		{
+			// This frame's offset was measured before the change, so it's skipped
+			window_.set_cursor_captured(is_looking);
+		}
+		else if (is_looking)
+		{
+			const glm::vec2 cursor_offset { window_.cursor_offset() };
+
+			// Screen y grows downward, so moving the cursor up has to raise the pitch
+			camera_.rotate(
+				cursor_offset.x * mouse_sensitivity,
+				-cursor_offset.y * mouse_sensitivity
+			);
+		}
+
 		// Relative to the view, as move expects
 		const glm::vec3 direction {
 			key_axis(window_, Key::d, Key::a),

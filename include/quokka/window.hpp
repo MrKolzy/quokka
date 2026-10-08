@@ -1,5 +1,6 @@
 #pragma once
 
+#include <glm/glm.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
 #include <string> // std::string
@@ -45,6 +46,14 @@ namespace quokka
 
 		// Held down as of the last poll_events
 		[[nodiscard]] bool is_key_pressed(Key key) const noexcept;
+		[[nodiscard]] bool is_right_mouse_button_pressed() const noexcept;
+
+		// A captured cursor is hidden and moves without limits, so it can turn the camera
+		[[nodiscard]] bool is_cursor_captured() const noexcept;
+		void set_cursor_captured(bool is_captured) noexcept;
+
+		// In pixels, since the previous poll_events
+		[[nodiscard]] glm::vec2 cursor_offset() const noexcept;
 
 		void set_title(const std::string& title) noexcept;
 
@@ -61,5 +70,8 @@ namespace quokka
 
 		GLFWwindow* handle_ { nullptr };
 		bool was_resized_ { false };
+
+		glm::dvec2 previous_cursor_position_ {};
+		glm::vec2 cursor_offset_ {};
 	};
 }
