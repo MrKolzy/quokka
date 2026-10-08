@@ -1,6 +1,8 @@
 #include "quokka/particle_system.hpp"
 
 #include "quokka/constants.hpp"
+#include "quokka/device.hpp"
+#include "quokka/graphics_pipeline.hpp"
 #include "quokka/shader_module.hpp"
 
 #include <glm/glm.hpp>
@@ -129,7 +131,10 @@ namespace quokka
 		create_draw_pipeline(shader_module, graphics_pipeline.descriptor_set_layout(), color_format, depth_format, sample_count);
 	}
 
-	void ParticleSystem::record_update(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_index, float delta_seconds) const
+	void ParticleSystem::record_update(
+		const vk::raii::CommandBuffer& command_buffer,
+		std::uint32_t frame_index,
+		float delta_seconds) const
 	{
 		// The update reads what the previous update wrote, and overwrites what an earlier one wrote and read
 		// The draw that read this frame's buffer as vertices is already done, since this frame's fence was waited on
