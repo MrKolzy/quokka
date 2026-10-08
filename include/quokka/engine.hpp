@@ -29,6 +29,7 @@ namespace quokka
 		void run();
 
 	private:
+		void update_camera(float delta_seconds) noexcept;
 		void recreate_swapchain();
 
 		// Each member uses the ones above it and is destroyed before them, so don't reorder
@@ -55,7 +56,7 @@ namespace quokka
 		// The objects rotate according to the time elapsed since then
 		std::chrono::steady_clock::time_point start_time_ { std::chrono::steady_clock::now() };
 
-		// The particles move according to the time elapsed since then
+		// The camera and the particles move according to the time elapsed since then
 		std::chrono::steady_clock::time_point previous_frame_time_ {
 			std::chrono::steady_clock::now()
 		};

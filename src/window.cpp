@@ -8,6 +8,7 @@
 #include <cstdio> // stderr
 #include <print> // std::println
 #include <stdexcept> // std::runtime_error
+#include <utility> // std::unreachable
 
 namespace quokka
 {
@@ -16,6 +17,28 @@ namespace quokka
 		void glfw_error_callback(int error_code, const char* description) noexcept
 		{
 			std::println(stderr, "[Quokka] GLFW error ({:#x}): {}", error_code, description);
+		}
+
+		[[nodiscard]] constexpr int glfw_key(Key key) noexcept
+		{
+			switch (key)
+			{
+			case Key::a:
+				return GLFW_KEY_A;
+			case Key::d:
+				return GLFW_KEY_D;
+			case Key::e:
+				return GLFW_KEY_E;
+			case Key::q:
+				return GLFW_KEY_Q;
+			case Key::s:
+				return GLFW_KEY_S;
+			case Key::w:
+				return GLFW_KEY_W;
+			}
+
+			// Every key is handled above
+			std::unreachable();
 		}
 	}
 
@@ -96,6 +119,11 @@ namespace quokka
 	bool Window::should_close() const noexcept
 	{
 		return glfwWindowShouldClose(handle_);
+	}
+
+	bool Window::is_key_pressed(Key key) const noexcept
+	{
+		return glfwGetKey(handle_, glfw_key(key)) == GLFW_PRESS;
 	}
 
 	void Window::set_title(const std::string& title) noexcept

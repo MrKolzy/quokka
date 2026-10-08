@@ -40,6 +40,11 @@ namespace quokka
 		return glm::perspective(field_of_view, aspect_ratio, near_plane, far_plane);
 	}
 
+	void Camera::move(const glm::vec3& offset) noexcept
+	{
+		position_ += right() * offset.x + world_up * offset.y + forward() * offset.z;
+	}
+
 	glm::vec3 Camera::forward() const noexcept
 	{
 		// Yaw and pitch 0 look toward -z, like a view matrix that is the identity
@@ -48,5 +53,11 @@ namespace quokka
 			std::sin(pitch_),
 			-std::cos(pitch_) * std::cos(yaw_)
 		};
+	}
+
+	glm::vec3 Camera::right() const noexcept
+	{
+		// Horizontal, so moving sideways never changes the height
+		return { std::cos(yaw_), 0.0f, std::sin(yaw_) };
 	}
 }

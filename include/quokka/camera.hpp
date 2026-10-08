@@ -13,8 +13,12 @@ namespace quokka
 		[[nodiscard]] glm::mat4 view_matrix() const noexcept;
 		[[nodiscard]] glm::mat4 projection_matrix(float aspect_ratio) const noexcept;
 
+		// The offset is relative to the view, x to the right, y along world up and z forward
+		void move(const glm::vec3& offset) noexcept;
+
 	private:
 		[[nodiscard]] glm::vec3 forward() const noexcept;
+		[[nodiscard]] glm::vec3 right() const noexcept;
 
 		glm::vec3 position_;
 

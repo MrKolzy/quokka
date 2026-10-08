@@ -9,6 +9,17 @@ struct GLFWwindow;
 
 namespace quokka
 {
+	// Only the keys the engine reads, so GLFW stays hidden inside Window
+	enum class Key
+	{
+		a,
+		d,
+		e,
+		q,
+		s,
+		w
+	};
+
 	class Window
 	{
 	public:
@@ -31,6 +42,9 @@ namespace quokka
 		[[nodiscard]] vk::raii::SurfaceKHR create_surface(const vk::raii::Instance& instance) const;
 
 		[[nodiscard]] bool should_close() const noexcept;
+
+		// Held down as of the last poll_events
+		[[nodiscard]] bool is_key_pressed(Key key) const noexcept;
 
 		void set_title(const std::string& title) noexcept;
 

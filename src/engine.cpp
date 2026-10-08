@@ -7,19 +7,39 @@
 
 namespace quokka
 {
+	namespace
+	{
+		// In world units per second, the copies of the grid are 2 units apart
+		constexpr float camera_speed { 5.0f };
+
+		// 1 or -1, or 0 when both keys or neither are pressed
+		[[nodiscard]] float key_axis(
+			const Window& window,
+			Key positive_key,
+			Key negative_key) noexcept
+		{
+			return static_cast<float>(window.is_key_pressed(positive_key)) -
+				static_cast<float>(window.is_key_pressed(negative_key));
+		}
+	}
+
+	// ***
+
 	void Engine::run()
 	{
 		while (!window_.should_close())
 		{
 			window_.poll_events();
 
-			// Measured once, so the particles and every recording thread use the same time
+			// Measured once, so the camera, the particles and the recording threads share the time
 			const auto frame_time { std::chrono::steady_clock::now() };
 
 			// In seconds, as floats so the motion is smooth
 			const std::chrono::duration<float> elapsed_time { frame_time - start_time_ };
 			const std::chrono::duration<float> delta_time { frame_time - previous_frame_time_ };
 			previous_frame_time_ = frame_time;
+
+			update_camera(delta_time.count());
 
 			const bool is_swapchain_outdated {
 				renderer_.draw_frame(camera_, elapsed_time.count(), delta_time.count())
@@ -46,6 +66,22 @@ namespace quokka
 						gpu_times.particle_draws_ms));
 				}
 			}
+		}
+	}
+
+	void Engine::update_camera(float delta_seconds) noexcept
+	{
+		// Relative to the view, as move expects
+		const glm::vec3 direction {
+			key_axis(window_, Key::d, Key::a),
+			key_axis(window_, Key::e, Key::q),
+			key_axis(window_, Key::w, Key::s)
+		};
+
+		// Normalized, so moving diagonally isn't faster
+		if (direction != glm::vec3 { 0.0f })
+		{
+			camera_.move(glm::normalize(direction) * camera_speed * delta_seconds);
 		}
 	}
 
