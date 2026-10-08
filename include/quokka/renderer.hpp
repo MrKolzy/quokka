@@ -11,6 +11,7 @@
 
 namespace quokka
 {
+	class Camera;
 	class Device;
 	class GpuTimer;
 	class GraphicsPipeline;
@@ -36,7 +37,13 @@ namespace quokka
 		Renderer& operator=(Renderer&&) = delete;
 
 		// Returns true when the swapchain must be recreated before the next frame
-		[[nodiscard]] bool draw_frame(float elapsed_seconds, float delta_seconds);
+		[[nodiscard]] bool draw_frame(
+			const Camera& camera,
+			float elapsed_seconds,
+			float delta_seconds);
+
+		// Frames the whole grid, which the renderer still owns
+		[[nodiscard]] static Camera initial_camera() noexcept;
 
 	private:
 		void create_command_pool();
@@ -53,7 +60,7 @@ namespace quokka
 		void create_descriptor_sets();
 		void create_frame_sync_objects();
 
-		void update_uniform_buffer(void* mapped_memory) const;
+		void update_uniform_buffer(void* mapped_memory, const Camera& camera) const;
 		void record_command_buffer(
 			const vk::raii::CommandBuffer& command_buffer,
 			const vk::raii::DescriptorSet& descriptor_set,

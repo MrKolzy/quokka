@@ -22,7 +22,7 @@ namespace quokka
 			previous_frame_time_ = frame_time;
 
 			const bool is_swapchain_outdated {
-				renderer_.draw_frame(elapsed_time.count(), delta_time.count())
+				renderer_.draw_frame(camera_, elapsed_time.count(), delta_time.count())
 			};
 
 			// Not every platform reports out of date after a resize

@@ -1,5 +1,6 @@
 #include "quokka/renderer.hpp"
 
+#include "quokka/camera.hpp"
 #include "quokka/constants.hpp"
 #include "quokka/device.hpp"
 #include "quokka/gpu_timer.hpp"
@@ -271,7 +272,10 @@ namespace quokka
 		}
 	}
 
-	bool Renderer::draw_frame(float elapsed_seconds, float delta_seconds)
+	bool Renderer::draw_frame(
+		const Camera& camera,
+		float elapsed_seconds,
+		float delta_seconds)
 	{
 		constexpr auto no_timeout { std::numeric_limits<std::uint64_t>::max() };
 
@@ -309,7 +313,7 @@ namespace quokka
 		device_.logical_device().resetFences(*in_flight_fence);
 
 		// The fence wait above guarantees the GPU is no longer reading this frame's uniform buffer
-		update_uniform_buffer(mapped_uniform_buffer);
+		update_uniform_buffer(mapped_uniform_buffer, camera);
 
 		// Beginning the command buffer implicitly resets it, since the pool has the reset flag
 		record_command_buffer(
@@ -365,6 +369,21 @@ namespace quokka
 		// Recreate after presenting, so the semaphores are left in a consistent state
 		return present_result == vk::Result::eErrorOutOfDateKHR ||
 			present_result == vk::Result::eSuboptimalKHR;
+	}
+
+	Camera Renderer::initial_camera() noexcept
+	{
+		// Back and above the grid, far enough to see all of it, whatever its size
+		constexpr float grid_size {
+			static_cast<float>(constants::object_grid_side) * object_spacing
+		};
+		constexpr glm::vec3 camera_position {
+			0.0f, grid_size * 0.7f + 1.0f, grid_size * 1.3f + 2.0f
+		};
+
+		constexpr glm::vec3 grid_center { 0.0f, 0.0f, 0.0f };
+
+		return { camera_position, grid_center };
 	}
 
 	void Renderer::create_command_pool()
@@ -793,34 +812,19 @@ namespace quokka
 		}
 	}
 
-	void Renderer::update_uniform_buffer(void* mapped_memory) const
+	void Renderer::update_uniform_buffer(void* mapped_memory, const Camera& camera) const
 	{
 		const vk::Extent2D extent { swapchain_.extent() };
 		const float aspect_ratio {
 			static_cast<float>(extent.width) / static_cast<float>(extent.height)
 		};
 
-		// Back and above the grid, far enough to see all of it, whatever its size
-		constexpr float grid_size {
-			static_cast<float>(constants::object_grid_side) * object_spacing
-		};
-		constexpr glm::vec3 camera_position {
-			0.0f, grid_size * 0.7f + 1.0f, grid_size * 1.3f + 2.0f
+		const CameraUniforms camera_uniforms {
+			.view { camera.view_matrix() },
+			.projection { camera.projection_matrix(aspect_ratio) }
 		};
 
-		constexpr glm::vec3 grid_center { 0.0f, 0.0f, 0.0f };
-		constexpr glm::vec3 world_up { 0.0f, 1.0f, 0.0f };
-
-		// Well behind the farthest copies
-		constexpr float far_plane { grid_size * 2.0f + 10.0f };
-
-		const CameraUniforms camera {
-			.view { glm::lookAt(camera_position, grid_center, world_up) },
-			// 45 degree vertical field of view
-			.projection { glm::perspective(glm::radians(45.0f), aspect_ratio, 0.1f, far_plane) }
-		};
-
-		std::memcpy(mapped_memory, &camera, sizeof(camera));
+		std::memcpy(mapped_memory, &camera_uniforms, sizeof(camera_uniforms));
 	}
 
 	void Renderer::record_command_buffer(

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "quokka/camera.hpp"
 #include "quokka/device.hpp"
 #include "quokka/frame_timer.hpp"
 #include "quokka/gpu_timer.hpp"
@@ -46,6 +47,8 @@ namespace quokka
 		Renderer renderer_ {
 			device_, swapchain_, graphics_pipeline_, particle_system_, gpu_timer_
 		};
+
+		Camera camera_ { Renderer::initial_camera() };
 
 		FrameTimer frame_timer_ {};
 
