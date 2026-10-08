@@ -55,13 +55,12 @@ namespace quokka
 			};
 		}
 
-		// Mailbox has low latency without tearing
 		vk::PresentModeKHR choose_swapchain_present_mode(
 			const std::vector<vk::PresentModeKHR>& available_present_modes) noexcept
 		{
-			if (std::ranges::contains(available_present_modes, vk::PresentModeKHR::eMailbox))
+			if (std::ranges::contains(available_present_modes, constants::preferred_present_mode))
 			{
-				return vk::PresentModeKHR::eMailbox;
+				return constants::preferred_present_mode;
 			}
 
 			// Vertical sync, the only mode the specification guarantees

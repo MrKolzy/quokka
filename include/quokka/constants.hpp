@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vulkan/vulkan_raii.hpp>
+
 #include <array> // std::array
 #include <cstdint> // std::uint32_t
 
@@ -29,6 +31,10 @@ namespace quokka::constants
 	inline constexpr const char* particle_shader_path { "shaders/particles.spv" };
 	inline constexpr const char* model_path { "models/viking_room.glb" };
 	inline constexpr const char* texture_path { "textures/viking_room.ktx2" };
+
+	// Mailbox has low latency without tearing, Immediate tears but has no frame rate cap,
+	// which suits benchmarks, and Fifo is vertical sync, which saves power
+	inline constexpr vk::PresentModeKHR preferred_present_mode { vk::PresentModeKHR::eMailbox };
 
 	// Frames the CPU can record ahead of the GPU, more would only add latency
 	inline constexpr std::uint32_t max_frames_in_flight { 2 };
