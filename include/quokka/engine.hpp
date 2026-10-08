@@ -2,6 +2,7 @@
 
 #include "quokka/device.hpp"
 #include "quokka/frame_timer.hpp"
+#include "quokka/gpu_timer.hpp"
 #include "quokka/graphics_pipeline.hpp"
 #include "quokka/particle_system.hpp"
 #include "quokka/renderer.hpp"
@@ -39,7 +40,10 @@ namespace quokka
 			device_, graphics_pipeline_, swapchain_.surface_format().format,
 			swapchain_.depth_format(), swapchain_.sample_count()
 		};
-		Renderer renderer_ { device_, swapchain_, graphics_pipeline_, particle_system_ };
+		GpuTimer gpu_timer_ { device_ };
+		Renderer renderer_ {
+			device_, swapchain_, graphics_pipeline_, particle_system_, gpu_timer_
+		};
 
 		FrameTimer frame_timer_ {};
 	};

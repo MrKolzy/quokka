@@ -14,6 +14,7 @@
 namespace quokka
 {
 	class Device;
+	class GpuTimer;
 	class GraphicsPipeline;
 	class ParticleSystem;
 	class Swapchain;
@@ -25,7 +26,8 @@ namespace quokka
 			const Device& device,
 			const Swapchain& swapchain,
 			const GraphicsPipeline& graphics_pipeline,
-			const ParticleSystem& particle_system);
+			const ParticleSystem& particle_system,
+			GpuTimer& gpu_timer);
 		~Renderer();
 
 		// recording_threads_ can't be copied or moved, so neither can it
@@ -71,6 +73,7 @@ namespace quokka
 		const Swapchain& swapchain_;
 		const GraphicsPipeline& graphics_pipeline_;
 		const ParticleSystem& particle_system_;
+		GpuTimer& gpu_timer_;
 
 		// Each one is destroyed before the object it came from, so don't reorder
 		vk::raii::CommandPool command_pool_ { nullptr };

@@ -2,6 +2,7 @@
 
 #include "quokka/constants.hpp"
 #include "quokka/device.hpp"
+#include "quokka/gpu_timer.hpp"
 #include "quokka/graphics_pipeline.hpp"
 #include "quokka/one_time_commands.hpp"
 #include "quokka/particle_system.hpp"
@@ -229,11 +230,13 @@ namespace quokka
 		const Device& device,
 		const Swapchain& swapchain,
 		const GraphicsPipeline& graphics_pipeline,
-		const ParticleSystem& particle_system)
+		const ParticleSystem& particle_system,
+		GpuTimer& gpu_timer)
 		: device_ { device }
 		, swapchain_ { swapchain }
 		, graphics_pipeline_ { graphics_pipeline }
 		, particle_system_ { particle_system }
+		, gpu_timer_ { gpu_timer }
 		, recording_threads_ { constants::recording_thread_count }
 	{
 		create_command_pool();
@@ -281,6 +284,9 @@ namespace quokka
 		{
 			throw std::runtime_error("Failed to wait for the in flight fence");
 		}
+
+		// The fence wait above also guarantees this frame's previous timestamps are written
+		gpu_timer_.collect(frame_index_);
 
 		// The semaphore is signaled once the presentation engine stops reading the image
 		// Out of date is returned instead of thrown, here and in presentKHR,
@@ -814,6 +820,8 @@ namespace quokka
 		// Re-recorded every frame, so each recording is submitted only once
 		command_buffer.begin({ .flags { vk::CommandBufferUsageFlagBits::eOneTimeSubmit } });
 
+		gpu_timer_.record_timestamp(command_buffer, frame_index_, GpuTimestamp::frame_start);
+
 		// Same stage the acquire semaphore waits on, so it happens after the image is acquired
 		// The old contents are discarded, so the old layout can be undefined
 		transition_image_layout(
@@ -873,6 +881,8 @@ namespace quokka
 
 		// Before the rendering begins, since compute work can't be recorded inside one
 		particle_system_.record_update(command_buffer, frame_index_, delta_time.count());
+
+		gpu_timer_.record_timestamp(command_buffer, frame_index_, GpuTimestamp::particles_updated);
 
 		constexpr vk::ClearValue clear_color {
 			.color { .float32 { std::array { 0.0f, 0.0f, 0.0f, 1.0f } } }
@@ -951,6 +961,11 @@ namespace quokka
 		// Only a few commands, so they're recorded on this thread
 		const auto& particle_command_buffer { particle_command_buffers_[frame_index_] };
 		begin_secondary_command_buffer(particle_command_buffer);
+
+		// In the secondary, because the primary can only execute secondaries during this rendering
+		gpu_timer_.record_timestamp(
+			particle_command_buffer, frame_index_, GpuTimestamp::objects_drawn);
+
 		particle_system_.record_draw(particle_command_buffer, descriptor_set, frame_index_);
 		particle_command_buffer.end();
 
@@ -971,6 +986,8 @@ namespace quokka
 			vk::PipelineStageFlagBits2::eBottomOfPipe,
 			{}
 		);
+
+		gpu_timer_.record_timestamp(command_buffer, frame_index_, GpuTimestamp::frame_end);
 
 		command_buffer.end();
 	}

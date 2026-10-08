@@ -24,9 +24,15 @@ namespace quokka
 			{
 				if (frame_timer_.tick())
 				{
-					window_.set_title(std::format("{} | {:.0f} FPS | {:.2f} ms",
+					const auto gpu_times { gpu_timer_.take_average_times() };
+
+					window_.set_title(std::format(
+						"{} | {:.0f} FPS | {:.2f} ms | GPU {:.2f} ms, update {:.2f}, "
+						"objects {:.2f}, particles {:.2f}",
 						constants::app_name, frame_timer_.average_fps(),
-						frame_timer_.average_frame_time_ms()));
+						frame_timer_.average_frame_time_ms(), gpu_times.total_ms,
+						gpu_times.particle_update_ms, gpu_times.object_draws_ms,
+						gpu_times.particle_draws_ms));
 				}
 			}
 		}
