@@ -8,43 +8,44 @@
 #include "quokka/swapchain.hpp"
 
 #include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp> // glm::translate, glm::rotate, glm::scale, glm::lookAt, glm::perspective
+#include <glm/gtc/matrix_transform.hpp>
 #include <ktx.h>
 
 #include <algorithm> // std::max
-#include <array>
+#include <array> // std::array
 #include <bit> // std::bit_width
-#include <chrono>
-#include <cstdint> // std::int32_t, std::uint#_t
+#include <chrono> // std::chrono::duration, std::chrono::steady_clock
+#include <cstdint> // std::int32_t, std::uint32_t, std::uint64_t
 #include <cstring> // std::memcpy
-#include <exception>
-#include <limits>
+#include <exception> // std::exception
+#include <limits> // std::numeric_limits
 #include <memory> // std::unique_ptr
-#include <span>
+#include <span> // std::as_bytes, std::span
 #include <stdexcept> // std::runtime_error
-#include <string>
+#include <string> // std::string
 
 namespace quokka
 {
 	namespace
 	{
-		// Must match CameraUniforms in the shader
-		// Only 4x4 matrices, which already meet the 16-byte alignment uniform buffers require
 		struct CameraUniforms
 		{
+			// Must match CameraUniforms in shader.slang
+			// Only 4x4 matrices, which already meet the 16-byte alignment uniform buffers require
 			glm::mat4 view;
 			glm::mat4 projection;
 		};
 
-		// Position, orientation and size of an object in the world
 		struct Transform
 		{
 			glm::vec3 position { 0.0f, 0.0f, 0.0f };
+
 			// Euler angles in radians around the x, y and z axes
 			glm::vec3 rotation { 0.0f, 0.0f, 0.0f };
+
 			glm::vec3 scale { 1.0f, 1.0f, 1.0f };
 
-			// Scales, then rotates and finally moves the object, since the matrices apply from right to left
+			// Scales, then rotates, then moves, since the matrices apply from right to left
 			[[nodiscard]] glm::mat4 model_matrix() const noexcept
 			{
 				glm::mat4 model { glm::translate(glm::mat4 { 1.0f }, position) };
@@ -56,25 +57,30 @@ namespace quokka
 			}
 		};
 
-		constexpr std::uint32_t grid_object_count { constants::object_grid_side * constants::object_grid_side };
+		constexpr std::uint32_t grid_object_count {
+			constants::object_grid_side * constants::object_grid_side
+		};
 
-		// Distance between the centers of neighboring copies, a bit more than the width of the model
+		// Between the centers of neighboring copies, a bit more than the width of the model
 		constexpr float object_spacing { 2.0f };
 
-		// Where each copy of the model goes: a square grid on the ground centered at the origin, each one turned differently
+		// A square grid on the ground centered at the origin, each copy turned differently
 		[[nodiscard]] constexpr Transform object_transform(std::uint32_t object_index) noexcept
 		{
 			const std::uint32_t row { object_index / constants::object_grid_side };
 			const std::uint32_t column { object_index % constants::object_grid_side };
-			const float grid_offset { static_cast<float>(constants::object_grid_side - 1) * object_spacing / 2.0f };
+			const float grid_offset {
+				static_cast<float>(constants::object_grid_side - 1) * object_spacing / 2.0f
+			};
+			const float x { static_cast<float>(column) * object_spacing - grid_offset };
+			const float z { static_cast<float>(row) * object_spacing - grid_offset };
 
 			return {
-				.position { static_cast<float>(column) * object_spacing - grid_offset, 0.0f, static_cast<float>(row) * object_spacing - grid_offset },
+				.position { x, 0.0f, z },
 				.rotation { 0.0f, static_cast<float>(object_index) * glm::radians(40.0f), 0.0f }
 			};
 		}
 
-		// The whole of an image of the given size, used as a render area and as a scissor
 		[[nodiscard]] constexpr vk::Rect2D full_area(vk::Extent2D extent) noexcept
 		{
 			return {
@@ -83,8 +89,6 @@ namespace quokka
 			};
 		}
 
-		// Changes the layout of part of an image after the source stages and accesses finish,
-		// and before the destination ones start
 		void transition_image_layout(
 			const vk::raii::CommandBuffer& command_buffer,
 			vk::Image image,
@@ -103,7 +107,7 @@ namespace quokka
 				.dstAccessMask { dst_access_mask },
 				.oldLayout { old_layout },
 				.newLayout { new_layout },
-				// The image stays in the same queue family, so there's no ownership transfer
+				// Same queue family, so there's no ownership transfer
 				.srcQueueFamilyIndex { vk::QueueFamilyIgnored },
 				.dstQueueFamilyIndex { vk::QueueFamilyIgnored },
 				.image { image },
@@ -118,8 +122,8 @@ namespace quokka
 			command_buffer.pipelineBarrier2(dependency_info);
 		}
 
-		// Fills every mip level after the first by blitting each level into the next one at half its size
-		// Expects every level in the transfer destination layout, and leaves them all ready to be sampled by the fragment shader
+		// Blits each level into the next, so every level must start as a transfer destination,
+		// and all of them end up ready for the fragment shader
 		void generate_mipmaps(
 			const vk::raii::CommandBuffer& command_buffer,
 			vk::Image image,
@@ -132,7 +136,7 @@ namespace quokka
 
 			for (std::uint32_t mip_level { 1 }; mip_level < mip_levels; ++mip_level)
 			{
-				// The previous level was written by the copy or by the previous blit, and this blit reads it
+				// The copy or the previous blit wrote the previous level, and this blit reads it
 				transition_image_layout(
 					command_buffer,
 					image,
@@ -145,13 +149,19 @@ namespace quokka
 					vk::AccessFlagBits2::eTransferRead
 				);
 
-				// Halved but never below 1 pixel, so the longer side of a non-square image keeps shrinking on its own
+				// Never below 1, so the longer side of a non-square image keeps shrinking alone
 				const std::int32_t next_mip_width { mip_width > 1 ? mip_width / 2 : 1 };
 				const std::int32_t next_mip_height { mip_height > 1 ? mip_height / 2 : 1 };
 
 				// Each region goes from the origin to the opposite corner of its whole level
-				const std::array source_corners { vk::Offset3D {}, vk::Offset3D { .x { mip_width }, .y { mip_height }, .z { 1 } } };
-				const std::array destination_corners { vk::Offset3D {}, vk::Offset3D { .x { next_mip_width }, .y { next_mip_height }, .z { 1 } } };
+				const std::array source_corners {
+					vk::Offset3D {},
+					vk::Offset3D { .x { mip_width }, .y { mip_height }, .z { 1 } }
+				};
+				const std::array destination_corners {
+					vk::Offset3D {},
+					vk::Offset3D { .x { next_mip_width }, .y { next_mip_height }, .z { 1 } }
+				};
 
 				const vk::ImageBlit blit {
 					.srcSubresource {
@@ -180,8 +190,8 @@ namespace quokka
 					vk::Filter::eLinear
 				);
 
-				// The previous level is final, so it can be sampled once this blit is done reading it
-				// Only a read to wait for, so no source access is needed, just the stage
+				// The previous level is final, so it can be sampled once this blit reads it
+				// Waiting for a read needs no source access, only the stage
 				transition_image_layout(
 					command_buffer,
 					image,
@@ -198,7 +208,7 @@ namespace quokka
 				mip_height = next_mip_height;
 			}
 
-			// The last level is never read by a blit, so it goes straight from being written to being sampled
+			// The last level is never blitted from, so it goes straight to being sampled
 			transition_image_layout(
 				command_buffer,
 				image,
@@ -257,18 +267,17 @@ namespace quokka
 
 	bool Renderer::draw_frame()
 	{
-		// Wait indefinitely, the timeout is in nanoseconds
 		constexpr auto no_timeout { std::numeric_limits<std::uint64_t>::max() };
 
-		// Objects owned by the current frame in flight
 		const auto& in_flight_fence { in_flight_fences_[frame_index_] };
 		const auto& image_available_semaphore { image_available_semaphores_[frame_index_] };
-		const auto& command_buffer { command_buffers_[frame_index_] };
+		const auto& command_buffer { primary_command_buffers_[frame_index_] };
 		const auto& descriptor_set { descriptor_sets_[frame_index_] };
 		void* const mapped_uniform_buffer { mapped_uniform_buffers_[frame_index_] };
 
-		// Wait until the GPU finishes this frame's previous submission, so its command buffer can be recorded again
-		if (device_.logical_device().waitForFences(*in_flight_fence, vk::True, no_timeout) != vk::Result::eSuccess)
+		// Waits for this frame's previous submission, so its command buffer can be reused
+		if (device_.logical_device().waitForFences(*in_flight_fence, vk::True, no_timeout) !=
+			vk::Result::eSuccess)
 		{
 			throw std::runtime_error("Failed to wait for the in flight fence");
 		}
@@ -276,16 +285,18 @@ namespace quokka
 		// The semaphore is signaled once the presentation engine stops reading the image
 		// Out of date is returned instead of thrown, here and in presentKHR,
 		// because the project defines VULKAN_HPP_HANDLE_ERROR_OUT_OF_DATE_AS_SUCCESS
-		const auto [acquire_result, image_index] { swapchain_.handle().acquireNextImage(no_timeout, *image_available_semaphore, nullptr) };
+		const auto [acquire_result, image_index] {
+			swapchain_.handle().acquireNextImage(no_timeout, *image_available_semaphore, nullptr)
+		};
 
-		// The swapchain no longer matches the surface and can't be used, so recreate it and try again next frame
-		// Suboptimal is still usable, so the frame is drawn and the swapchain is recreated after presenting
+		// The swapchain no longer matches the surface, so recreate it and retry next frame
+		// Suboptimal still works, so the frame is drawn and the swapchain is recreated afterwards
 		if (acquire_result == vk::Result::eErrorOutOfDateKHR)
 		{
 			return true;
 		}
 
-		// Reset only once work is sure to be submitted, otherwise an early return would leave it unsignaled forever
+		// Reset only once work will be submitted, or an early return would leave it unsignaled
 		device_.logical_device().resetFences(*in_flight_fence);
 
 		// The fence wait above guarantees the GPU is no longer reading this frame's uniform buffer
@@ -303,7 +314,7 @@ namespace quokka
 			.stageMask { vk::PipelineStageFlagBits2::eColorAttachmentOutput }
 		};
 
-		// Signaled once every command has finished, including the final transition to the present layout
+		// Signaled once every command finishes, including the final transition to present
 		const vk::SemaphoreSubmitInfo signal_semaphore_info {
 			.semaphore { *render_finished_semaphore },
 			.stageMask { vk::PipelineStageFlagBits2::eAllCommands }
@@ -322,7 +333,6 @@ namespace quokka
 			.pSignalSemaphoreInfos { &signal_semaphore_info }
 		};
 
-		// The fence is signaled when the GPU finishes executing the command buffer
 		device_.queue().submit2(submit_info, *in_flight_fence);
 
 		const vk::PresentInfoKHR present_info {
@@ -358,53 +368,55 @@ namespace quokka
 	{
 		const vk::CommandBufferAllocateInfo allocate_info {
 			.commandPool { *command_pool_ },
-			// Primary buffers are submitted directly to a queue, secondary ones are called from primary ones
+			// Submitted directly to the queue, unlike the secondary ones
 			.level { vk::CommandBufferLevel::ePrimary },
 			.commandBufferCount { constants::max_frames_in_flight }
 		};
 
-		command_buffers_ = device_.logical_device().allocateCommandBuffers(allocate_info);
+		primary_command_buffers_ = device_.logical_device().allocateCommandBuffers(allocate_info);
 	}
 
 	void Renderer::create_secondary_command_buffers()
 	{
+		const auto& logical_device { device_.logical_device() };
+
+		// Same settings as command_pool_
 		const vk::CommandPoolCreateInfo pool_info {
-			// Lets each command buffer be reset individually, since it's re-recorded every frame
 			.flags { vk::CommandPoolCreateFlagBits::eResetCommandBuffer },
-			// Its command buffers can only be submitted to queues of this family
 			.queueFamilyIndex { device_.queue_family_index() }
 		};
 
 		recording_command_pools_.reserve(constants::recording_thread_count);
 		secondary_command_buffers_.reserve(constants::recording_thread_count);
 
-		for (std::uint32_t thread_index { 0 }; thread_index < constants::recording_thread_count; ++thread_index)
+		for (std::uint32_t index { 0 }; index < constants::recording_thread_count; ++index)
 		{
-			recording_command_pools_.push_back(device_.logical_device().createCommandPool(pool_info));
+			recording_command_pools_.push_back(logical_device.createCommandPool(pool_info));
 
-			// One per frame in flight, since a frame can't re-record a secondary buffer the GPU may still be executing
+			// One per frame in flight, since the GPU may still be executing the previous one
 			const vk::CommandBufferAllocateInfo allocate_info {
 				.commandPool { *recording_command_pools_.back() },
 				.level { vk::CommandBufferLevel::eSecondary },
 				.commandBufferCount { constants::max_frames_in_flight }
 			};
 
-			secondary_command_buffers_.push_back(device_.logical_device().allocateCommandBuffers(allocate_info));
+			secondary_command_buffers_.push_back(
+				logical_device.allocateCommandBuffers(allocate_info));
 		}
 
-		// The particle draws are recorded on the main thread, so their buffers come from the same pool as the primary ones
+		// Recorded on the main thread, so they come from the same pool as the primary ones
 		const vk::CommandBufferAllocateInfo particle_allocate_info {
 			.commandPool { *command_pool_ },
 			.level { vk::CommandBufferLevel::eSecondary },
 			.commandBufferCount { constants::max_frames_in_flight }
 		};
 
-		particle_command_buffers_ = device_.logical_device().allocateCommandBuffers(particle_allocate_info);
+		particle_command_buffers_ = logical_device.allocateCommandBuffers(particle_allocate_info);
 	}
 
 	void Renderer::load_model()
 	{
-		// glTF uses y up like the world, so unlike the OBJ version the vertices need no conversion
+		// glTF uses y up like the world, so the vertices need no conversion
 		mesh_ = load_gltf(constants::model_path);
 	}
 
@@ -432,18 +444,29 @@ namespace quokka
 	{
 		// Also inflates the texels if the file is supercompressed with zstd
 		ktxTexture2* loaded_texture { nullptr };
-		if (ktxTexture2_CreateFromNamedFile(constants::texture_path, KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &loaded_texture) != KTX_SUCCESS)
+		const auto load_result {
+			ktxTexture2_CreateFromNamedFile(
+				constants::texture_path,
+				KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT,
+				&loaded_texture)
+		};
+		if (load_result != KTX_SUCCESS)
 		{
-			throw std::runtime_error(std::string { "Failed to load texture file: " } + constants::texture_path);
+			throw std::runtime_error(
+				std::string { "Failed to load texture file: " } + constants::texture_path);
 		}
 
-		// Owned by a unique_ptr, so ktxTexture2_Destroy also runs if an exception is thrown before the end
-		const std::unique_ptr<ktxTexture2, decltype(&ktxTexture2_Destroy)> texture { loaded_texture, &ktxTexture2_Destroy };
+		// Owned by a unique_ptr, so it's destroyed even if an exception is thrown
+		const std::unique_ptr<ktxTexture2, decltype(&ktxTexture2_Destroy)> texture {
+			loaded_texture, &ktxTexture2_Destroy
+		};
 
-		// Block compressed formats need a GPU feature, and Basis Universal ones transcoding into one of them first
+		// Block compressed formats need a GPU feature, and Basis Universal ones need transcoding
 		if (texture->isCompressed || ktxTexture2_NeedsTranscoding(texture.get()))
 		{
-			throw std::runtime_error(std::string { "Compressed textures aren't supported yet: " } + constants::texture_path);
+			throw std::runtime_error(
+				std::string { "Compressed textures aren't supported yet: " } +
+				constants::texture_path);
 		}
 
 		texture_format_ = static_cast<vk::Format>(texture->vkFormat);
@@ -453,11 +476,10 @@ namespace quokka
 			.height { texture->baseHeight }
 		};
 
-		// The mipmaps stored in the file are used as they are, and only generated when it has just the full size level
+		// Mipmaps in the file are used as they are, and only generated if it has just one level
 		const bool should_generate_mipmaps { texture->numLevels == 1 };
 
-		// Each level halves the previous one down to 1x1, so there are floor(log2(longest side)) + 1 levels,
-		// which is the number of bits needed to write the longest side
+		// Halving down to 1x1 gives one level per bit needed to write the longest side
 		const auto mip_levels {
 			should_generate_mipmaps
 				? static_cast<std::uint32_t>(std::bit_width(std::max(extent.width, extent.height)))
@@ -466,23 +488,31 @@ namespace quokka
 
 		// The format comes from the file, so the GPU must be able to sample it,
 		// and to filter it linearly when the blits generate the mipmaps
-		const auto format_features { device_.physical_device().getFormatProperties(texture_format_).optimalTilingFeatures };
+		const auto format_features {
+			device_.physical_device().getFormatProperties(texture_format_).optimalTilingFeatures
+		};
 		const bool is_format_supported {
 			(format_features & vk::FormatFeatureFlagBits::eSampledImage) &&
-			(!should_generate_mipmaps || (format_features & vk::FormatFeatureFlagBits::eSampledImageFilterLinear))
+			(!should_generate_mipmaps ||
+				(format_features & vk::FormatFeatureFlagBits::eSampledImageFilterLinear))
 		};
 		if (!is_format_supported)
 		{
-			throw std::runtime_error(std::string { "The GPU can't sample the format of the texture file: " } + constants::texture_path);
+			throw std::runtime_error(
+				std::string { "The GPU can't sample the format of the texture file: " } +
+				constants::texture_path);
 		}
 
 		// Every level stored in the file, one after another
-		const std::span<const ktx_uint8_t> texels { ktxTexture_GetData(ktxTexture(texture.get())), ktxTexture_GetDataSize(ktxTexture(texture.get())) };
+		const std::span<const ktx_uint8_t> texels {
+			ktxTexture_GetData(ktxTexture(texture.get())),
+			ktxTexture_GetDataSize(ktxTexture(texture.get()))
+		};
 
 		// Only lives until its contents are copied into the image
 		const auto staging_buffer { create_staging_buffer(device_, std::as_bytes(texels)) };
 
-		// One copy per level stored in the file, each starting where that level is in the staging buffer
+		// One copy per level stored in the file, each from that level's offset in the buffer
 		std::vector<vk::BufferImageCopy> copy_regions {};
 		copy_regions.reserve(texture->numLevels);
 
@@ -504,26 +534,32 @@ namespace quokka
 				},
 				.imageOffset { .x { 0 }, .y { 0 }, .z { 0 } },
 				// Each level halves the previous one, but never goes below 1 texel
-				.imageExtent { .width { std::max(extent.width >> mip_level, 1u) }, .height { std::max(extent.height >> mip_level, 1u) }, .depth { 1 } }
+				.imageExtent {
+					.width { std::max(extent.width >> mip_level, 1u) },
+					.height { std::max(extent.height >> mip_level, 1u) },
+					.depth { 1 }
+				}
 			};
+
 			copy_regions.push_back(copy_region);
 		}
 
-		// Transfer destination of the copy and the blits, transfer source of the blits, and sampled by the shaders afterwards
+		// Written by the copy and the blits, read by the blits and then sampled by the shaders
 		texture_image_ = create_image(
 			device_,
 			extent,
 			mip_levels,
 			vk::SampleCountFlagBits::e1,
 			texture_format_,
-			vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
+			vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst |
+			vk::ImageUsageFlagBits::eSampled,
 			vk::MemoryPropertyFlagBits::eDeviceLocal
 		);
 
-		// The transitions, the copy and the mipmap generation go in a single submission
-		submit_one_time_commands(device_, command_pool_, [this, &staging_buffer, &copy_regions, extent, mip_levels, should_generate_mipmaps](const vk::raii::CommandBuffer& command_buffer)
+		// All in one submission, so the CPU waits for the GPU only once
+		submit_one_time_commands(device_, command_pool_, [&](const auto& command_buffer)
 		{
-			// Every mip level at once: nothing to wait for, the old contents are discarded, and the copy and the blits wait for it
+			// Every level at once, with nothing to wait for since the old contents are discarded
 			transition_image_layout(
 				command_buffer,
 				*texture_image_.handle,
@@ -536,11 +572,15 @@ namespace quokka
 				vk::AccessFlagBits2::eTransferWrite
 			);
 
-			command_buffer.copyBufferToImage(*staging_buffer.handle, *texture_image_.handle, vk::ImageLayout::eTransferDstOptimal, copy_regions);
+			command_buffer.copyBufferToImage(
+				*staging_buffer.handle,
+				*texture_image_.handle,
+				vk::ImageLayout::eTransferDstOptimal,
+				copy_regions
+			);
 
 			if (should_generate_mipmaps)
 			{
-				// Also leaves every mip level ready to be sampled by the fragment shader
 				generate_mipmaps(command_buffer, *texture_image_.handle, extent, mip_levels);
 			}
 			else
@@ -563,13 +603,18 @@ namespace quokka
 
 	void Renderer::create_texture_image_view()
 	{
-		texture_image_view_ = create_image_view(device_, *texture_image_.handle, texture_format_, vk::ImageAspectFlagBits::eColor);
+		texture_image_view_ = create_image_view(
+			device_,
+			*texture_image_.handle,
+			texture_format_,
+			vk::ImageAspectFlagBits::eColor
+		);
 	}
 
 	void Renderer::create_texture_sampler()
 	{
 		const vk::SamplerCreateInfo create_info {
-			// Interpolate between the nearest texels instead of picking one, both when magnified and minified
+			// Interpolates between the nearest texels, both when magnified and minified
 			.magFilter { vk::Filter::eLinear },
 			.minFilter { vk::Filter::eLinear },
 			// Blends the two closest mip levels, so the switch from one to the next isn't visible
@@ -579,9 +624,11 @@ namespace quokka
 			.addressModeV { vk::SamplerAddressMode::eRepeat },
 			.addressModeW { vk::SamplerAddressMode::eRepeat },
 			.mipLodBias { 0.0f },
-			// Keeps textures sharp when seen at steep angles, with as many samples as the GPU allows
+			// Keeps textures sharp at steep angles, with as many samples as the GPU allows
 			.anisotropyEnable { vk::True },
-			.maxAnisotropy { device_.physical_device().getProperties().limits.maxSamplerAnisotropy },
+			.maxAnisotropy {
+				device_.physical_device().getProperties().limits.maxSamplerAnisotropy
+			},
 			// Comparing texels against a reference value is for shadow maps
 			.compareEnable { vk::False },
 			.compareOp { vk::CompareOp::eAlways },
@@ -601,8 +648,8 @@ namespace quokka
 	{
 		constexpr vk::DeviceSize buffer_size { sizeof(CameraUniforms) };
 
-		// Written every frame, so the CPU writes them directly instead of going through a staging buffer
-		// Host visible so the CPU can map them, and host coherent so its writes reach the GPU without explicit flushes
+		// Written every frame, so the CPU writes them directly instead of using a staging buffer
+		// Host visible to map them, host coherent so the writes need no explicit flushes
 		constexpr vk::MemoryPropertyFlags memory_properties {
 			vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent
 		};
@@ -612,10 +659,16 @@ namespace quokka
 
 		for (std::uint32_t index { 0 }; index < constants::max_frames_in_flight; ++index)
 		{
-			uniform_buffers_.push_back(create_buffer(device_, buffer_size, vk::BufferUsageFlagBits::eUniformBuffer, memory_properties));
+			uniform_buffers_.push_back(create_buffer(
+				device_,
+				buffer_size,
+				vk::BufferUsageFlagBits::eUniformBuffer,
+				memory_properties
+			));
 
 			// Never unmapped explicitly, freeing the memory unmaps it
-			mapped_uniform_buffers_.push_back(uniform_buffers_.back().memory.mapMemory(0, buffer_size));
+			mapped_uniform_buffers_.push_back(
+				uniform_buffers_.back().memory.mapMemory(0, buffer_size));
 		}
 	}
 
@@ -647,8 +700,11 @@ namespace quokka
 	void Renderer::create_descriptor_sets()
 	{
 		// Every set has the same layout, but the allocation takes one per set
-		// Parentheses, not braces: this is the count constructor
-		const std::vector<vk::DescriptorSetLayout> layouts(constants::max_frames_in_flight, *graphics_pipeline_.descriptor_set_layout());
+		// Parentheses because braces could take the arguments as elements
+		const std::vector<vk::DescriptorSetLayout> layouts(
+			constants::max_frames_in_flight,
+			*graphics_pipeline_.descriptor_set_layout()
+		);
 
 		const vk::DescriptorSetAllocateInfo allocate_info {
 			.descriptorPool { *descriptor_pool_ },
@@ -666,7 +722,6 @@ namespace quokka
 			.imageLayout { vk::ImageLayout::eShaderReadOnlyOptimal }
 		};
 
-		// Point each set at the uniform buffer of its frame and at the texture
 		for (std::uint32_t index { 0 }; index < constants::max_frames_in_flight; ++index)
 		{
 			const vk::DescriptorBufferInfo buffer_info {
@@ -677,6 +732,7 @@ namespace quokka
 
 			const vk::WriteDescriptorSet camera_write {
 				.dstSet { *descriptor_sets_[index] },
+				// Must match camera_binding in graphics_pipeline.cpp
 				.dstBinding { 0 },
 				// Not an array, so the first and only element
 				.dstArrayElement { 0 },
@@ -687,6 +743,7 @@ namespace quokka
 
 			const vk::WriteDescriptorSet texture_write {
 				.dstSet { *descriptor_sets_[index] },
+				// Must match texture_binding in graphics_pipeline.cpp
 				.dstBinding { 1 },
 				.dstArrayElement { 0 },
 				.descriptorCount { 1 },
@@ -703,7 +760,7 @@ namespace quokka
 
 	void Renderer::create_frame_sync_objects()
 	{
-		// Created signaled, so the first frames don't wait forever for a submission that never happened
+		// Created signaled, so the first frames don't wait for a submission that never happened
 		constexpr vk::FenceCreateInfo fence_info {
 			.flags { vk::FenceCreateFlagBits::eSignaled }
 		};
@@ -721,17 +778,29 @@ namespace quokka
 
 	void Renderer::update_uniform_buffer(void* mapped_memory) const
 	{
-		const float aspect_ratio { static_cast<float>(swapchain_.extent().width) / static_cast<float>(swapchain_.extent().height) };
+		const vk::Extent2D extent { swapchain_.extent() };
+		const float aspect_ratio {
+			static_cast<float>(extent.width) / static_cast<float>(extent.height)
+		};
 
 		// Back and above the grid, far enough to see all of it, whatever its size
-		constexpr float grid_size { static_cast<float>(constants::object_grid_side) * object_spacing };
-		constexpr glm::vec3 camera_position { 0.0f, grid_size * 0.7f + 1.0f, grid_size * 1.3f + 2.0f };
+		constexpr float grid_size {
+			static_cast<float>(constants::object_grid_side) * object_spacing
+		};
+		constexpr glm::vec3 camera_position {
+			0.0f, grid_size * 0.7f + 1.0f, grid_size * 1.3f + 2.0f
+		};
+
+		constexpr glm::vec3 grid_center { 0.0f, 0.0f, 0.0f };
+		constexpr glm::vec3 world_up { 0.0f, 1.0f, 0.0f };
+
+		// Well behind the farthest copies
+		constexpr float far_plane { grid_size * 2.0f + 10.0f };
 
 		const CameraUniforms camera {
-			// Looks at the center of the grid, with the y axis pointing up
-			.view { glm::lookAt(camera_position, glm::vec3 { 0.0f, 0.0f, 0.0f }, glm::vec3 { 0.0f, 1.0f, 0.0f }) },
-			// 45 degree vertical field of view, with the far plane well behind the farthest copies
-			.projection { glm::perspective(glm::radians(45.0f), aspect_ratio, 0.1f, grid_size * 2.0f + 10.0f) }
+			.view { glm::lookAt(camera_position, grid_center, world_up) },
+			// 45 degree vertical field of view
+			.projection { glm::perspective(glm::radians(45.0f), aspect_ratio, 0.1f, far_plane) }
 		};
 
 		std::memcpy(mapped_memory, &camera, sizeof(camera));
@@ -745,7 +814,7 @@ namespace quokka
 		// Re-recorded every frame, so each recording is submitted only once
 		command_buffer.begin({ .flags { vk::CommandBufferUsageFlagBits::eOneTimeSubmit } });
 
-		// Same stage the acquire semaphore waits on, so the transition happens after the image is acquired
+		// Same stage the acquire semaphore waits on, so it happens after the image is acquired
 		// The old contents are discarded, so the old layout can be undefined
 		transition_image_layout(
 			command_buffer,
@@ -759,8 +828,7 @@ namespace quokka
 			vk::AccessFlagBits2::eColorAttachmentWrite
 		);
 
-		// Shared by every frame in flight, so wait for the color writes and the resolve of the previous frame before clearing it
-		// The old contents are discarded, so the old layout can be undefined
+		// Shared by every frame in flight, so wait for the previous frame before clearing it
 		transition_image_layout(
 			command_buffer,
 			swapchain_.msaa_color_image(),
@@ -773,22 +841,31 @@ namespace quokka
 			vk::AccessFlagBits2::eColorAttachmentWrite
 		);
 
-		// Shared by every frame in flight, so wait for the depth tests of the previous frame before clearing it
-		// The old contents are discarded, so the old layout can be undefined
+		constexpr vk::PipelineStageFlags2 depth_test_stages {
+			vk::PipelineStageFlagBits2::eEarlyFragmentTests |
+			vk::PipelineStageFlagBits2::eLateFragmentTests
+		};
+		constexpr vk::AccessFlags2 depth_accesses {
+			vk::AccessFlagBits2::eDepthStencilAttachmentRead |
+			vk::AccessFlagBits2::eDepthStencilAttachmentWrite
+		};
+
+		// Shared by every frame in flight, so wait for the previous frame before clearing it
 		transition_image_layout(
 			command_buffer,
 			swapchain_.depth_image(),
 			full_subresource_range(vk::ImageAspectFlagBits::eDepth),
 			vk::ImageLayout::eUndefined,
 			vk::ImageLayout::eDepthAttachmentOptimal,
-			vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+			depth_test_stages,
 			vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-			vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
-			vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite
+			depth_test_stages,
+			depth_accesses
 		);
 
 		// Measured once, so the particles and every recording thread use the same time
 		const auto frame_time { std::chrono::steady_clock::now() };
+
 		// In seconds, as floats so the motion is smooth
 		const std::chrono::duration<float> elapsed_time { frame_time - start_time_ };
 		const std::chrono::duration<float> delta_time { frame_time - previous_frame_time_ };
@@ -797,13 +874,12 @@ namespace quokka
 		// Before the rendering begins, since compute work can't be recorded inside one
 		particle_system_.record_update(command_buffer, frame_index_, delta_time.count());
 
-		// Opaque black, used to clear the multisampled image before drawing
 		constexpr vk::ClearValue clear_color {
 			.color { .float32 { std::array { 0.0f, 0.0f, 0.0f, 1.0f } } }
 		};
 
-		// Drawn into the multisampled image, whose samples are averaged into the swapchain image when rendering ends
-		// Only that resolved result is presented, so the samples themselves aren't stored
+		// Drawn into the multisampled image, whose samples are averaged into the swapchain image
+		// Only that resolved result is presented, so the samples aren't stored
 		const vk::RenderingAttachmentInfo color_attachment_info {
 			.imageView { *swapchain_.msaa_color_image_view() },
 			.imageLayout { vk::ImageLayout::eColorAttachmentOptimal },
@@ -842,13 +918,17 @@ namespace quokka
 
 		command_buffer.beginRendering(rendering_info);
 
-		// Each thread records the draws of its share of the objects into its own secondary command buffer,
-		// and run() returns once all of them are done
+		// Each thread records its share of the objects into its own secondary command buffer,
+		// and run returns once all of them are done
 		recording_threads_.run([this, &descriptor_set, &elapsed_time](std::uint32_t thread_index)
 		{
 			// Contiguous shares, as even as possible
-			const std::uint32_t first_object { grid_object_count * thread_index / constants::recording_thread_count };
-			const std::uint32_t end_object { grid_object_count * (thread_index + 1) / constants::recording_thread_count };
+			const std::uint32_t first_object {
+				grid_object_count * thread_index / constants::recording_thread_count
+			};
+			const std::uint32_t end_object {
+				grid_object_count * (thread_index + 1) / constants::recording_thread_count
+			};
 
 			record_object_draws(
 				secondary_command_buffers_[thread_index][frame_index_],
@@ -860,13 +940,13 @@ namespace quokka
 		});
 
 		// In the order of the threads, which is also the order of the objects
-		std::array<vk::CommandBuffer, constants::recording_thread_count> frame_secondary_command_buffers {};
-		for (std::uint32_t thread_index { 0 }; thread_index < constants::recording_thread_count; ++thread_index)
+		std::array<vk::CommandBuffer, constants::recording_thread_count> thread_command_buffers {};
+		for (std::uint32_t index { 0 }; index < constants::recording_thread_count; ++index)
 		{
-			frame_secondary_command_buffers[thread_index] = *secondary_command_buffers_[thread_index][frame_index_];
+			thread_command_buffers[index] = *secondary_command_buffers_[index][frame_index_];
 		}
 
-		command_buffer.executeCommands(frame_secondary_command_buffers);
+		command_buffer.executeCommands(thread_command_buffers);
 
 		// Only a few commands, so they're recorded on this thread
 		const auto& particle_command_buffer { particle_command_buffers_[frame_index_] };
@@ -874,7 +954,7 @@ namespace quokka
 		particle_system_.record_draw(particle_command_buffer, descriptor_set, frame_index_);
 		particle_command_buffer.end();
 
-		// After the objects, since the particles are hidden behind them by their depth without writing their own
+		// After the objects, since the particles are hidden by their depth but don't write it
 		command_buffer.executeCommands(*particle_command_buffer);
 
 		command_buffer.endRendering();
@@ -895,32 +975,36 @@ namespace quokka
 		command_buffer.end();
 	}
 
-	void Renderer::begin_secondary_command_buffer(const vk::raii::CommandBuffer& command_buffer) const
+	void Renderer::begin_secondary_command_buffer(
+		const vk::raii::CommandBuffer& command_buffer) const
 	{
 		const vk::Format color_format { swapchain_.surface_format().format };
 
-		// Continues the rendering begun by the primary command buffer, so it must match its attachments
-		const vk::StructureChain<vk::CommandBufferInheritanceInfo, vk::CommandBufferInheritanceRenderingInfo> inheritance_info_chain {
-			{},
-			{
-				.colorAttachmentCount { 1 },
-				.pColorAttachmentFormats { &color_format },
-				.depthAttachmentFormat { swapchain_.depth_format() },
-				.rasterizationSamples { swapchain_.sample_count() }
-			}
+		// Continues the rendering of the primary command buffer, so it must match its attachments
+		const vk::CommandBufferInheritanceRenderingInfo inheritance_rendering_info {
+			.colorAttachmentCount { 1 },
+			.pColorAttachmentFormats { &color_format },
+			.depthAttachmentFormat { swapchain_.depth_format() },
+			.rasterizationSamples { swapchain_.sample_count() }
+		};
+
+		const vk::CommandBufferInheritanceInfo inheritance_info {
+			.pNext { &inheritance_rendering_info }
 		};
 
 		const vk::CommandBufferBeginInfo begin_info {
-			// Re-recorded every frame, and only executed inside the rendering of the primary command buffer
-			.flags { vk::CommandBufferUsageFlagBits::eOneTimeSubmit | vk::CommandBufferUsageFlagBits::eRenderPassContinue },
-			.pInheritanceInfo { &inheritance_info_chain.get<vk::CommandBufferInheritanceInfo>() }
+			// Re-recorded every frame, and only executed inside the primary one's rendering
+			.flags {
+				vk::CommandBufferUsageFlagBits::eOneTimeSubmit |
+				vk::CommandBufferUsageFlagBits::eRenderPassContinue
+			},
+			.pInheritanceInfo { &inheritance_info }
 		};
 
 		command_buffer.begin(begin_info);
 
-		// A secondary command buffer inherits no state from the primary one, so each one sets its own
-		// Viewport and scissor are dynamic states, so they must be set before drawing
-		// Negative height flips the y axis to point up like in GLM's projection, so it starts at the bottom edge
+		// Dynamic states, which a secondary command buffer doesn't inherit, so it sets its own
+		// Negative height flips y to point up like GLM's projection, so it starts at the bottom
 		const vk::Viewport viewport {
 			.x { 0.0f },
 			.y { static_cast<float>(swapchain_.extent().height) },
@@ -943,14 +1027,18 @@ namespace quokka
 	{
 		begin_secondary_command_buffer(command_buffer);
 
-		// A secondary command buffer inherits no state from the primary one, so it binds everything it uses
+		// Secondary command buffers inherit no state, so it binds everything it uses
 		command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphics_pipeline_.handle());
 
 		// Starting at binding 0, with the vertex data at the start of the buffer
 		command_buffer.bindVertexBuffers(0, *vertex_buffer_.handle, { 0 });
 
 		// Offset 0, with the index type deduced from the element type of the mesh indices
-		command_buffer.bindIndexBuffer(*index_buffer_.handle, 0, vk::IndexTypeValue<decltype(mesh_.indices)::value_type>::value);
+		command_buffer.bindIndexBuffer(
+			*index_buffer_.handle,
+			0,
+			vk::IndexTypeValue<decltype(mesh_.indices)::value_type>::value
+		);
 
 		// Set 0, with no dynamic offsets
 		command_buffer.bindDescriptorSets(
@@ -961,18 +1049,26 @@ namespace quokka
 			{}
 		);
 
-		// Every object shares the mesh, the texture and the camera, so only the pushed model matrix changes between draws
-		for (std::uint32_t object_index { first_object }; object_index < first_object + object_count; ++object_index)
+		const std::uint32_t end_object { first_object + object_count };
+		const auto index_count { static_cast<std::uint32_t>(mesh_.indices.size()) };
+
+		// The objects share the mesh, texture and camera, so only the model matrix changes
+		for (std::uint32_t object_index { first_object }; object_index < end_object; ++object_index)
 		{
 			// Each one also turns around its own vertical axis, 30 degrees per second
 			Transform transform { object_transform(object_index) };
 			transform.rotation.y += elapsed_seconds * glm::radians(30.0f);
 
 			const ObjectConstants object_constants { .model { transform.model_matrix() } };
-			command_buffer.pushConstants<ObjectConstants>(*graphics_pipeline_.pipeline_layout(), vk::ShaderStageFlagBits::eVertex, 0, object_constants);
+			command_buffer.pushConstants<ObjectConstants>(
+				*graphics_pipeline_.pipeline_layout(),
+				vk::ShaderStageFlagBits::eVertex,
+				0,
+				object_constants
+			);
 
-			// Every index in the buffer, 1 instance, starting at the first index, vertex and instance
-			command_buffer.drawIndexed(static_cast<std::uint32_t>(mesh_.indices.size()), 1, 0, 0, 0);
+			// Every index, 1 instance, starting at the first index, vertex and instance
+			command_buffer.drawIndexed(index_count, 1, 0, 0, 0);
 		}
 
 		command_buffer.end();

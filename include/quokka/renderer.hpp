@@ -76,7 +76,7 @@ namespace quokka
 		vk::raii::CommandPool command_pool_ { nullptr };
 
 		// One per frame in flight
-		std::vector<vk::raii::CommandBuffer> command_buffers_ {};
+		std::vector<vk::raii::CommandBuffer> primary_command_buffers_ {};
 
 		// One per recording thread, because a command pool can't be used by two threads at once
 		std::vector<vk::raii::CommandPool> recording_command_pools_ {};
