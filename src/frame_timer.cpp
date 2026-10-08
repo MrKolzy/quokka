@@ -1,6 +1,7 @@
 #include "quokka/frame_timer.hpp"
 
-#include <chrono>
+#include <chrono> // std::chrono::duration, std::chrono::seconds
+#include <ratio> // std::milli
 
 namespace quokka
 {
@@ -23,8 +24,9 @@ namespace quokka
 			return false;
 		}
 
-		// The total time is averaged, not the per-frame rates, so each frame weighs as much as it lasted
-		average_frame_time_ms_ = std::chrono::duration<double, std::milli> { elapsed }.count() / frame_count_;
+		// Averages the time, not the per-frame rates, so each frame weighs as much as it lasted
+		const std::chrono::duration<double, std::milli> elapsed_ms { elapsed };
+		average_frame_time_ms_ = elapsed_ms.count() / frame_count_;
 
 		interval_start_ = now;
 		frame_count_ = 0;
