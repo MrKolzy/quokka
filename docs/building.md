@@ -48,7 +48,8 @@ and **Platform** to `x64`. When adding values, keep the inherited ones.
 | Linker > Input > Additional Dependencies | `glfw3dll.lib`<br>`ktx.lib` |
 
 In the properties of `src/pch.cpp`,
-set **C/C++ > Precompiled Headers > Precompiled Header** to `Create (/Yc)`.
+set **C/C++ > Precompiled Headers > Precompiled Header** to `Create (/Yc)`
+and **C/C++ > General > Multi-processor Compilation** to `No`.
 
 **Build Events > Pre-Build Event > Command Line:**
 
