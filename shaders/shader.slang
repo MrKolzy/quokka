@@ -26,14 +26,12 @@ Sampler2D texture;
 struct VertexInput
 {
 	float3 position;
-	float3 color;
 	float2 texture_coordinates;
 };
 
 struct VertexOutput
 {
 	float4 position : SV_Position;
-	float3 color;
 	float2 texture_coordinates;
 };
 
@@ -45,7 +43,6 @@ VertexOutput vert_main(VertexInput input)
 
 	VertexOutput output;
 	output.position = mul(camera.projection, view_position);
-	output.color = input.color;
 	output.texture_coordinates = input.texture_coordinates;
 
 	return output;

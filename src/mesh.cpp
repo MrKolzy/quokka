@@ -101,7 +101,7 @@ namespace quokka
 
 			for (std::size_t index { 0 }; index < positions.count; ++index)
 			{
-				Vertex vertex { .color { 1.0f, 1.0f, 1.0f } };
+				Vertex vertex {};
 				// memcpy, since reading the bytes through a float pointer breaks C++ aliasing rules
 				std::memcpy(
 					&vertex.position,

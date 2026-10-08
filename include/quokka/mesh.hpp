@@ -14,7 +14,7 @@ namespace quokka
 		std::vector<std::uint32_t> indices {};
 	};
 
-	// Merges every mesh in a .gltf or .glb file into one, with white vertex colors
+	// Merges every mesh in a .gltf or .glb file into one
 	// Ignores node transforms like the tutorial, so meshes stay at the origin
 	[[nodiscard]] Mesh load_gltf(const std::filesystem::path& path);
 }

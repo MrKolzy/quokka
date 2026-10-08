@@ -2,7 +2,6 @@
 
 #include "quokka/buffer.hpp"
 #include "quokka/image.hpp"
-#include "quokka/mesh.hpp"
 #include "quokka/worker_threads.hpp"
 
 #include <vulkan/vulkan_raii.hpp>
@@ -16,6 +15,7 @@ namespace quokka
 	class Device;
 	class GpuTimer;
 	class GraphicsPipeline;
+	struct Mesh;
 	class ParticleSystem;
 	class Swapchain;
 
@@ -43,9 +43,9 @@ namespace quokka
 		void create_command_pool();
 		void create_command_buffers();
 		void create_secondary_command_buffers();
-		void load_model();
-		void create_vertex_buffer();
-		void create_index_buffer();
+		[[nodiscard]] Mesh load_model() const;
+		void create_vertex_buffer(const Mesh& mesh);
+		void create_index_buffer(const Mesh& mesh);
 		void create_texture_image();
 		void create_texture_image_view();
 		void create_texture_sampler();
@@ -90,11 +90,13 @@ namespace quokka
 		// One per frame in flight
 		std::vector<vk::raii::CommandBuffer> particle_command_buffers_ {};
 
-		Mesh mesh_ {};
 		Buffer vertex_buffer_ {};
 
 		// Vertices shared by several triangles are stored only once
 		Buffer index_buffer_ {};
+
+		// Kept from the mesh, whose CPU copy is freed once it's uploaded
+		std::uint32_t index_count_ {};
 
 		// Read from the texture file, which can store its texels in any format
 		vk::Format texture_format_ {};

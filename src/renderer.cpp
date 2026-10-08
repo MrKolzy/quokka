@@ -4,6 +4,7 @@
 #include "quokka/device.hpp"
 #include "quokka/gpu_timer.hpp"
 #include "quokka/graphics_pipeline.hpp"
+#include "quokka/mesh.hpp"
 #include "quokka/one_time_commands.hpp"
 #include "quokka/particle_system.hpp"
 #include "quokka/swapchain.hpp"
@@ -242,9 +243,12 @@ namespace quokka
 		create_command_pool();
 		create_command_buffers();
 		create_secondary_command_buffers();
-		load_model();
-		create_vertex_buffer();
-		create_index_buffer();
+
+		// Only needed until it's uploaded, so the CPU copy is freed when the constructor ends
+		const Mesh mesh { load_model() };
+		create_vertex_buffer(mesh);
+		create_index_buffer(mesh);
+
 		create_texture_image();
 		create_texture_image_view();
 		create_texture_sampler();
@@ -420,30 +424,32 @@ namespace quokka
 		particle_command_buffers_ = logical_device.allocateCommandBuffers(particle_allocate_info);
 	}
 
-	void Renderer::load_model()
+	Mesh Renderer::load_model() const
 	{
 		// glTF uses y up like the world, so the vertices need no conversion
-		mesh_ = load_gltf(constants::model_path);
+		return load_gltf(constants::model_path);
 	}
 
-	void Renderer::create_vertex_buffer()
+	void Renderer::create_vertex_buffer(const Mesh& mesh)
 	{
 		vertex_buffer_ = create_device_local_buffer(
 			device_,
 			command_pool_,
-			std::as_bytes(std::span { mesh_.vertices }),
+			std::as_bytes(std::span { mesh.vertices }),
 			vk::BufferUsageFlagBits::eVertexBuffer
 		);
 	}
 
-	void Renderer::create_index_buffer()
+	void Renderer::create_index_buffer(const Mesh& mesh)
 	{
 		index_buffer_ = create_device_local_buffer(
 			device_,
 			command_pool_,
-			std::as_bytes(std::span { mesh_.indices }),
+			std::as_bytes(std::span { mesh.indices }),
 			vk::BufferUsageFlagBits::eIndexBuffer
 		);
+
+		index_count_ = static_cast<std::uint32_t>(mesh.indices.size());
 	}
 
 	void Renderer::create_texture_image()
@@ -1066,7 +1072,7 @@ namespace quokka
 		command_buffer.bindIndexBuffer(
 			*index_buffer_.handle,
 			0,
-			vk::IndexTypeValue<decltype(mesh_.indices)::value_type>::value
+			vk::IndexTypeValue<decltype(Mesh::indices)::value_type>::value
 		);
 
 		// Set 0, with no dynamic offsets
@@ -1079,7 +1085,6 @@ namespace quokka
 		);
 
 		const std::uint32_t end_object { first_object + object_count };
-		const auto index_count { static_cast<std::uint32_t>(mesh_.indices.size()) };
 
 		// The objects share the mesh, texture and camera, so only the model matrix changes
 		for (std::uint32_t object_index { first_object }; object_index < end_object; ++object_index)
@@ -1097,7 +1102,7 @@ namespace quokka
 			);
 
 			// Every index, 1 instance, starting at the first index, vertex and instance
-			command_buffer.drawIndexed(index_count, 1, 0, 0, 0);
+			command_buffer.drawIndexed(index_count_, 1, 0, 0, 0);
 		}
 
 		command_buffer.end();
