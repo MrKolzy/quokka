@@ -123,6 +123,7 @@ namespace quokka
 			table_row("Present mode", vk::to_string(swapchain_.present_mode()));
 			table_row("MSAA", msaa_text(swapchain_.sample_count()));
 			table_row(recording_threads_label, std::format("{}", constants::recording_thread_count));
+			table_row("Enemies", std::format("{}", constants::enemy_count));
 			ImGui::EndTable();
 		}
 

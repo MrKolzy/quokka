@@ -1,18 +1,10 @@
 #pragma once
 
-#include <glm/glm.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
 namespace quokka
 {
 	class Device;
-
-	struct ObjectConstants
-	{
-		// Must match ObjectConstants in shader.slang
-		// 64 bytes, well within the 128 bytes of push constants every GPU guarantees
-		glm::mat4 model;
-	};
 
 	class GraphicsPipeline
 	{

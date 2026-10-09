@@ -51,6 +51,13 @@ namespace quokka
 		// Two matrices and three groups of 16 bytes, so nothing was padded in between
 		static_assert(sizeof(FrameUniforms) == 2 * sizeof(glm::mat4) + 3 * 16);
 
+		struct InstanceData
+		{
+			// Must match InstanceData in shader.slang
+			// Storage buffers lay out a matrix without padding, the same as C++
+			glm::mat4 model;
+		};
+
 		struct Transform
 		{
 			glm::vec3 position { 0.0f, 0.0f, 0.0f };
@@ -72,9 +79,19 @@ namespace quokka
 			}
 		};
 
-		constexpr std::uint32_t grid_object_count {
-			constants::object_grid_side * constants::object_grid_side
-		};
+		// The smallest side whose square holds the count, so the last row may be incomplete
+		[[nodiscard]] constexpr std::uint32_t square_side(std::uint32_t count) noexcept
+		{
+			std::uint32_t side { 1 };
+			while (side * side < count)
+			{
+				++side;
+			}
+
+			return side;
+		}
+
+		constexpr std::uint32_t grid_side { square_side(constants::enemy_count) };
 
 		// Between the centers of neighboring copies, a bit more than the width of the model
 		constexpr float object_spacing { 2.0f };
@@ -85,11 +102,9 @@ namespace quokka
 		// A square grid on the ground centered at the origin, each copy turned differently
 		[[nodiscard]] constexpr Transform object_transform(std::uint32_t object_index) noexcept
 		{
-			const std::uint32_t row { object_index / constants::object_grid_side };
-			const std::uint32_t column { object_index % constants::object_grid_side };
-			const float grid_offset {
-				static_cast<float>(constants::object_grid_side - 1) * object_spacing / 2.0f
-			};
+			const std::uint32_t row { object_index / grid_side };
+			const std::uint32_t column { object_index % grid_side };
+			const float grid_offset { static_cast<float>(grid_side - 1) * object_spacing / 2.0f };
 			const float x { static_cast<float>(column) * object_spacing - grid_offset };
 			const float z { static_cast<float>(row) * object_spacing - grid_offset };
 			const float yaw { model_yaw + static_cast<float>(object_index) * glm::radians(40.0f) };
@@ -265,6 +280,7 @@ namespace quokka
 		const Mesh mesh { load_model() };
 		create_vertex_buffer(mesh);
 		create_index_buffer(mesh);
+		create_instance_buffer();
 
 		create_texture_image();
 		create_texture_image_view();
@@ -382,9 +398,7 @@ namespace quokka
 	Camera Renderer::initial_camera() noexcept
 	{
 		// Back and above the grid, far enough to see all of it, whatever its size
-		constexpr float grid_size {
-			static_cast<float>(constants::object_grid_side) * object_spacing
-		};
+		constexpr float grid_size { static_cast<float>(grid_side) * object_spacing };
 		constexpr glm::vec3 camera_position {
 			0.0f, grid_size * 0.7f + 1.0f, grid_size * 1.3f + 2.0f
 		};
@@ -473,6 +487,25 @@ namespace quokka
 		);
 
 		index_count_ = static_cast<std::uint32_t>(mesh.indices.size());
+	}
+
+	void Renderer::create_instance_buffer()
+	{
+		std::vector<InstanceData> instances {};
+		instances.reserve(constants::enemy_count);
+
+		for (std::uint32_t index { 0 }; index < constants::enemy_count; ++index)
+		{
+			instances.push_back({ .model { object_transform(index).model_matrix() } });
+		}
+
+		// Uploaded once, since the enemies don't move yet
+		instance_buffer_ = create_device_local_buffer(
+			device_,
+			command_pool_,
+			std::as_bytes(std::span { instances }),
+			vk::BufferUsageFlagBits::eStorageBuffer
+		);
 	}
 
 	void Renderer::create_texture_image()
@@ -709,7 +742,7 @@ namespace quokka
 
 	void Renderer::create_descriptor_pool()
 	{
-		// One uniform buffer and one texture descriptor per frame in flight
+		// One uniform buffer, texture and storage buffer descriptor per frame in flight
 		constexpr std::array pool_sizes {
 			vk::DescriptorPoolSize {
 				.type { vk::DescriptorType::eUniformBuffer },
@@ -717,6 +750,10 @@ namespace quokka
 			},
 			vk::DescriptorPoolSize {
 				.type { vk::DescriptorType::eCombinedImageSampler },
+				.descriptorCount { constants::max_frames_in_flight }
+			},
+			vk::DescriptorPoolSize {
+				.type { vk::DescriptorType::eStorageBuffer },
 				.descriptorCount { constants::max_frames_in_flight }
 			}
 		};
@@ -757,6 +794,14 @@ namespace quokka
 			.imageLayout { vk::ImageLayout::eShaderReadOnlyOptimal }
 		};
 
+		// Also the same for every frame, since the enemies don't move yet
+		const vk::DescriptorBufferInfo instance_buffer_info {
+			.buffer { *instance_buffer_.handle },
+			.offset { 0 },
+			// The whole buffer, however many enemies it holds
+			.range { vk::WholeSize }
+		};
+
 		for (std::uint32_t index { 0 }; index < constants::max_frames_in_flight; ++index)
 		{
 			const vk::DescriptorBufferInfo buffer_info {
@@ -786,7 +831,17 @@ namespace quokka
 				.pImageInfo { &image_info }
 			};
 
-			const std::array descriptor_writes { frame_write, texture_write };
+			const vk::WriteDescriptorSet instance_write {
+				.dstSet { *descriptor_sets_[index] },
+				// Must match instance_binding in graphics_pipeline.cpp
+				.dstBinding { 2 },
+				.dstArrayElement { 0 },
+				.descriptorCount { 1 },
+				.descriptorType { vk::DescriptorType::eStorageBuffer },
+				.pBufferInfo { &instance_buffer_info }
+			};
+
+			const std::array descriptor_writes { frame_write, texture_write, instance_write };
 
 			// No copies from other descriptor sets
 			device_.logical_device().updateDescriptorSets(descriptor_writes, {});
@@ -956,10 +1011,10 @@ namespace quokka
 		{
 			// Contiguous shares, as even as possible
 			const std::uint32_t first_object {
-				grid_object_count * thread_index / constants::recording_thread_count
+				constants::enemy_count * thread_index / constants::recording_thread_count
 			};
 			const std::uint32_t end_object {
-				grid_object_count * (thread_index + 1) / constants::recording_thread_count
+				constants::enemy_count * (thread_index + 1) / constants::recording_thread_count
 			};
 
 			record_object_draws(
@@ -1119,24 +1174,9 @@ namespace quokka
 			{}
 		);
 
-		const std::uint32_t end_object { first_object + object_count };
-
-		// The objects share the mesh, texture and camera, so only the model matrix changes
-		for (std::uint32_t object_index { first_object }; object_index < end_object; ++object_index)
-		{
-			const ObjectConstants object_constants {
-				.model { object_transform(object_index).model_matrix() }
-			};
-			command_buffer.pushConstants<ObjectConstants>(
-				*graphics_pipeline_.pipeline_layout(),
-				vk::ShaderStageFlagBits::eVertex,
-				0,
-				object_constants
-			);
-
-			// Every index, 1 instance, starting at the first index, vertex and instance
-			command_buffer.drawIndexed(index_count_, 1, 0, 0, 0);
-		}
+		// One draw for the whole share, where each instance reads its own model matrix
+		// Every index, starting at the first index and vertex, and at the share's first instance
+		command_buffer.drawIndexed(index_count_, object_count, 0, 0, first_object);
 
 		command_buffer.end();
 	}

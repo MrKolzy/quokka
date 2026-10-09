@@ -20,14 +20,15 @@ struct FrameUniforms
 [[vk::binding(0, 0)]]
 ConstantBuffer<FrameUniforms> frame;
 
-// Must match ObjectConstants in graphics_pipeline.hpp, pushed before drawing each object
-struct ObjectConstants
+// Must match InstanceData in renderer.cpp
+struct InstanceData
 {
 	float4x4 model;
 };
 
-[[vk::push_constant]]
-ConstantBuffer<ObjectConstants> object_constants;
+// One per enemy, must match instance_binding in graphics_pipeline.cpp
+[[vk::binding(2, 0)]]
+StructuredBuffer<InstanceData> instances;
 
 // Image and sampler in one descriptor, must match texture_binding in graphics_pipeline.cpp
 [[vk::binding(1, 0)]]
@@ -49,10 +50,14 @@ struct VertexOutput
 	float2 texture_coordinates;
 };
 
+// SV_VulkanInstanceID includes the first instance of the draw, unlike SV_InstanceID,
+// which matters because each recording thread draws its own range of instances
 [shader("vertex")]
-VertexOutput vert_main(VertexInput input)
+VertexOutput vert_main(VertexInput input, uint instance_index : SV_VulkanInstanceID)
 {
-	const float4 world_position = mul(object_constants.model, float4(input.position, 1.0));
+	const float4x4 model = instances[instance_index].model;
+
+	const float4 world_position = mul(model, float4(input.position, 1.0));
 	const float4 view_position = mul(frame.view, world_position);
 
 	VertexOutput output;
@@ -60,7 +65,7 @@ VertexOutput vert_main(VertexInput input)
 	output.world_position = world_position.xyz;
 
 	// In world space, w is 0 so the translation is skipped, enough while the scale is uniform
-	output.normal = mul(object_constants.model, float4(input.normal, 0.0)).xyz;
+	output.normal = mul(model, float4(input.normal, 0.0)).xyz;
 
 	output.texture_coordinates = input.texture_coordinates;
 

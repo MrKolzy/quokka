@@ -33,7 +33,15 @@ namespace quokka
 				.stageFlags { vk::ShaderStageFlagBits::eFragment }
 			};
 
-			constexpr std::array bindings { frame_binding, texture_binding };
+			// Must match instances in shader.slang
+			constexpr vk::DescriptorSetLayoutBinding instance_binding {
+				.binding { 2 },
+				.descriptorType { vk::DescriptorType::eStorageBuffer },
+				.descriptorCount { 1 },
+				.stageFlags { vk::ShaderStageFlagBits::eVertex }
+			};
+
+			constexpr std::array bindings { frame_binding, texture_binding, instance_binding };
 
 			const vk::DescriptorSetLayoutCreateInfo create_info {
 				.bindingCount { static_cast<std::uint32_t>(bindings.size()) },
@@ -47,19 +55,10 @@ namespace quokka
 			const vk::raii::Device& device,
 			const vk::raii::DescriptorSetLayout& descriptor_set_layout)
 		{
-			// Pushed before each draw, so more objects need no extra buffers or descriptor sets
-			constexpr vk::PushConstantRange object_constants_range {
-				.stageFlags { vk::ShaderStageFlagBits::eVertex },
-				.offset { 0 },
-				.size { sizeof(ObjectConstants) }
-			};
-
-			// A single descriptor set, set 0 in the shader
+			// A single descriptor set, set 0 in the shader, and no push constants
 			const vk::PipelineLayoutCreateInfo pipeline_layout_info {
 				.setLayoutCount { 1 },
-				.pSetLayouts { &*descriptor_set_layout },
-				.pushConstantRangeCount { 1 },
-				.pPushConstantRanges { &object_constants_range }
+				.pSetLayouts { &*descriptor_set_layout }
 			};
 
 			return device.createPipelineLayout(pipeline_layout_info);

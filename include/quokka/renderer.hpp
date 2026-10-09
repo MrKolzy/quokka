@@ -50,6 +50,7 @@ namespace quokka
 		[[nodiscard]] Mesh load_model() const;
 		void create_vertex_buffer(const Mesh& mesh);
 		void create_index_buffer(const Mesh& mesh);
+		void create_instance_buffer();
 		void create_texture_image();
 		void create_texture_image_view();
 		void create_texture_sampler();
@@ -103,6 +104,9 @@ namespace quokka
 
 		// Kept from the mesh, whose CPU copy is freed once it's uploaded
 		std::uint32_t index_count_ {};
+
+		// The model matrix of every enemy, read by the vertex shader at its instance index
+		Buffer instance_buffer_ {};
 
 		// Read from the texture file, which can store its texels in any format
 		vk::Format texture_format_ {};

@@ -42,9 +42,9 @@ namespace quokka::constants
 	inline constexpr std::uint32_t max_frames_in_flight { 2 };
 	static_assert(max_frames_in_flight > 0);
 
-	// Model copies per side of the grid, raised to stress draw recording
-	inline constexpr std::uint32_t object_grid_side { 1 };
-	static_assert(object_grid_side > 0);
+	// Placeholder enemies, drawn with instancing in a square grid until they can move
+	inline constexpr std::uint32_t enemy_count { 1000 };
+	static_assert(enemy_count > 0);
 
 	// Threads that record the draws in parallel, 1 to compare against a single thread
 	inline constexpr std::uint32_t recording_thread_count { 4 };
