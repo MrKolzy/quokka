@@ -10,6 +10,8 @@
   (only the `tiny_gltf.h` and `json.hpp` headers)
 - [KTX-Software](https://github.com/KhronosGroup/KTX-Software/releases) 4.4.2
   with the **Development** component
+- [Dear ImGui](https://github.com/ocornut/imgui/releases) 1.92.9b
+  (the source code, compiled through `src/dear_imgui.cpp`)
 
 ## Setup
 
@@ -28,11 +30,11 @@ Add the files in the `src`, `include/quokka` and `shaders` folders with **Add > 
 In the project **Properties**, set **Configuration** to `All Configurations`
 and **Platform** to `x64`. When adding values, keep the inherited ones.
 
-`<GLFW>`, `<tinygltf>` and `<KTX>` are your local folders.
+`<GLFW>`, `<tinygltf>`, `<KTX>` and `<ImGui>` are your local folders.
 
 | Property | Value |
 |---|---|
-| C/C++ > General > Additional Include Directories | `$(ProjectDir)include`<br>`$(VULKAN_SDK)\Include`<br>`<GLFW>\include`<br>`<tinygltf>`<br>`<KTX>\include` |
+| C/C++ > General > Additional Include Directories | `$(ProjectDir)include`<br>`$(VULKAN_SDK)\Include`<br>`<GLFW>\include`<br>`<tinygltf>`<br>`<KTX>\include`<br>`<ImGui>`<br>`<ImGui>\backends` |
 | C/C++ > General > Warning Level | `Level4 (/W4)` |
 | C/C++ > General > Treat Warnings As Errors | `Yes (/WX)` |
 | C/C++ > General > Multi-processor Compilation | `Yes (/MP)` |
@@ -44,8 +46,8 @@ and **Platform** to `x64`. When adding values, keep the inherited ones.
 | C/C++ > External Includes > External Header Warning Level | `Level3 (/external:W3)` |
 | C/C++ > Advanced > Forced Include File | `pch.hpp` |
 | C/C++ > Command Line > Additional Options | `/w44365` |
-| Linker > General > Additional Library Directories | `<GLFW>\lib-vc2026`<br>`<KTX>\lib` |
-| Linker > Input > Additional Dependencies | `glfw3dll.lib`<br>`ktx.lib` |
+| Linker > General > Additional Library Directories | `<GLFW>\lib-vc2026`<br>`<KTX>\lib`<br>`$(VULKAN_SDK)\Lib` |
+| Linker > Input > Additional Dependencies | `glfw3dll.lib`<br>`ktx.lib`<br>`vulkan-1.lib` |
 
 In the properties of `src/pch.cpp`,
 set **C/C++ > Precompiled Headers > Precompiled Header** to `Create (/Yc)`

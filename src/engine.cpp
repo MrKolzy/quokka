@@ -2,6 +2,8 @@
 
 #include "quokka/constants.hpp"
 
+#include <imgui.h>
+
 #include <chrono> // std::chrono::duration, std::chrono::steady_clock
 #include <format> // std::format
 
@@ -33,6 +35,17 @@ namespace quokka
 		while (!window_.should_close())
 		{
 			window_.poll_events();
+
+			// Every ImGui call between the two adds to this frame's interface
+			gui_.begin_frame();
+
+			if (gui_.is_visible())
+			{
+				// Temporary, to check the integration until the stats overlay replaces it
+				ImGui::ShowDemoWindow();
+			}
+
+			gui_.end_frame();
 
 			const auto frame_time { std::chrono::steady_clock::now() };
 
@@ -68,7 +81,8 @@ namespace quokka
 	void Engine::update_camera(float delta_seconds) noexcept
 	{
 		// Held to look around like in the Unity, Unreal and Godot editors, so the cursor is free
-		const bool is_looking { window_.is_right_mouse_button_pressed() };
+		// Pressed over the interface it's for the interface, while looking ImGui ignores the mouse
+		const bool is_looking { window_.is_right_mouse_button_pressed() && !gui_.wants_mouse() };
 		if (is_looking != window_.is_cursor_captured())
 		{
 			// This frame's offset was measured before the change, so it's skipped
@@ -83,6 +97,12 @@ namespace quokka
 				cursor_offset.x * mouse_sensitivity,
 				-cursor_offset.y * mouse_sensitivity
 			);
+		}
+
+		// Typing into the interface mustn't move the camera
+		if (gui_.wants_keyboard())
+		{
+			return;
 		}
 
 		// Relative to the view, as move expects

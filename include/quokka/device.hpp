@@ -20,6 +20,7 @@ namespace quokka
 		Device(Device&&) = delete;
 		Device& operator=(Device&&) = delete;
 
+		[[nodiscard]] const vk::raii::Instance& instance() const noexcept;
 		[[nodiscard]] const vk::raii::SurfaceKHR& surface() const noexcept;
 		[[nodiscard]] const vk::raii::PhysicalDevice& physical_device() const noexcept;
 		[[nodiscard]] std::uint32_t queue_family_index() const noexcept;

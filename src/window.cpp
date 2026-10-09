@@ -91,6 +91,11 @@ namespace quokka
 		glfwTerminate();
 	}
 
+	GLFWwindow* Window::handle() const noexcept
+	{
+		return handle_;
+	}
+
 	vk::Extent2D Window::framebuffer_extent() const noexcept
 	{
 		int width {};

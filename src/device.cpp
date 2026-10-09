@@ -367,6 +367,11 @@ namespace quokka
 	{
 	}
 
+	const vk::raii::Instance& Device::instance() const noexcept
+	{
+		return instance_;
+	}
+
 	const vk::raii::SurfaceKHR& Device::surface() const noexcept
 	{
 		return surface_;

@@ -5,6 +5,7 @@
 #include "quokka/frame_timer.hpp"
 #include "quokka/gpu_timer.hpp"
 #include "quokka/graphics_pipeline.hpp"
+#include "quokka/gui.hpp"
 #include "quokka/renderer.hpp"
 #include "quokka/swapchain.hpp"
 #include "quokka/window.hpp"
@@ -40,7 +41,8 @@ namespace quokka
 			swapchain_.depth_format(), swapchain_.sample_count()
 		};
 		GpuTimer gpu_timer_ { device_ };
-		Renderer renderer_ { device_, swapchain_, graphics_pipeline_, gpu_timer_ };
+		Gui gui_ { window_, device_, swapchain_.surface_format().format };
+		Renderer renderer_ { device_, swapchain_, graphics_pipeline_, gpu_timer_, gui_ };
 
 		Camera camera_ { Renderer::initial_camera() };
 

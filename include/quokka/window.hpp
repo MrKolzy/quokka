@@ -33,6 +33,9 @@ namespace quokka
 		Window(Window&&) = delete;
 		Window& operator=(Window&&) = delete;
 
+		// Only for libraries that work with GLFW directly, such as the ImGui backend
+		[[nodiscard]] GLFWwindow* handle() const noexcept;
+
 		// In pixels, and 0x0 while minimized
 		[[nodiscard]] vk::Extent2D framebuffer_extent() const noexcept;
 

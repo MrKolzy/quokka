@@ -15,6 +15,7 @@ namespace quokka
 	class Device;
 	class GpuTimer;
 	class GraphicsPipeline;
+	class Gui;
 	struct Mesh;
 	class Swapchain;
 
@@ -25,7 +26,8 @@ namespace quokka
 			const Device& device,
 			const Swapchain& swapchain,
 			const GraphicsPipeline& graphics_pipeline,
-			GpuTimer& gpu_timer);
+			GpuTimer& gpu_timer,
+			const Gui& gui);
 		~Renderer();
 
 		// recording_threads_ can't be copied or moved, so neither can it
@@ -60,6 +62,9 @@ namespace quokka
 			const vk::raii::CommandBuffer& command_buffer,
 			const vk::raii::DescriptorSet& descriptor_set,
 			std::uint32_t image_index);
+		void record_gui(
+			const vk::raii::CommandBuffer& command_buffer,
+			std::uint32_t image_index) const;
 
 		// Called from several recording threads at once, so they must only read shared state
 		void begin_secondary_command_buffer(const vk::raii::CommandBuffer& command_buffer) const;
@@ -73,6 +78,7 @@ namespace quokka
 		const Swapchain& swapchain_;
 		const GraphicsPipeline& graphics_pipeline_;
 		GpuTimer& gpu_timer_;
+		const Gui& gui_;
 
 		// Each one is destroyed before the object it came from, so don't reorder
 		vk::raii::CommandPool command_pool_ { nullptr };

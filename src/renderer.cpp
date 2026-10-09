@@ -5,6 +5,7 @@
 #include "quokka/device.hpp"
 #include "quokka/gpu_timer.hpp"
 #include "quokka/graphics_pipeline.hpp"
+#include "quokka/gui.hpp"
 #include "quokka/mesh.hpp"
 #include "quokka/one_time_commands.hpp"
 #include "quokka/swapchain.hpp"
@@ -237,11 +238,13 @@ namespace quokka
 		const Device& device,
 		const Swapchain& swapchain,
 		const GraphicsPipeline& graphics_pipeline,
-		GpuTimer& gpu_timer)
+		GpuTimer& gpu_timer,
+		const Gui& gui)
 		: device_ { device }
 		, swapchain_ { swapchain }
 		, graphics_pipeline_ { graphics_pipeline }
 		, gpu_timer_ { gpu_timer }
+		, gui_ { gui }
 		, recording_threads_ { constants::recording_thread_count }
 	{
 		create_command_pool();
@@ -960,6 +963,8 @@ namespace quokka
 
 		command_buffer.endRendering();
 
+		record_gui(command_buffer, image_index);
+
 		// Wait for every color write to finish before the presentation engine reads the image
 		transition_image_layout(
 			command_buffer,
@@ -976,6 +981,51 @@ namespace quokka
 		gpu_timer_.record_timestamp(command_buffer, frame_index_, GpuTimestamp::frame_end);
 
 		command_buffer.end();
+	}
+
+	void Renderer::record_gui(
+		const vk::raii::CommandBuffer& command_buffer,
+		std::uint32_t image_index) const
+	{
+		// Hidden, so the frame is the same as without an interface, which benchmarks need
+		if (!gui_.is_visible())
+		{
+			return;
+		}
+
+		// Drawn over the finished scene, so it waits for its color writes, the MSAA resolve too
+		// The layout stays the same, so this barrier only orders the writes
+		transition_image_layout(
+			command_buffer,
+			swapchain_.image(image_index),
+			full_subresource_range(vk::ImageAspectFlagBits::eColor),
+			vk::ImageLayout::eColorAttachmentOptimal,
+			vk::ImageLayout::eColorAttachmentOptimal,
+			vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+			vk::AccessFlagBits2::eColorAttachmentWrite,
+			vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+			vk::AccessFlagBits2::eColorAttachmentRead | vk::AccessFlagBits2::eColorAttachmentWrite
+		);
+
+		// Loaded instead of cleared, so the scene stays under the interface
+		const vk::RenderingAttachmentInfo color_attachment_info {
+			.imageView { *swapchain_.image_view(image_index) },
+			.imageLayout { vk::ImageLayout::eColorAttachmentOptimal },
+			.loadOp { vk::AttachmentLoadOp::eLoad },
+			.storeOp { vk::AttachmentStoreOp::eStore }
+		};
+
+		// One sample and no depth, since the interface is flat and always on top
+		const vk::RenderingInfo rendering_info {
+			.renderArea { full_area(swapchain_.extent()) },
+			.layerCount { 1 },
+			.colorAttachmentCount { 1 },
+			.pColorAttachments { &color_attachment_info }
+		};
+
+		command_buffer.beginRendering(rendering_info);
+		gui_.record(command_buffer);
+		command_buffer.endRendering();
 	}
 
 	void Renderer::begin_secondary_command_buffer(
