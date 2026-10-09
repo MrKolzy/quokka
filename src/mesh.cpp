@@ -63,27 +63,34 @@ namespace quokka
 			}
 
 			const auto position_attribute { primitive.attributes.find("POSITION") };
+			const auto normal_attribute { primitive.attributes.find("NORMAL") };
 			const auto texture_coordinates_attribute { primitive.attributes.find("TEXCOORD_0") };
 			const bool has_required_attributes {
 				position_attribute != primitive.attributes.end() &&
+				normal_attribute != primitive.attributes.end() &&
 				texture_coordinates_attribute != primitive.attributes.end()
 			};
 			if (!has_required_attributes)
 			{
-				throw std::runtime_error("No positions or texture coordinates in the model file");
+				throw std::runtime_error(
+					"No positions, normals or texture coordinates in the model file");
 			}
 
 			const auto& position_accessor { at_index(model.accessors, position_attribute->second) };
+			const auto& normal_accessor { at_index(model.accessors, normal_attribute->second) };
 			const auto& texture_coordinates_accessor {
 				at_index(model.accessors, texture_coordinates_attribute->second)
 			};
 
-			// glTF only allows float positions, and texture coordinates are usually floats too
+			// Positions and normals are always floats in glTF, texture coordinates usually are too
 			const bool has_supported_attributes {
 				position_accessor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT &&
 				position_accessor.type == TINYGLTF_TYPE_VEC3 &&
+				normal_accessor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT &&
+				normal_accessor.type == TINYGLTF_TYPE_VEC3 &&
 				texture_coordinates_accessor.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT &&
 				texture_coordinates_accessor.type == TINYGLTF_TYPE_VEC2 &&
+				position_accessor.count == normal_accessor.count &&
 				position_accessor.count == texture_coordinates_accessor.count
 			};
 			if (!has_supported_attributes)
@@ -92,6 +99,7 @@ namespace quokka
 			}
 
 			const auto positions { accessor_data(model, position_accessor, sizeof(glm::vec3)) };
+			const auto normals { accessor_data(model, normal_accessor, sizeof(glm::vec3)) };
 			const auto texture_coordinates {
 				accessor_data(model, texture_coordinates_accessor, sizeof(glm::vec2))
 			};
@@ -107,6 +115,10 @@ namespace quokka
 					&vertex.position,
 					positions.first_element + index * positions.stride,
 					sizeof(vertex.position));
+				std::memcpy(
+					&vertex.normal,
+					normals.first_element + index * normals.stride,
+					sizeof(vertex.normal));
 				std::memcpy(
 					&vertex.texture_coordinates,
 					texture_coordinates.first_element + index * texture_coordinates.stride,

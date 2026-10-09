@@ -43,7 +43,7 @@ namespace quokka::constants
 	static_assert(max_frames_in_flight > 0);
 
 	// Model copies per side of the grid, raised to stress draw recording
-	inline constexpr std::uint32_t object_grid_side { 10 };
+	inline constexpr std::uint32_t object_grid_side { 1 };
 	static_assert(object_grid_side > 0);
 
 	// Threads that record the draws in parallel, 1 to compare against a single thread
