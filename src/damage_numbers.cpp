@@ -21,6 +21,22 @@ namespace quokka
 		constexpr std::uint32_t max_digits { 6 };
 		constexpr std::uint32_t vertices_per_number { max_digits * 6 };
 
+		// Must match label_length plus max_total_digits in damage_numbers.slang
+		constexpr std::uint32_t total_glyph_count { 24 };
+		constexpr std::uint32_t total_vertex_count { total_glyph_count * 6 };
+
+		// In seconds, must match total_hold_time and total_fade_time in damage_numbers.slang
+		constexpr float total_hold_time { 5.0f };
+		constexpr float total_fade_time { 1.5f };
+
+		struct TotalDamageConstants
+		{
+			// Must match TotalDamageConstants in damage_numbers.slang
+			std::uint32_t value;
+			std::uint32_t previous_value;
+			float last_hit_time;
+		};
+
 		// The stride of the shader's array, so the C++ struct must take the same space
 		static_assert(sizeof(DamageNumber) == 16);
 
@@ -31,9 +47,18 @@ namespace quokka
 			const vk::raii::Device& device,
 			const vk::raii::DescriptorSetLayout& descriptor_set_layout)
 		{
+			// Only the total reads them, pushed every frame it's drawn
+			constexpr vk::PushConstantRange constants_range {
+				.stageFlags { vk::ShaderStageFlagBits::eVertex },
+				.offset { 0 },
+				.size { sizeof(TotalDamageConstants) }
+			};
+
 			const vk::PipelineLayoutCreateInfo pipeline_layout_info {
 				.setLayoutCount { 1 },
-				.pSetLayouts { &*descriptor_set_layout }
+				.pSetLayouts { &*descriptor_set_layout },
+				.pushConstantRangeCount { 1 },
+				.pPushConstantRanges { &constants_range }
 			};
 
 			return device.createPipelineLayout(pipeline_layout_info);
@@ -42,7 +67,8 @@ namespace quokka
 		vk::raii::Pipeline create_pipeline(
 			const vk::raii::Device& device,
 			const vk::raii::PipelineLayout& pipeline_layout,
-			vk::Format color_format)
+			vk::Format color_format,
+			const char* vertex_entry_point)
 		{
 			const auto shader_code { read_shader_file(constants::damage_number_shader_path) };
 			const auto shader_module { create_shader_module(device, shader_code) };
@@ -52,7 +78,7 @@ namespace quokka
 				vk::PipelineShaderStageCreateInfo {
 					.stage { vk::ShaderStageFlagBits::eVertex },
 					.module { *shader_module },
-					.pName { "vert_main" }
+					.pName { vertex_entry_point }
 				},
 				vk::PipelineShaderStageCreateInfo {
 					.stage { vk::ShaderStageFlagBits::eFragment },
@@ -192,7 +218,13 @@ namespace quokka
 		const vk::raii::DescriptorSetLayout& descriptor_set_layout,
 		vk::Format color_format)
 		: pipeline_layout_ { create_pipeline_layout(device.logical_device(), descriptor_set_layout) }
-		, pipeline_ { create_pipeline(device.logical_device(), pipeline_layout_, color_format) }
+		, pipeline_ {
+			create_pipeline(device.logical_device(), pipeline_layout_, color_format, "vert_main")
+		}
+		, total_pipeline_ {
+			create_pipeline(
+				device.logical_device(), pipeline_layout_, color_format, "total_vert_main")
+		}
 		, ring_buffer_ { create_ring_buffer(device) }
 	{
 		// Host visible to map them, host coherent so the writes need no explicit flushes
@@ -223,6 +255,23 @@ namespace quokka
 
 	void DamageNumbers::spawn(const DamageNumber& number)
 	{
+		// The first number of a hit, since every number of a hit spawns at the same time
+		if (number.spawn_time > last_spawn_time_)
+		{
+			// Starts again from 0 once the last total has faded out
+			if (number.spawn_time - last_spawn_time_ >= total_hold_time + total_fade_time)
+			{
+				total_damage_ = 0;
+			}
+
+			previous_total_damage_ = total_damage_;
+		}
+
+		// Stops at the largest value instead of wrapping around to a small one
+		const std::uint32_t room_left { std::numeric_limits<std::uint32_t>::max() - total_damage_ };
+		total_damage_ += std::min(number.value, room_left);
+		last_spawn_time_ = std::max(last_spawn_time_, number.spawn_time);
+
 		// More would overwrite numbers spawned since the same upload
 		if (pending_numbers_.size() == capacity)
 		{
@@ -230,7 +279,6 @@ namespace quokka
 		}
 
 		pending_numbers_.push_back(number);
-		last_spawn_time_ = std::max(last_spawn_time_, number.spawn_time);
 	}
 
 	const Buffer& DamageNumbers::buffer() const noexcept
@@ -240,7 +288,8 @@ namespace quokka
 
 	bool DamageNumbers::has_visible_numbers(float time) const noexcept
 	{
-		return time - last_spawn_time_ < damage_number_lifetime;
+		// The total stays longer than any number
+		return time - last_spawn_time_ < total_hold_time + total_fade_time;
 	}
 
 	void DamageNumbers::record_upload(
@@ -308,10 +357,9 @@ namespace quokka
 	void DamageNumbers::record_draw(
 		const vk::raii::CommandBuffer& command_buffer,
 		const vk::raii::DescriptorSet& descriptor_set,
-		vk::Extent2D extent) const
+		vk::Extent2D extent,
+		float time) const
 	{
-		command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline_);
-
 		// Flipped like the scene's, so clip space y points up for the projection and the offsets
 		const vk::Viewport viewport {
 			.x { 0.0f },
@@ -325,7 +373,7 @@ namespace quokka
 		command_buffer.setViewport(0, viewport);
 		command_buffer.setScissor(0, vk::Rect2D { .offset { 0, 0 }, .extent { extent } });
 
-		// Set 0, with no dynamic offsets
+		// Set 0, with no dynamic offsets, kept for both draws since they share the layout
 		command_buffer.bindDescriptorSets(
 			vk::PipelineBindPoint::eGraphics,
 			*pipeline_layout_,
@@ -334,7 +382,31 @@ namespace quokka
 			{}
 		);
 
-		// Every slot of the ring, and the vertex shader drops expired numbers and unused digits
-		command_buffer.draw(vertices_per_number, capacity, 0, 0);
+		// Skipped once every number has expired, since the total stays on screen much longer
+		if (time - last_spawn_time_ < damage_number_lifetime)
+		{
+			command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline_);
+
+			// Every slot of the ring, and the vertex shader drops expired numbers and unused digits
+			command_buffer.draw(vertices_per_number, capacity, 0, 0);
+		}
+
+		const TotalDamageConstants total_constants {
+			.value { total_damage_ },
+			.previous_value { previous_total_damage_ },
+			.last_hit_time { last_spawn_time_ }
+		};
+
+		// Last, so the numbers never cover it
+		command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *total_pipeline_);
+		command_buffer.pushConstants<TotalDamageConstants>(
+			*pipeline_layout_,
+			vk::ShaderStageFlagBits::eVertex,
+			0,
+			total_constants
+		);
+
+		// Every glyph the line can have, and the vertex shader drops the unused ones
+		command_buffer.draw(total_vertex_count, 1, 0, 0);
 	}
 }

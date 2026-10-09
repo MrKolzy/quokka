@@ -19,6 +19,21 @@ StructuredBuffer<EnemyState> enemies;
 [[vk::binding(3, 0)]]
 StructuredBuffer<DamageNumber> damage_numbers;
 
+// Must match TotalDamageConstants in damage_numbers.cpp
+struct TotalDamageConstants
+{
+	uint value;
+
+	// What it counts up from after the last hit
+	uint previous_value;
+
+	// In seconds, on the same clock as the time in the frame uniforms
+	float last_hit_time;
+};
+
+[[vk::push_constant]]
+ConstantBuffer<TotalDamageConstants> total;
+
 // Above the enemy's head, since the viking room is about a unit tall
 static const float anchor_height = 1.2;
 
@@ -35,8 +50,23 @@ static const uint glyph_height = 7;
 static const uint cell_width = glyph_width + 2;
 static const uint cell_height = glyph_height + 2;
 
-// The digits 0 to 9, each as 7 rows from the top, with its leftmost pixel in the highest bit
-static const uint font_rows[70] = {
+// The digits are glyphs 0 to 9, followed by only the ones the total's label needs
+static const uint glyph_a = 10;
+static const uint glyph_d = 11;
+static const uint glyph_e = 12;
+static const uint glyph_g = 13;
+static const uint glyph_l = 14;
+static const uint glyph_m = 15;
+static const uint glyph_o = 16;
+static const uint glyph_t = 17;
+static const uint glyph_colon = 18;
+static const uint glyph_count = 19;
+
+// Not in the font, since its cell is left empty
+static const uint glyph_space = glyph_count;
+
+// Each glyph as 7 rows from the top, with its leftmost pixel in the highest bit
+static const uint font_rows[glyph_count * glyph_height] = {
 	0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E,
 	0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E,
 	0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F,
@@ -46,7 +76,16 @@ static const uint font_rows[70] = {
 	0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E,
 	0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08,
 	0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E,
-	0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C
+	0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C,
+	0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11,
+	0x1E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1E,
+	0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F,
+	0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0F,
+	0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F,
+	0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11,
+	0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E,
+	0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04,
+	0x00, 0x18, 0x18, 0x00, 0x18, 0x18, 0x00
 };
 
 // Screen pixels per font pixel, the same at any distance from the camera
@@ -61,6 +100,35 @@ static const float3 critical_color = float3(1.0, 0.75, 0.05);
 static const float rise_distance = 40.0;
 static const float max_drift = 15.0;
 
+// TOTAL DAMAGE, then a colon and a space before the digits
+static const uint label_length = 14;
+static const uint label_glyphs[label_length] = {
+	glyph_t, glyph_o, glyph_t, glyph_a, glyph_l, glyph_space,
+	glyph_d, glyph_a, glyph_m, glyph_a, glyph_g, glyph_e, glyph_colon, glyph_space
+};
+
+// Must match total_glyph_count in damage_numbers.cpp, so any uint fits
+static const uint max_total_digits = 10;
+
+// In seconds, must match total_hold_time and total_fade_time in damage_numbers.cpp
+// Fully visible until this long after the last hit, then it fades out
+static const float total_hold_time = 5.0;
+static const float total_fade_time = 1.5;
+
+// In seconds, how long it takes to count up to the value after a hit
+static const float count_up_time = 0.4;
+
+// Bigger than the damage numbers, and its top edge this many screen pixels below the screen's
+static const float total_pixel_scale = 3.0;
+static const float total_top_margin = 24.0;
+
+// In screen pixels, how far it rises while it fades out
+static const float total_rise_distance = 20.0;
+
+// The value takes the critical color, so it stands out from its label
+static const float3 label_color = normal_color;
+static const float3 total_color = critical_color;
+
 // The two triangles of a quad, from 0 to 1 with y up
 static const float2 quad_corners[6] = {
 	float2(0.0, 0.0), float2(1.0, 0.0), float2(0.0, 1.0),
@@ -74,10 +142,28 @@ struct VertexOutput
 	// From 0 to 1 across the cell, starting at its top left corner
 	float2 cell_coordinates;
 
-	// The same for the whole digit, so they aren't interpolated
-	nointerpolation uint digit;
+	// The same for the whole glyph, so they aren't interpolated
+	nointerpolation uint glyph;
 	nointerpolation float4 color;
 };
+
+// Outside the clip volume, so the triangles of hidden glyphs are dropped
+VertexOutput hidden_vertex()
+{
+	VertexOutput output;
+	output.position = float4(2.0, 2.0, 2.0, 1.0);
+	output.cell_coordinates = float2(0.0, 0.0);
+	output.glyph = 0;
+	output.color = float4(0.0, 0.0, 0.0, 0.0);
+
+	return output;
+}
+
+// Starts bigger and settles within the first tenth of a second
+float pop_scale(float age)
+{
+	return 1.0 + 0.6 * saturate(1.0 - age / 0.1);
+}
 
 uint digit_count(uint value)
 {
@@ -118,12 +204,7 @@ VertexOutput vert_main(
 	uint vertex_index : SV_VulkanVertexID,
 	uint instance_index : SV_VulkanInstanceID)
 {
-	// Outside the clip volume, so the triangles of hidden digits are dropped
-	VertexOutput output;
-	output.position = float4(2.0, 2.0, 2.0, 1.0);
-	output.cell_coordinates = float2(0.0, 0.0);
-	output.digit = 0;
-	output.color = float4(0.0, 0.0, 0.0, 0.0);
+	VertexOutput output = hidden_vertex();
 
 	const DamageNumber number = damage_numbers[instance_index];
 	const float age = frame.time - number.spawn_time;
@@ -151,9 +232,7 @@ VertexOutput vert_main(
 	const float life = age / lifetime;
 	const bool is_critical = number.is_critical != 0;
 
-	// Starts bigger and settles within the first tenth of a second
-	const float pop = 1.0 + 0.6 * saturate(1.0 - age / 0.1);
-	const float scale = pixel_scale * pop * (is_critical ? critical_scale : 1.0);
+	const float scale = pixel_scale * pop_scale(age) * (is_critical ? critical_scale : 1.0);
 
 	// Rises fast at first and slows down, and drifts sideways so overlapping numbers separate
 	const float rise = rise_distance * (1.0 - (1.0 - life) * (1.0 - life));
@@ -174,7 +253,7 @@ VertexOutput vert_main(
 	// The flipped viewport makes clip space y point up, the same as these offsets
 	output.position = float4(anchor.xy / anchor.w + offset * 2.0 / frame.viewport_size, 0.0, 1.0);
 	output.cell_coordinates = float2(corner.x, 1.0 - corner.y);
-	output.digit = (value / power_of_ten(count - 1 - digit_slot)) % 10;
+	output.glyph = (value / power_of_ten(count - 1 - digit_slot)) % 10;
 
 	// Fades out over the last 30 percent of its life
 	const float alpha = 1.0 - smoothstep(0.7, 1.0, life);
@@ -183,14 +262,81 @@ VertexOutput vert_main(
 	return output;
 }
 
-bool is_pixel_lit(uint digit, int x, int y)
+// The damage of every hit since it appeared, at the top of the screen with the same pop as
+// the damage numbers, and each group of 6 vertices is one glyph of its label or its value
+[shader("vertex")]
+VertexOutput total_vert_main(uint vertex_index : SV_VulkanVertexID)
+{
+	VertexOutput output = hidden_vertex();
+
+	// Every hit restarts the pop, the count up and the wait before fading out
+	const float idle_time = frame.time - total.last_hit_time;
+	if (idle_time < 0.0 || idle_time >= total_hold_time + total_fade_time)
+	{
+		return output;
+	}
+
+	// Counts fast at first and slows down as it reaches the value
+	const float progress = saturate(idle_time / count_up_time);
+	const float eased_progress = 1.0 - (1.0 - progress) * (1.0 - progress);
+	const uint value = total.previous_value +
+		uint(float(total.value - total.previous_value) * eased_progress);
+
+	const uint count = digit_count(value);
+	const uint line_length = label_length + count;
+	const uint glyph_slot = vertex_index / 6;
+
+	if (glyph_slot >= line_length)
+	{
+		return output;
+	}
+
+	const bool is_label = glyph_slot < label_length;
+	const uint glyph = is_label
+		? label_glyphs[glyph_slot]
+		: (value / power_of_ten(line_length - 1 - glyph_slot)) % 10;
+
+	if (glyph == glyph_space)
+	{
+		return output;
+	}
+
+	// From 0 to 1 while it fades out, and it rises at the same time like a damage number
+	const float fade = smoothstep(total_hold_time, total_hold_time + total_fade_time, idle_time);
+	const float scale = total_pixel_scale * pop_scale(idle_time);
+
+	// Laid out like a damage number, the whole line centered on its anchor
+	const float advance = float(glyph_width + 1);
+	const float line_width = advance * float(line_length) - 1.0;
+	const float2 cell_origin = float2(
+		advance * float(glyph_slot) - line_width / 2.0 - 1.0,
+		-float(cell_height) / 2.0);
+
+	const float2 corner = quad_corners[vertex_index % 6];
+	const float2 offset = (cell_origin + corner * float2(cell_width, cell_height)) * scale +
+		float2(0.0, total_rise_distance * fade);
+
+	// The center of the line without the pop, so it grows around that point
+	// The flipped viewport puts the top of the screen at clip space y 1
+	const float anchor_distance = total_top_margin + float(cell_height) * total_pixel_scale / 2.0;
+	const float2 anchor = float2(0.0, 1.0 - anchor_distance * 2.0 / frame.viewport_size.y);
+
+	output.position = float4(anchor + offset * 2.0 / frame.viewport_size, 0.0, 1.0);
+	output.cell_coordinates = float2(corner.x, 1.0 - corner.y);
+	output.glyph = glyph;
+	output.color = float4(is_label ? label_color : total_color, 1.0 - fade);
+
+	return output;
+}
+
+bool is_pixel_lit(uint glyph, int x, int y)
 {
 	if (x < 0 || y < 0 || x >= int(glyph_width) || y >= int(glyph_height))
 	{
 		return false;
 	}
 
-	const uint row = font_rows[digit * glyph_height + uint(y)];
+	const uint row = font_rows[glyph * glyph_height + uint(y)];
 
 	return ((row >> (glyph_width - 1 - uint(x))) & 1) != 0;
 }
@@ -203,7 +349,7 @@ float4 frag_main(VertexOutput input) : SV_Target
 	// The outline ring around the glyph is at -1 and at the glyph's width or height
 	const int2 pixel = int2(floor(input.cell_coordinates * float2(cell_width, cell_height))) - 1;
 
-	if (is_pixel_lit(input.digit, pixel.x, pixel.y))
+	if (is_pixel_lit(input.glyph, pixel.x, pixel.y))
 	{
 		return input.color;
 	}
@@ -212,7 +358,7 @@ float4 frag_main(VertexOutput input) : SV_Target
 	{
 		for (int x = -1; x <= 1; ++x)
 		{
-			if (is_pixel_lit(input.digit, pixel.x + x, pixel.y + y))
+			if (is_pixel_lit(input.glyph,pixel.x + x, pixel.y + y))
 			{
 				return float4(0.0, 0.0, 0.0, input.color.a);
 			}

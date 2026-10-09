@@ -43,12 +43,13 @@ namespace quokka
 		DamageNumbers& operator=(DamageNumbers&&) = delete;
 
 		// Shown from the next upload on, and once the ring is full the oldest ones are replaced
+		// Its value is added to the total even then
 		void spawn(const DamageNumber& number);
 
 		// The ring the vertex shader reads, for the descriptor sets
 		[[nodiscard]] const Buffer& buffer() const noexcept;
 
-		// Whether a number spawned recently enough to still be on screen at this time
+		// Whether a number or the total is still on screen at this time
 		[[nodiscard]] bool has_visible_numbers(float time) const noexcept;
 
 		// Outside a rendering, because it copies the numbers spawned since the last upload
@@ -58,14 +59,17 @@ namespace quokka
 		void record_draw(
 			const vk::raii::CommandBuffer& command_buffer,
 			const vk::raii::DescriptorSet& descriptor_set,
-			vk::Extent2D extent) const;
+			vk::Extent2D extent,
+			float time) const;
 
 		// Enough for a hit on 1000 enemies every frame for 16 frames in a row
 		static constexpr std::uint32_t capacity { 16384 };
 
 	private:
+		// Shared by the numbers and the total, which only differ in their vertex shader
 		vk::raii::PipelineLayout pipeline_layout_;
 		vk::raii::Pipeline pipeline_;
+		vk::raii::Pipeline total_pipeline_;
 
 		// Every number that may still be on screen, the GPU reads all of it
 		Buffer ring_buffer_;
@@ -81,5 +85,10 @@ namespace quokka
 		std::vector<DamageNumber> pending_numbers_ {};
 
 		float last_spawn_time_ { -std::numeric_limits<float>::infinity() };
+
+		// Of every number spawned since the total last appeared, and what it was before the
+		// latest hit, so the shader can count up from there
+		std::uint32_t total_damage_ {};
+		std::uint32_t previous_total_damage_ {};
 	};
 }

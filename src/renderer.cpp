@@ -1052,7 +1052,12 @@ namespace quokka
 
 		if (should_draw_damage_numbers)
 		{
-			damage_numbers_.record_draw(command_buffer, descriptor_set, swapchain_.extent());
+			damage_numbers_.record_draw(
+				command_buffer,
+				descriptor_set,
+				swapchain_.extent(),
+				time_seconds
+			);
 		}
 
 		// Last, so the interface stays on top of the damage numbers
