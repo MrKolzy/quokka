@@ -34,6 +34,11 @@ namespace quokka
 		pitch_ = std::atan2(direction.y, std::hypot(direction.x, direction.z));
 	}
 
+	glm::vec3 Camera::position() const noexcept
+	{
+		return position_;
+	}
+
 	glm::mat4 Camera::view_matrix() const noexcept
 	{
 		return glm::lookAt(position_, position_ + forward(), world_up);

@@ -32,9 +32,12 @@ namespace quokka
 		struct CameraUniforms
 		{
 			// Must match CameraUniforms in shader.slang
-			// Only 4x4 matrices, which already meet the 16-byte alignment uniform buffers require
+			// Each member is a multiple of 16 bytes, the alignment uniform buffers need
 			glm::mat4 view;
 			glm::mat4 projection;
+
+			// The w is unused, it's a vec4 so the size matches the shader without padding
+			glm::vec4 position;
 		};
 
 		struct Transform
@@ -800,7 +803,8 @@ namespace quokka
 
 		const CameraUniforms camera_uniforms {
 			.view { camera.view_matrix() },
-			.projection { camera.projection_matrix(aspect_ratio) }
+			.projection { camera.projection_matrix(aspect_ratio) },
+			.position { camera.position(), 1.0f }
 		};
 
 		std::memcpy(mapped_memory, &camera_uniforms, sizeof(camera_uniforms));

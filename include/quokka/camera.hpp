@@ -10,6 +10,7 @@ namespace quokka
 		// The target must not be straight above or below the position
 		Camera(const glm::vec3& position, const glm::vec3& target) noexcept;
 
+		[[nodiscard]] glm::vec3 position() const noexcept;
 		[[nodiscard]] glm::mat4 view_matrix() const noexcept;
 		[[nodiscard]] glm::mat4 projection_matrix(float aspect_ratio) const noexcept;
 
