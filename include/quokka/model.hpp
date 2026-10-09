@@ -24,6 +24,10 @@ namespace quokka
 
 		Image texture_image {};
 		vk::raii::ImageView texture_image_view { nullptr };
+
+		// Every clip baked for the model's skeleton, which the vertex shader skins it with
+		Buffer joint_matrix_buffer {};
+		Buffer clip_buffer {};
 	};
 
 	// Blocks until everything is uploaded, so it's meant for loading

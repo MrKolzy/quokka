@@ -73,9 +73,27 @@ namespace quokka
 				.stageFlags { vk::ShaderStageFlagBits::eFragment }
 			};
 
+			// Must match joint_matrices in shader.slang
+			constexpr vk::DescriptorSetLayoutBinding joint_matrix_binding {
+				.binding { 1 },
+				.descriptorType { vk::DescriptorType::eStorageBuffer },
+				.descriptorCount { 1 },
+				.stageFlags { vk::ShaderStageFlagBits::eVertex }
+			};
+
+			// Must match animation_clips in shader.slang
+			constexpr vk::DescriptorSetLayoutBinding clip_binding {
+				.binding { 2 },
+				.descriptorType { vk::DescriptorType::eStorageBuffer },
+				.descriptorCount { 1 },
+				.stageFlags { vk::ShaderStageFlagBits::eVertex }
+			};
+
+			constexpr std::array bindings { texture_binding, joint_matrix_binding, clip_binding };
+
 			const vk::DescriptorSetLayoutCreateInfo create_info {
-				.bindingCount { 1 },
-				.pBindings { &texture_binding }
+				.bindingCount { static_cast<std::uint32_t>(bindings.size()) },
+				.pBindings { bindings.data() }
 			};
 
 			return device.createDescriptorSetLayout(create_info);

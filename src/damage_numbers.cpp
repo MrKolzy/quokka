@@ -58,7 +58,7 @@ namespace quokka
 			// Spawned infinitely long ago, so their age is always past the lifetime
 			const std::vector<DamageNumber> expired_numbers(
 				DamageNumbers::capacity,
-				DamageNumber { .spawn_time { -std::numeric_limits<float>::infinity() } }
+				DamageNumber { .spawn_time { constants::long_ago } }
 			);
 
 			return create_device_local_buffer(

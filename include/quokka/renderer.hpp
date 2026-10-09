@@ -102,7 +102,8 @@ namespace quokka
 		void record_main_thread_draws(
 			const vk::raii::CommandBuffer& command_buffer,
 			const vk::raii::DescriptorSet& descriptor_set,
-			const Player& player) const;
+			const Player& player,
+			float time_seconds) const;
 
 		const Device& device_;
 		const Swapchain& swapchain_;

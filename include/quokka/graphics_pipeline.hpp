@@ -3,6 +3,8 @@
 #include <glm/glm.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
+#include <cstdint> // std::uint32_t
+
 namespace quokka
 {
 	class Device;
@@ -16,6 +18,10 @@ namespace quokka
 
 		// In seconds since the start, for the flash like EnemyState
 		float last_hit_time;
+
+		// An AnimationClip, and how far into it the player is, in seconds
+		std::uint32_t animation_clip;
+		float animation_time;
 	};
 
 	class GraphicsPipeline
@@ -38,7 +44,7 @@ namespace quokka
 		[[nodiscard]] const vk::raii::DescriptorSetLayout& frame_descriptor_set_layout()
 			const noexcept;
 
-		// Set 1, one per model, with its texture
+		// Set 1, one per model, with its texture and its animations
 		[[nodiscard]] const vk::raii::DescriptorSetLayout& material_descriptor_set_layout()
 			const noexcept;
 

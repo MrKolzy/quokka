@@ -36,12 +36,20 @@ namespace quokka::constants
 	inline constexpr const char* player_model_path { "models/knight.glb" };
 	inline constexpr const char* player_texture_path { "textures/knight.ktx2" };
 
+	// The KayKit rig both models share, whose files only lend their animations
+	inline constexpr const char* general_rig_path { "models/rig_medium_general.glb" };
+	inline constexpr const char* movement_rig_path { "models/rig_medium_movement_basic.glb" };
+
 	// Mailbox has low latency without tearing, Immediate tears but has no frame rate cap,
 	// which suits benchmarks, and Fifo is vertical sync, which saves power
 	inline constexpr vk::PresentModeKHR preferred_present_mode { vk::PresentModeKHR::eMailbox };
 
 	// Samples per pixel for MSAA, lowered if the GPU supports fewer, and 1 disables it
 	inline constexpr vk::SampleCountFlagBits max_sample_count { vk::SampleCountFlagBits::e4 };
+
+	// In seconds since the start, for what never happened, so every effect timed from it is over
+	// Finite, because shader math on infinities can turn into NaN once the driver optimizes it
+	inline constexpr float long_ago { -1.0e6f };
 
 	// Frames the CPU can record ahead of the GPU, more would only add latency
 	inline constexpr std::uint32_t max_frames_in_flight { 2 };

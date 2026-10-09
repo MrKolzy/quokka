@@ -71,6 +71,9 @@ static const float chase_speed = 3.0;
 static const float separation_speed = 4.0;
 static const float max_speed = 6.0;
 
+// In world units per second, below it an enemy counts as standing still
+static const float min_moving_speed = 0.8;
+
 // In world units, a bit past stop_distance, so the enemies that stopped next to the target
 // reach it, and only the first ring around it does, since the separation keeps the rest out
 static const float attack_range = 2.4;
@@ -141,7 +144,7 @@ void take_hit(inout EnemyState enemy, uint index, uint seed, float2 damage_range
 {
 	enemy.health -= float(roll_hit(index, seed, damage_range));
 	enemy.last_hit_time = simulation.time;
-	enemy.is_chasing = 1;
+	enemy.flags |= chasing_flag;
 }
 
 [shader("compute")]
@@ -211,18 +214,20 @@ void update_main(uint3 thread_id : SV_DispatchThreadID, uint3 local_id : SV_Grou
 
 	if (target_distance < aggro_radius)
 	{
-		enemy.is_chasing = 1;
+		enemy.flags |= chasing_flag;
 	}
+
+	const bool is_chasing = (enemy.flags & chasing_flag) != 0;
 
 	float2 velocity = push * separation_speed;
 
-	if (enemy.is_chasing != 0 && target_distance > stop_distance)
+	if (is_chasing && target_distance > stop_distance)
 	{
 		velocity += to_target / target_distance * chase_speed;
 	}
 
 	// Facing the target while chasing it, the same convention as rotate_around_up
-	if (enemy.is_chasing != 0 && target_distance > 1.0e-3)
+	if (is_chasing && target_distance > 1.0e-3)
 	{
 		enemy.yaw = atan2(to_target.x, to_target.y);
 	}
@@ -236,11 +241,17 @@ void update_main(uint3 thread_id : SV_DispatchThreadID, uint3 local_id : SV_Grou
 
 	enemy.position += velocity * simulation.delta_seconds;
 
-	const bool can_attack = simulation.is_target_alive != 0 && enemy.is_chasing != 0 &&
+	// Slower drifts from the crowd's pushing don't count, or standing enemies would shuffle
+	enemy.flags = length(velocity) > min_moving_speed
+		? enemy.flags | moving_flag
+		: enemy.flags & ~moving_flag;
+
+	const bool can_attack = simulation.is_target_alive != 0 && is_chasing &&
 		distance(enemy.position, simulation.target) < attack_range;
 	if (can_attack && simulation.time >= enemy.next_attack_time)
 	{
 		InterlockedAdd(combat[0].player_damage, attack_damage);
+		enemy.last_attack_time = simulation.time;
 
 		const float random = float(pcg_hash(index ^ asuint(simulation.time)) & 0xFFFF) / 65535.0;
 		enemy.next_attack_time = simulation.time + attack_interval +

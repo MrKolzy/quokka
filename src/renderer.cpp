@@ -348,7 +348,7 @@ namespace quokka
 	void Renderer::create_descriptor_pool()
 	{
 		// Per frame in flight, one uniform buffer and the enemy, damage number and combat storage
-		// buffers, and per model one texture
+		// buffers, and per model one texture and the joint matrix and clip storage buffers
 		constexpr std::uint32_t model_count { 2 };
 
 		constexpr std::array pool_sizes {
@@ -358,7 +358,7 @@ namespace quokka
 			},
 			vk::DescriptorPoolSize {
 				.type { vk::DescriptorType::eStorageBuffer },
-				.descriptorCount { 3 * constants::max_frames_in_flight }
+				.descriptorCount { 3 * constants::max_frames_in_flight + 2 * model_count }
 			},
 			vk::DescriptorPoolSize {
 				.type { vk::DescriptorType::eCombinedImageSampler },
@@ -501,8 +501,43 @@ namespace quokka
 			.pImageInfo { &image_info }
 		};
 
+		// Never written after loading, like the texture
+		const vk::DescriptorBufferInfo joint_matrix_info {
+			.buffer { *model.joint_matrix_buffer.handle },
+			.offset { 0 },
+			.range { vk::WholeSize }
+		};
+
+		const vk::DescriptorBufferInfo clip_info {
+			.buffer { *model.clip_buffer.handle },
+			.offset { 0 },
+			.range { vk::WholeSize }
+		};
+
+		const vk::WriteDescriptorSet joint_matrix_write {
+			.dstSet { *material_sets[0] },
+			// Must match joint_matrix_binding in graphics_pipeline.cpp
+			.dstBinding { 1 },
+			.dstArrayElement { 0 },
+			.descriptorCount { 1 },
+			.descriptorType { vk::DescriptorType::eStorageBuffer },
+			.pBufferInfo { &joint_matrix_info }
+		};
+
+		const vk::WriteDescriptorSet clip_write {
+			.dstSet { *material_sets[0] },
+			// Must match clip_binding in graphics_pipeline.cpp
+			.dstBinding { 2 },
+			.dstArrayElement { 0 },
+			.descriptorCount { 1 },
+			.descriptorType { vk::DescriptorType::eStorageBuffer },
+			.pBufferInfo { &clip_info }
+		};
+
+		const std::array descriptor_writes { texture_write, joint_matrix_write, clip_write };
+
 		// No copies from other descriptor sets
-		device_.logical_device().updateDescriptorSets(texture_write, {});
+		device_.logical_device().updateDescriptorSets(descriptor_writes, {});
 
 		return std::move(material_sets[0]);
 	}
@@ -700,7 +735,7 @@ namespace quokka
 		});
 
 		const auto& main_thread_command_buffer { main_thread_command_buffers_[frame_index_] };
-		record_main_thread_draws(main_thread_command_buffer, descriptor_set, player);
+		record_main_thread_draws(main_thread_command_buffer, descriptor_set, player, time_seconds);
 
 		// In the order of the threads, which is also the order of the objects, then the main
 		// thread's, so the ground comes last
@@ -862,7 +897,8 @@ namespace quokka
 	void Renderer::record_main_thread_draws(
 		const vk::raii::CommandBuffer& command_buffer,
 		const vk::raii::DescriptorSet& descriptor_set,
-		const Player& player) const
+		const Player& player,
+		float time_seconds) const
 	{
 		begin_secondary_command_buffer(command_buffer);
 
@@ -871,11 +907,15 @@ namespace quokka
 			*graphics_pipeline_.player_pipeline());
 		bind_model(command_buffer, descriptor_set, player_model_, player_material_set_);
 
+		const AnimationState animation { player.animation(time_seconds) };
+
 		// The ground also reads them, for the player's shadow
 		const PlayerConstants player_constants {
 			.position { player.position() },
 			.yaw { player.yaw() },
-			.last_hit_time { player.last_hit_time() }
+			.last_hit_time { player.last_hit_time() },
+			.animation_clip { static_cast<std::uint32_t>(animation.clip) },
+			.animation_time { animation.time }
 		};
 		command_buffer.pushConstants<PlayerConstants>(
 			*graphics_pipeline_.pipeline_layout(),

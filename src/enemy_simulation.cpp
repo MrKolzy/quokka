@@ -8,7 +8,6 @@
 #include <array> // std::array
 #include <cstddef> // offsetof
 #include <cstdint> // std::uint32_t
-#include <limits> // std::numeric_limits
 #include <span> // std::as_bytes, std::span
 #include <utility> // std::exchange, std::move
 #include <vector> // std::vector
@@ -110,13 +109,13 @@ namespace quokka
 						static_cast<float>(row) * grid_spacing - grid_offset
 					},
 					.yaw { static_cast<float>(index) * glm::radians(40.0f) },
-					.is_chasing { 0 },
+					.flags { 0 },
 					.health { enemy_health },
 					// Never hit, so there's no flash
-					.last_hit_time { -std::numeric_limits<float>::infinity() },
-					// Ready to attack as soon as the player is in reach
+					.last_hit_time { constants::long_ago },
+					// Ready to attack as soon as the player is in reach, and never attacked
 					.next_attack_time { 0.0f },
-					.padding { 0.0f }
+					.last_attack_time { constants::long_ago }
 				});
 			}
 
@@ -493,7 +492,7 @@ namespace quokka
 			.spawned_number_count { 0 },
 			.total_damage { 0 },
 			.previous_total_damage { 0 },
-			.last_total_hit_time { -std::numeric_limits<float>::infinity() }
+			.last_total_hit_time { constants::long_ago }
 		};
 
 		// Also a fill destination, which create_device_local_buffer allows for its upload,

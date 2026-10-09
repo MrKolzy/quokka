@@ -1,11 +1,11 @@
 #pragma once
 
 #include "quokka/buffer.hpp"
+#include "quokka/constants.hpp"
 
 #include <vulkan/vulkan_raii.hpp>
 
 #include <cstdint> // std::uint32_t
-#include <limits> // std::numeric_limits
 
 namespace quokka
 {
@@ -71,6 +71,6 @@ namespace quokka
 		// Every number that may still be on screen, the GPU reads all of it
 		Buffer ring_buffer_;
 
-		float last_cast_time_ { -std::numeric_limits<float>::infinity() };
+		float last_cast_time_ { constants::long_ago };
 	};
 }

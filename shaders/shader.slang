@@ -14,6 +14,40 @@ StructuredBuffer<CombatState> combat;
 [[vk::binding(0, 1)]]
 Sampler2D texture;
 
+// Every frame of every clip, a matrix per joint, must match joint_matrix_binding
+// in graphics_pipeline.cpp
+[[vk::binding(1, 1)]]
+StructuredBuffer<float4x4> joint_matrices;
+
+// Must match ClipInfo in animation.hpp
+struct ClipInfo
+{
+	// Where the clip's first frame starts among the joint matrices
+	uint first_matrix;
+	uint frame_count;
+	uint joint_count;
+
+	// In seconds
+	float duration;
+
+	// 0 or 1, the others hold their last frame once they end
+	uint is_looping;
+};
+
+// Indexed by the clip constants below, must match clip_binding in graphics_pipeline.cpp
+[[vk::binding(2, 1)]]
+StructuredBuffer<ClipInfo> animation_clips;
+
+// Must match AnimationClip in animation.hpp
+static const uint idle_clip = 0;
+static const uint walk_clip = 1;
+static const uint run_clip = 2;
+static const uint attack_clip = 3;
+static const uint death_clip = 4;
+
+// Must match animation_frame_rate in animation.hpp
+static const float animation_frame_rate = 30.0;
+
 // Must match PlayerConstants in graphics_pipeline.hpp
 struct PlayerConstants
 {
@@ -25,6 +59,10 @@ struct PlayerConstants
 
 	// In seconds since the start, for the flash like EnemyState
 	float last_hit_time;
+
+	// One of the clip constants, and how far into it the player is, in seconds
+	uint animation_clip;
+	float animation_time;
 };
 
 [[vk::push_constant]]
@@ -36,6 +74,8 @@ struct VertexInput
 	float3 position;
 	float3 normal;
 	float2 texture_coordinates;
+	uint4 joints;
+	float4 weights;
 };
 
 struct VertexOutput
@@ -56,11 +96,17 @@ static const float3 aim_color = float3(1.0, 0.55, 0.12);
 // In seconds, how long a hit turns an enemy white
 static const float hit_flash_duration = 0.12;
 
-// A dead enemy stays up for the delay, then sinks this deep in world units, deeper than it's
-// tall, so the ground drawn after it hides it
-static const float death_delay = 0.2;
+// A dead enemy plays its death and lies for the delay, then sinks this deep in world units,
+// deeper than it's tall, so the ground drawn after it hides it
+static const float death_delay = 1.5;
 static const float sink_duration = 1.2;
 static const float sink_depth = 3.0;
+
+// The enemies' attack swings faster than the clip, which is a throw
+static const float enemy_attack_speed = 1.5;
+
+// In seconds, spreads the enemies over each looping clip so a crowd doesn't move in step
+static const float max_animation_offset = 2.0;
 
 // The same rotation as glm::rotate around y, so a quarter turn takes +z to +x
 float3 rotate_around_up(float3 value, float angle)
@@ -71,11 +117,61 @@ float3 rotate_around_up(float3 value, float angle)
 	return float3(value.x * cosine + value.z * sine, value.y, value.z * cosine - value.x * sine);
 }
 
-// Turned to face along the yaw, then moved to its spot on the ground, or below it when sinking
-// glTF models face +z, which is yaw 0, so they need no extra turn
-VertexOutput place_on_ground(VertexInput input, float2 ground_position, float yaw, float height)
+// A joint's matrix in the clip, blended between the two frames around the time
+float4x4 joint_matrix(ClipInfo clip, uint joint, uint frame, uint next_frame, float blend)
 {
-	const float3 world_position = rotate_around_up(input.position, yaw) +
+	const float4x4 current = joint_matrices[clip.first_matrix + frame * clip.joint_count + joint];
+	const float4x4 next = joint_matrices[clip.first_matrix + next_frame * clip.joint_count + joint];
+
+	// Close frames barely differ, so blending the matrices directly looks right
+	return lerp(current, next, blend);
+}
+
+// The weighted sum of the matrices of the vertex's joints at this moment of the clip
+float4x4 skinning_matrix(VertexInput input, uint clip_index, float clip_time)
+{
+	const ClipInfo clip = animation_clips[clip_index];
+
+	// Looping clips wrap around, the others stop at their last frame
+	const float time = clip.is_looping != 0
+		? fmod(max(clip_time, 0.0), max(clip.duration, 1.0e-3))
+		: clamp(clip_time, 0.0, clip.duration);
+
+	const float frame_position = time * animation_frame_rate;
+	const uint frame = min(uint(frame_position), clip.frame_count - 1);
+	const uint next_frame = min(frame + 1, clip.frame_count - 1);
+	const float blend = frame_position - float(frame);
+
+	float4x4 skinning = float4x4(0.0);
+	for (uint influence = 0; influence < 4; ++influence)
+	{
+		const uint joint = input.joints[influence];
+		const float weight = input.weights[influence];
+		skinning += weight * joint_matrix(clip, joint, frame, next_frame, blend);
+	}
+
+	return skinning;
+}
+
+// Posed by the clip, turned to face along the yaw, then moved to its spot on the ground,
+// or below it when sinking
+// glTF models face +z, which is yaw 0, so they need no extra turn
+VertexOutput place_on_ground(
+	VertexInput input,
+	uint clip,
+	float clip_time,
+	float2 ground_position,
+	float yaw,
+	float height)
+{
+	const float4x4 skinning = skinning_matrix(input, clip, clip_time);
+	const float3 posed_position = mul(skinning, float4(input.position, 1.0)).xyz;
+
+	// The joints only rotate and move, so the normal needs no inverse transpose,
+	// but blending several of them can shorten it, which the fragment shader fixes
+	const float3 posed_normal = mul(skinning, float4(input.normal, 0.0)).xyz;
+
+	const float3 world_position = rotate_around_up(posed_position, yaw) +
 		float3(ground_position.x, height, ground_position.y);
 
 	const float4 view_position = mul(frame.view, float4(world_position, 1.0));
@@ -83,10 +179,7 @@ VertexOutput place_on_ground(VertexInput input, float2 ground_position, float ya
 	VertexOutput output;
 	output.position = mul(frame.projection, view_position);
 	output.world_position = world_position;
-
-	// Only rotated, so the normal stays unit length and needs no inverse transpose
-	output.normal = rotate_around_up(input.normal, yaw);
-
+	output.normal = rotate_around_up(posed_normal, yaw);
 	output.texture_coordinates = input.texture_coordinates;
 	output.hit_flash = 0.0;
 	output.target_highlight = 0.0;
@@ -102,14 +195,42 @@ VertexOutput enemy_vert_main(VertexInput input, uint instance_index : SV_VulkanI
 	const EnemyState enemy = enemies[instance_index];
 	const bool is_dead = enemy.health <= 0.0;
 
-	// Never hit is minus infinity, which saturates to no flash and no sinking
+	// Never hit is long ago, which saturates to no flash and no sinking
 	const float time_since_hit = frame.time - enemy.last_hit_time;
 	const float sink_amount = is_dead
 		? saturate((time_since_hit - death_delay) / sink_duration)
 		: 0.0;
 
+	// Dying, then attacking, then walking, then standing, each from the moment it started,
+	// and the looping ones offset differently for each enemy
+	const float time_since_attack = frame.time - enemy.last_attack_time;
+	const float attack_duration = animation_clips[attack_clip].duration / enemy_attack_speed;
+	const float offset = frac(float(instance_index) * 0.618034) * max_animation_offset;
+
+	uint clip = idle_clip;
+	float clip_time = frame.time + offset;
+	if (is_dead)
+	{
+		clip = death_clip;
+		clip_time = time_since_hit;
+	}
+	else if (time_since_attack < attack_duration)
+	{
+		clip = attack_clip;
+		clip_time = time_since_attack * enemy_attack_speed;
+	}
+	else if ((enemy.flags & moving_flag) != 0)
+	{
+		clip = walk_clip;
+	}
+
 	VertexOutput output = place_on_ground(
-		input, enemy.position, enemy.yaw, -sink_depth * sink_amount * sink_amount);
+		input,
+		clip,
+		clip_time,
+		enemy.position,
+		enemy.yaw,
+		-sink_depth * sink_amount * sink_amount);
 	output.hit_flash = saturate(1.0 - time_since_hit / hit_flash_duration);
 
 	// Everyone the blast would hit is selected, and the strike's target the most
@@ -131,7 +252,13 @@ VertexOutput enemy_vert_main(VertexInput input, uint instance_index : SV_VulkanI
 [shader("vertex")]
 VertexOutput player_vert_main(VertexInput input)
 {
-	VertexOutput output = place_on_ground(input, player.position, player.yaw, 0.0);
+	VertexOutput output = place_on_ground(
+		input,
+		player.animation_clip,
+		player.animation_time,
+		player.position,
+		player.yaw,
+		0.0);
 
 	// Weaker than an enemy's, since a surrounded player is hit several times a second
 	const float time_since_hit = frame.time - player.last_hit_time;
@@ -139,7 +266,6 @@ VertexOutput player_vert_main(VertexInput input)
 
 	return output;
 }
-
 // In world units, half the side of the ground square, which is centered below the camera
 static const float ground_half_size = 200.0;
 
@@ -239,7 +365,7 @@ float aim_marker_amount(float2 ground_position)
 // 1 on the shock wave's front and less inside it, all of it fading out as it spreads
 float shock_wave_amount(float2 ground_position)
 {
-	// Never cast is minus infinity, which is never this recent
+	// Never cast is long ago, which is never this recent
 	const float progress = (frame.time - frame.last_blast_time) / shock_wave_duration;
 	if (progress >= 1.0)
 	{

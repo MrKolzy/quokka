@@ -22,8 +22,8 @@ namespace quokka
 		// In radians around the world up axis, 0 faces +z and positive values turn toward +x
 		float yaw;
 
-		// 0 or 1, since a bool has no fixed size in a shader buffer
-		std::uint32_t is_chasing;
+		// Bits of chasing_flag and moving_flag in enemy.slang
+		std::uint32_t flags;
 
 		// Dead at 0 or below
 		float health;
@@ -31,11 +31,9 @@ namespace quokka
 		// In seconds since the start, and for dead enemies the moment they died
 		float last_hit_time;
 
-		// In seconds since the start, when it can attack the player again
+		// In seconds since the start, when it can attack the player again and when it last did
 		float next_attack_time;
-
-		// The shader's struct holds a float2, so its size is a multiple of 8
-		float padding;
+		float last_attack_time;
 	};
 
 	// The stride of the shader's array, so the C++ struct must take the same space

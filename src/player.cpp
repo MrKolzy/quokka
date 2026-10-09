@@ -23,6 +23,11 @@ namespace quokka
 		constexpr float regeneration_rate { 20.0f };
 		constexpr float regeneration_delay { 3.0f };
 
+		// The cast plays the attack clip, a throw, faster so it fits between quick strikes
+		// The clip is 1 second long, so it lasts 1 / speed seconds
+		constexpr float cast_animation_speed { 3.0f };
+		constexpr float cast_animation_duration { 1.0f / cast_animation_speed };
+
 		// Yaw 0 faces +z and positive values turn toward +x, so x goes first
 		[[nodiscard]] float yaw_toward(glm::vec2 direction) noexcept
 		{
@@ -56,6 +61,7 @@ namespace quokka
 	void Player::move(glm::vec2 direction, float delta_seconds) noexcept
 	{
 		position_ += direction * walk_speed * delta_seconds;
+		is_moving_ = direction != glm::vec2 { 0.0f };
 		face_aim_point();
 	}
 
@@ -74,6 +80,7 @@ namespace quokka
 		}
 
 		next_cast_time = time_seconds + ability_info(ability).cooldown;
+		last_cast_time_ = time_seconds;
 
 		if (ability == Ability::blast)
 		{
@@ -128,6 +135,11 @@ namespace quokka
 
 		health_ = std::max(health_ - damage, 0.0f);
 		last_hit_time_ = time_seconds;
+
+		if (is_dead())
+		{
+			death_time_ = time_seconds;
+		}
 	}
 
 	void Player::regenerate(float delta_seconds, float time_seconds) noexcept
@@ -138,6 +150,22 @@ namespace quokka
 		}
 
 		health_ = std::min(health_ + regeneration_rate * delta_seconds, max_health());
+	}
+
+	AnimationState Player::animation(float time_seconds) const noexcept
+	{
+		if (is_dead())
+		{
+			return { AnimationClip::death, time_seconds - death_time_ };
+		}
+
+		const float time_since_cast { time_seconds - last_cast_time_ };
+		if (time_since_cast < cast_animation_duration)
+		{
+			return { AnimationClip::attack, time_since_cast * cast_animation_speed };
+		}
+
+		return { is_moving_ ? AnimationClip::run : AnimationClip::idle, time_seconds };
 	}
 
 	void Player::face_aim_point() noexcept

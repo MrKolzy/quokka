@@ -141,9 +141,11 @@ namespace quokka
 		player_.regenerate(delta_seconds, time_seconds);
 
 		// The free camera takes the movement keys, typing into the interface mustn't move,
-		// and the dead don't walk
+		// and the dead don't walk, so the player stands still, which also stops its running
 		if (is_camera_free_ || gui_.wants_keyboard() || player_.is_dead())
 		{
+			player_.move(glm::vec2 { 0.0f }, delta_seconds);
+
 			return;
 		}
 

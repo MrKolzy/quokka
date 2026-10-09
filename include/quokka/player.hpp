@@ -1,15 +1,24 @@
 #pragma once
 
 #include "quokka/abilities.hpp"
+#include "quokka/animation.hpp"
+#include "quokka/constants.hpp"
 
 #include <glm/glm.hpp>
 
 #include <array> // std::array
 #include <cstddef> // std::size_t
-#include <limits> // std::numeric_limits
 
 namespace quokka
 {
+	struct AnimationState
+	{
+		AnimationClip clip;
+
+		// In seconds into the clip
+		float time;
+	};
+
 	class Player
 	{
 	public:
@@ -55,6 +64,10 @@ namespace quokka
 		// Heals over time, once a while has passed since the last hit
 		void regenerate(float delta_seconds, float time_seconds) noexcept;
 
+		// Dying, then casting, then running, then standing, each timed from when it started,
+		// with the time in seconds
+		[[nodiscard]] AnimationState animation(float time_seconds) const noexcept;
+
 	private:
 		void face_aim_point() noexcept;
 
@@ -66,12 +79,19 @@ namespace quokka
 		std::array<float, static_cast<std::size_t>(Ability::count)> next_cast_times_ {};
 
 		// Never cast yet, so there's no shock wave
-		float last_blast_time_ { -std::numeric_limits<float>::infinity() };
+		float last_blast_time_ { constants::long_ago };
 		glm::vec2 last_blast_point_ { 0.0f };
 
 		float health_ { max_health() };
 
 		// Never hit yet, so there's no flash and regeneration can start
-		float last_hit_time_ { -std::numeric_limits<float>::infinity() };
+		float last_hit_time_ { constants::long_ago };
+
+		// For the animation, in seconds since the start
+		float last_cast_time_ { constants::long_ago };
+		float death_time_ {};
+
+		// Whether the last move had a direction
+		bool is_moving_ { false };
 	};
 }

@@ -1,5 +1,6 @@
 #include "quokka/model.hpp"
 
+#include "quokka/animation.hpp"
 #include "quokka/barrier.hpp"
 #include "quokka/device.hpp"
 #include "quokka/mesh.hpp"
@@ -308,6 +309,7 @@ namespace quokka
 	{
 		// Only needed until it's uploaded, so the CPU copy is freed when this function returns
 		// glTF uses y up like the world, so the vertices need no conversion
+		// Its skeleton is also only needed to bake the animations
 		const Mesh mesh { load_gltf(model_path) };
 
 		Model model {};
@@ -339,6 +341,22 @@ namespace quokka
 			vk::ImageAspectFlagBits::eColor
 		);
 		model.texture_image = std::move(texture_image);
+
+		const BakedAnimations animations { bake_animations(mesh.skeleton) };
+
+		model.joint_matrix_buffer = create_device_local_buffer(
+			device,
+			command_pool,
+			std::as_bytes(std::span { animations.joint_matrices }),
+			vk::BufferUsageFlagBits::eStorageBuffer
+		);
+
+		model.clip_buffer = create_device_local_buffer(
+			device,
+			command_pool,
+			std::as_bytes(std::span { animations.clips }),
+			vk::BufferUsageFlagBits::eStorageBuffer
+		);
 
 		return model;
 	}

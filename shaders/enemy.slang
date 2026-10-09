@@ -9,8 +9,8 @@ struct EnemyState
 	// In radians around the world up axis, 0 faces +z and positive values turn toward +x
 	float yaw;
 
-	// 0 until the target comes close or hits it, then 1 for good, which is what pulling means
-	uint is_chasing;
+	// Bits of chasing_flag and moving_flag, since a bool has no fixed size in a shader buffer
+	uint flags;
 
 	// Dead at 0 or below, and dead enemies neither move nor push the others
 	float health;
@@ -18,9 +18,17 @@ struct EnemyState
 	// In seconds since the start, for the flash, and for dead enemies the moment they died
 	float last_hit_time;
 
-	// In seconds since the start, when it can attack the player again
+	// In seconds since the start, when it can attack the player again and when it last did,
+	// which starts its attack animation
 	float next_attack_time;
+	float last_attack_time;
 };
+
+// Set once the target comes close or hits it, and kept for good, which is what pulling means
+static const uint chasing_flag = 1;
+
+// Set while it walks, and cleared while it stands still, for its animation
+static const uint moving_flag = 2;
 
 // What every enemy starts with, must match enemy_health in enemy_simulation.cpp
 static const float enemy_max_health = 1000.0;
