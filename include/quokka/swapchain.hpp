@@ -30,6 +30,7 @@ namespace quokka
 		[[nodiscard]] const vk::raii::SwapchainKHR& handle() const noexcept;
 		[[nodiscard]] const vk::SurfaceFormatKHR& surface_format() const noexcept;
 		[[nodiscard]] vk::Extent2D extent() const noexcept;
+		[[nodiscard]] vk::PresentModeKHR present_mode() const noexcept;
 		[[nodiscard]] vk::SampleCountFlagBits sample_count() const noexcept;
 		[[nodiscard]] vk::Image image(std::uint32_t index) const noexcept;
 		[[nodiscard]] const vk::raii::ImageView& image_view(std::uint32_t index) const noexcept;
@@ -58,6 +59,9 @@ namespace quokka
 
 		vk::SurfaceFormatKHR surface_format_ {};
 		vk::Extent2D extent_ {};
+
+		// The preferred one if the surface supports it, otherwise Fifo
+		vk::PresentModeKHR present_mode_ {};
 
 		// Each one is destroyed before the object it came from, so don't reorder
 		vk::raii::SwapchainKHR swapchain_ { nullptr };

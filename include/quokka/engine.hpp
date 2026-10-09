@@ -7,6 +7,7 @@
 #include "quokka/graphics_pipeline.hpp"
 #include "quokka/gui.hpp"
 #include "quokka/renderer.hpp"
+#include "quokka/stats_overlay.hpp"
 #include "quokka/swapchain.hpp"
 #include "quokka/window.hpp"
 
@@ -47,6 +48,7 @@ namespace quokka
 		Camera camera_ { Renderer::initial_camera() };
 
 		FrameTimer frame_timer_ {};
+		StatsOverlay stats_overlay_ { device_, swapchain_ };
 
 		// The camera moves according to the time elapsed since then
 		std::chrono::steady_clock::time_point previous_frame_time_ {

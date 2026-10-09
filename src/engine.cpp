@@ -2,8 +2,6 @@
 
 #include "quokka/constants.hpp"
 
-#include <imgui.h>
-
 #include <chrono> // std::chrono::duration, std::chrono::steady_clock
 #include <format> // std::format
 
@@ -36,22 +34,23 @@ namespace quokka
 		{
 			window_.poll_events();
 
-			// Every ImGui call between the two adds to this frame's interface
-			gui_.begin_frame();
-
-			if (gui_.is_visible())
-			{
-				// Temporary, to check the integration until the stats overlay replaces it
-				ImGui::ShowDemoWindow();
-			}
-
-			gui_.end_frame();
-
 			const auto frame_time { std::chrono::steady_clock::now() };
 
 			// In seconds, as a float so the motion is smooth
 			const std::chrono::duration<float> delta_time { frame_time - previous_frame_time_ };
 			previous_frame_time_ = frame_time;
+
+			stats_overlay_.add_frame_time(delta_time);
+
+			// Every ImGui call between the two adds to this frame's interface
+			gui_.begin_frame();
+
+			if (gui_.is_visible())
+			{
+				stats_overlay_.show();
+			}
+
+			gui_.end_frame();
 
 			update_camera(delta_time.count());
 
@@ -63,16 +62,22 @@ namespace quokka
 				recreate_swapchain();
 			}
 
-			if constexpr (constants::should_show_frame_stats)
+			if (frame_timer_.tick())
 			{
-				if (frame_timer_.tick())
-				{
-					const auto gpu_times { gpu_timer_.take_average_times() };
+				const FrameAverages averages {
+					.fps { frame_timer_.average_fps() },
+					.frame_time_ms { frame_timer_.average_frame_time_ms() },
+					.gpu_time_ms { gpu_timer_.take_average_times().total_ms }
+				};
 
+				stats_overlay_.set_averages(averages);
+
+				if constexpr (constants::should_show_frame_stats)
+				{
 					window_.set_title(std::format(
 						"{} | {:.0f} FPS | {:.2f} ms | GPU {:.2f} ms",
-						constants::app_name, frame_timer_.average_fps(),
-						frame_timer_.average_frame_time_ms(), gpu_times.total_ms));
+						constants::app_name, averages.fps,
+						averages.frame_time_ms, averages.gpu_time_ms));
 				}
 			}
 		}

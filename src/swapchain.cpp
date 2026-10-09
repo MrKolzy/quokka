@@ -181,6 +181,11 @@ namespace quokka
 		return extent_;
 	}
 
+	vk::PresentModeKHR Swapchain::present_mode() const noexcept
+	{
+		return present_mode_;
+	}
+
 	vk::SampleCountFlagBits Swapchain::sample_count() const noexcept
 	{
 		return sample_count_;
@@ -238,7 +243,7 @@ namespace quokka
 
 		surface_format_ = choose_swapchain_surface_format(available_formats);
 		extent_ = choose_swapchain_extent(capabilities, window_.framebuffer_extent());
-		const auto present_mode { choose_swapchain_present_mode(available_present_modes) };
+		present_mode_ = choose_swapchain_present_mode(available_present_modes);
 		const auto min_image_count { choose_swapchain_min_image_count(capabilities) };
 
 		const vk::SwapchainCreateInfoKHR create_info {
@@ -255,7 +260,7 @@ namespace quokka
 			.imageSharingMode { vk::SharingMode::eExclusive },
 			.preTransform { capabilities.currentTransform },
 			.compositeAlpha { vk::CompositeAlphaFlagBitsKHR::eOpaque },
-			.presentMode { present_mode },
+			.presentMode { present_mode_ },
 			// Pixels hidden by other windows may be skipped
 			.clipped { vk::True },
 			// Not needed, because recreate destroys the old swapchain before creating this one
@@ -272,7 +277,7 @@ namespace quokka
 			std::println("[Quokka] Swapchain:");
 			std::println("\t- Format: {}", vk::to_string(surface_format_.format));
 			std::println("\t- Color space: {}", vk::to_string(surface_format_.colorSpace));
-			std::println("\t- Present mode: {}", vk::to_string(present_mode));
+			std::println("\t- Present mode: {}", vk::to_string(present_mode_));
 			std::println("\t- Extent: {}x{}", extent_.width, extent_.height);
 			std::println("\t- Images: {}", images_.size());
 			std::println("\t- Samples per pixel: {}", vk::to_string(sample_count_));
