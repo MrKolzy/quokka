@@ -168,7 +168,8 @@ namespace quokka
 			slowest_frame_ms * graph_headroom,
 			graph_size);
 
-		ImGui::TextDisabled("WASD walks, wheel zooms, Space hits, R resets");
+		ImGui::TextDisabled("WASD walks, the mouse aims, the wheel zooms");
+		ImGui::TextDisabled("Space hits, R resets");
 		ImGui::TextDisabled("F1 hides the interface, F2 frees the camera");
 	}
 }

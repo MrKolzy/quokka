@@ -39,7 +39,7 @@ namespace quokka
 		[[nodiscard]] const vk::raii::DescriptorSetLayout& material_descriptor_set_layout()
 			const noexcept;
 
-		// Shared by both pipelines, so the descriptor sets stay bound when switching between them
+		// Shared by every pipeline, so the descriptor sets stay bound when switching between them
 		[[nodiscard]] const vk::raii::PipelineLayout& pipeline_layout() const noexcept;
 
 		// The enemies are instances that read their state from the simulation's buffer
@@ -48,6 +48,9 @@ namespace quokka
 		// The player is a single draw whose state comes in PlayerConstants
 		[[nodiscard]] const vk::raii::Pipeline& player_pipeline() const noexcept;
 
+		// A square around the camera, with no vertex buffer, that also marks the aim point
+		[[nodiscard]] const vk::raii::Pipeline& ground_pipeline() const noexcept;
+
 	private:
 		// Each member uses the ones above it and is destroyed before them, so don't reorder
 		vk::raii::DescriptorSetLayout frame_descriptor_set_layout_;
@@ -55,5 +58,6 @@ namespace quokka
 		vk::raii::PipelineLayout pipeline_layout_;
 		vk::raii::Pipeline enemy_pipeline_;
 		vk::raii::Pipeline player_pipeline_;
+		vk::raii::Pipeline ground_pipeline_;
 	};
 }

@@ -47,7 +47,7 @@ namespace quokka
 			std::unreachable();
 		}
 
-		[[nodiscard]] glm::dvec2 cursor_position(GLFWwindow* window) noexcept
+		[[nodiscard]] glm::dvec2 glfw_cursor_position(GLFWwindow* window) noexcept
 		{
 			glm::dvec2 position {};
 			glfwGetCursorPos(window, &position.x, &position.y);
@@ -171,7 +171,24 @@ namespace quokka
 		);
 
 		// Changing the mode moves the cursor, which must not count as an offset
-		previous_cursor_position_ = cursor_position(handle_);
+		previous_cursor_position_ = glfw_cursor_position(handle_);
+	}
+
+	glm::vec2 Window::cursor_position() const noexcept
+	{
+		// Both in screen coordinates, which on high DPI displays aren't pixels
+		int width {};
+		int height {};
+		glfwGetWindowSize(handle_, &width, &height);
+
+		// Minimized, so there's no window to be across
+		if (width == 0 || height == 0)
+		{
+			return {};
+		}
+
+		return glm::vec2 { previous_cursor_position_ } /
+			glm::vec2 { static_cast<float>(width), static_cast<float>(height) };
 	}
 
 	glm::vec2 Window::cursor_offset() const noexcept
@@ -195,7 +212,7 @@ namespace quokka
 		scroll_offset_ = 0.0f;
 		glfwPollEvents();
 
-		const glm::dvec2 position { cursor_position(handle_) };
+		const glm::dvec2 position { glfw_cursor_position(handle_) };
 		cursor_offset_ = glm::vec2 { position - previous_cursor_position_ };
 		previous_cursor_position_ = position;
 	}

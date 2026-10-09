@@ -49,6 +49,9 @@ namespace quokka
 			glm::vec2 player_position,
 			float distance) noexcept;
 
+		// The player aims where the cursor points on the ground, so it must run after the camera
+		void update_aim() noexcept;
+
 		// The enemies chase the player
 		void update_enemies(float delta_seconds) noexcept;
 

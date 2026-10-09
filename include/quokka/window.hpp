@@ -58,6 +58,9 @@ namespace quokka
 		[[nodiscard]] bool is_cursor_captured() const noexcept;
 		void set_cursor_captured(bool is_captured) noexcept;
 
+		// From 0 to 1 across the window, with 0, 0 at the top left corner
+		[[nodiscard]] glm::vec2 cursor_position() const noexcept;
+
 		// In pixels, since the previous poll_events
 		[[nodiscard]] glm::vec2 cursor_offset() const noexcept;
 

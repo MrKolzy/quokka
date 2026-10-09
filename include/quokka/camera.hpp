@@ -18,6 +18,10 @@ namespace quokka
 		[[nodiscard]] glm::mat4 view_matrix() const noexcept;
 		[[nodiscard]] glm::mat4 projection_matrix(float aspect_ratio) const noexcept;
 
+		// Unit length, from the position through a point given in normalized device coordinates,
+		// where x goes right and y up from -1 to 1 across the screen
+		[[nodiscard]] glm::vec3 ray_direction(glm::vec2 point, float aspect_ratio) const noexcept;
+
 		// The offset is relative to the view, x to the right, y along world up and z forward
 		void move(const glm::vec3& offset) noexcept;
 

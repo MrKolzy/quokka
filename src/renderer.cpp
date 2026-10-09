@@ -45,14 +45,15 @@ namespace quokka
 			float shininess;
 
 			glm::vec2 viewport_size;
+			glm::vec2 aim_point;
 			float time;
 
 			// Uniform buffers round the shader's struct up to 16 bytes
-			float padding;
+			glm::vec3 padding;
 		};
 
-		// Two matrices and four groups of 16 bytes, so nothing was padded in between
-		static_assert(sizeof(FrameUniforms) == 2 * sizeof(glm::mat4) + 4 * 16);
+		// Two matrices and five groups of 16 bytes, so nothing was padded in between
+		static_assert(sizeof(FrameUniforms) == 2 * sizeof(glm::mat4) + 5 * 16);
 
 		[[nodiscard]] constexpr vk::Rect2D full_area(vk::Extent2D extent) noexcept
 		{
@@ -164,7 +165,7 @@ namespace quokka
 		device_.logical_device().resetFences(*in_flight_fence);
 
 		// The fence wait above guarantees the GPU is no longer reading this frame's uniform buffer
-		update_uniform_buffer(mapped_uniform_buffer, camera, light, time_seconds);
+		update_uniform_buffer(mapped_uniform_buffer, camera, light, player, time_seconds);
 
 		// Beginning the command buffer implicitly resets it, since the pool has the reset flag
 		record_command_buffer(command_buffer, descriptor_set, image_index, player, time_seconds);
@@ -240,14 +241,14 @@ namespace quokka
 		primary_command_buffers_ = device_.logical_device().allocateCommandBuffers(allocate_info);
 
 		// Executed inside the scene's rendering, like the recording threads' ones
-		const vk::CommandBufferAllocateInfo player_allocate_info {
+		const vk::CommandBufferAllocateInfo main_thread_allocate_info {
 			.commandPool { *command_pool_ },
 			.level { vk::CommandBufferLevel::eSecondary },
 			.commandBufferCount { constants::max_frames_in_flight }
 		};
 
-		player_command_buffers_ =
-			device_.logical_device().allocateCommandBuffers(player_allocate_info);
+		main_thread_command_buffers_ =
+			device_.logical_device().allocateCommandBuffers(main_thread_allocate_info);
 	}
 
 	void Renderer::create_secondary_command_buffers()
@@ -505,6 +506,7 @@ namespace quokka
 		void* mapped_memory,
 		const Camera& camera,
 		const DirectionalLight& light,
+		const Player& player,
 		float time_seconds) const
 	{
 		const vk::Extent2D extent { swapchain_.extent() };
@@ -522,6 +524,7 @@ namespace quokka
 			.light_color { light.color },
 			.shininess { light.shininess },
 			.viewport_size { viewport_size },
+			.aim_point { player.aim_point() },
 			.time { time_seconds }
 		};
 
@@ -672,10 +675,11 @@ namespace quokka
 			);
 		});
 
-		const auto& player_command_buffer { player_command_buffers_[frame_index_] };
-		record_player_draw(player_command_buffer, descriptor_set, player);
+		const auto& main_thread_command_buffer { main_thread_command_buffers_[frame_index_] };
+		record_main_thread_draws(main_thread_command_buffer, descriptor_set, player);
 
-		// In the order of the threads, which is also the order of the objects, then the player
+		// In the order of the threads, which is also the order of the objects, then the main
+		// thread's, so the ground comes last
 		constexpr std::uint32_t scene_command_buffer_count {
 			constants::recording_thread_count + 1
 		};
@@ -684,7 +688,7 @@ namespace quokka
 		{
 			scene_command_buffers[index] = *secondary_command_buffers_[index][frame_index_];
 		}
-		scene_command_buffers.back() = *player_command_buffer;
+		scene_command_buffers.back() = *main_thread_command_buffer;
 
 		command_buffer.executeCommands(scene_command_buffers);
 
@@ -839,7 +843,7 @@ namespace quokka
 		command_buffer.end();
 	}
 
-	void Renderer::record_player_draw(
+	void Renderer::record_main_thread_draws(
 		const vk::raii::CommandBuffer& command_buffer,
 		const vk::raii::DescriptorSet& descriptor_set,
 		const Player& player) const
@@ -851,19 +855,29 @@ namespace quokka
 			*graphics_pipeline_.player_pipeline());
 		bind_model(command_buffer, descriptor_set, player_model_, player_material_set_);
 
+		// The ground also reads them, for the player's shadow
 		const PlayerConstants player_constants {
 			.position { player.position() },
 			.yaw { player.yaw() }
 		};
 		command_buffer.pushConstants<PlayerConstants>(
 			*graphics_pipeline_.pipeline_layout(),
-			vk::ShaderStageFlagBits::eVertex,
+			vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
 			0,
 			player_constants
 		);
 
 		// A single instance
 		command_buffer.drawIndexed(player_model_.index_count, 1, 0, 0, 0);
+
+		// Last, so the depth test skips the ground hidden behind the enemies and the player
+		// Same pipeline layout, so the frame set and the push constants stay bound
+		command_buffer.bindPipeline(
+			vk::PipelineBindPoint::eGraphics,
+			*graphics_pipeline_.ground_pipeline());
+
+		// One square of two triangles, made in the vertex shader without a vertex buffer
+		command_buffer.draw(6, 1, 0, 0);
 
 		command_buffer.end();
 	}

@@ -64,6 +64,7 @@ namespace quokka
 			void* mapped_memory,
 			const Camera& camera,
 			const DirectionalLight& light,
+			const Player& player,
 			float time_seconds) const;
 		void record_command_buffer(
 			const vk::raii::CommandBuffer& command_buffer,
@@ -94,8 +95,8 @@ namespace quokka
 			const Model& model,
 			const vk::raii::DescriptorSet& material_set) const;
 
-		// Recorded by the main thread, so it has its own command buffers
-		void record_player_draw(
+		// The player and the ground, recorded by the main thread so it has its own command buffers
+		void record_main_thread_draws(
 			const vk::raii::CommandBuffer& command_buffer,
 			const vk::raii::DescriptorSet& descriptor_set,
 			const Player& player) const;
@@ -121,7 +122,7 @@ namespace quokka
 		std::vector<std::vector<vk::raii::CommandBuffer>> secondary_command_buffers_ {};
 
 		// One per frame in flight, from command_pool_ because the main thread records them
-		std::vector<vk::raii::CommandBuffer> player_command_buffers_ {};
+		std::vector<vk::raii::CommandBuffer> main_thread_command_buffers_ {};
 
 		Model enemy_model_ {};
 		Model player_model_ {};

@@ -98,6 +98,7 @@ namespace quokka
 
 			update_player(delta_time.count());
 			update_camera(delta_time.count());
+			update_aim();
 			update_enemies(delta_time.count());
 			update_test_hits(elapsed_time.count());
 
@@ -206,6 +207,37 @@ namespace quokka
 		};
 
 		return { target - view_direction * distance, target };
+	}
+
+	void Engine::update_aim() noexcept
+	{
+		// The free camera is for looking around, and over the interface the mouse is for it
+		if (is_camera_free_ || gui_.wants_mouse())
+		{
+			return;
+		}
+
+		const vk::Extent2D extent { swapchain_.extent() };
+		const float aspect_ratio {
+			static_cast<float>(extent.width) / static_cast<float>(extent.height)
+		};
+
+		// Window y grows downward, but in normalized device coordinates it points up
+		const glm::vec2 cursor { window_.cursor_position() };
+		const glm::vec2 point { 2.0f * cursor.x - 1.0f, 1.0f - 2.0f * cursor.y };
+
+		const glm::vec3 origin { camera_.position() };
+		const glm::vec3 direction { camera_.ray_direction(point, aspect_ratio) };
+
+		// A ray that doesn't point down never reaches the ground, so the last aim point stays
+		if (direction.y >= 0.0f)
+		{
+			return;
+		}
+
+		// Where the ray's height reaches 0
+		const glm::vec3 ground_point { origin - direction * (origin.y / direction.y) };
+		player_.aim_at({ ground_point.x, ground_point.z });
 	}
 
 	void Engine::update_free_camera(float delta_seconds) noexcept

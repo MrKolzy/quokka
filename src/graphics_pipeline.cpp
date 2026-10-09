@@ -81,9 +81,12 @@ namespace quokka
 				*frame_descriptor_set_layout, *material_descriptor_set_layout
 			};
 
-			// Only the player's draw reads them, the enemies' draws leave them unset
+			// Only the player's and the ground's draws read them, the enemies' leave them unset
+			// The ground's fragment shader reads them for the player's shadow
 			constexpr vk::PushConstantRange player_constants_range {
-				.stageFlags { vk::ShaderStageFlagBits::eVertex },
+				.stageFlags {
+					vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment
+				},
 				.offset { 0 },
 				.size { sizeof(PlayerConstants) }
 			};
@@ -104,7 +107,9 @@ namespace quokka
 			vk::Format color_format,
 			vk::Format depth_format,
 			vk::SampleCountFlagBits sample_count,
-			const char* vertex_entry_point)
+			const char* vertex_entry_point,
+			const char* fragment_entry_point,
+			bool reads_vertex_buffer)
 		{
 			// Every entry point lives in the same compiled module
 			const auto shader_code { read_shader_file(constants::shader_path) };
@@ -120,7 +125,7 @@ namespace quokka
 			const vk::PipelineShaderStageCreateInfo fragment_shader_stage_info {
 				.stage { vk::ShaderStageFlagBits::eFragment },
 				.module { *shader_module },
-				.pName { "frag_main" }
+				.pName { fragment_entry_point }
 			};
 
 			const std::array shader_stages { vertex_shader_stage_info, fragment_shader_stage_info };
@@ -129,14 +134,16 @@ namespace quokka
 			constexpr auto binding_description { Vertex::binding_description() };
 			constexpr auto attribute_descriptions { Vertex::attribute_descriptions() };
 
-			const vk::PipelineVertexInputStateCreateInfo vertex_input_info {
-				.vertexBindingDescriptionCount { 1 },
-				.pVertexBindingDescriptions { &binding_description },
-				.vertexAttributeDescriptionCount {
-					static_cast<std::uint32_t>(attribute_descriptions.size())
-				},
-				.pVertexAttributeDescriptions { attribute_descriptions.data() }
-			};
+			// Without a vertex buffer, the vertex shader makes the vertices from their index
+			vk::PipelineVertexInputStateCreateInfo vertex_input_info {};
+			if (reads_vertex_buffer)
+			{
+				vertex_input_info.vertexBindingDescriptionCount = 1;
+				vertex_input_info.pVertexBindingDescriptions = &binding_description;
+				vertex_input_info.vertexAttributeDescriptionCount =
+					static_cast<std::uint32_t>(attribute_descriptions.size());
+				vertex_input_info.pVertexAttributeDescriptions = attribute_descriptions.data();
+			}
 
 			constexpr vk::PipelineInputAssemblyStateCreateInfo input_assembly_info {
 				.topology { vk::PrimitiveTopology::eTriangleList }
@@ -263,7 +270,9 @@ namespace quokka
 				color_format,
 				depth_format,
 				sample_count,
-				"enemy_vert_main")
+				"enemy_vert_main",
+				"frag_main",
+				true)
 		}
 		, player_pipeline_ {
 			create_graphics_pipeline(
@@ -272,7 +281,20 @@ namespace quokka
 				color_format,
 				depth_format,
 				sample_count,
-				"player_vert_main")
+				"player_vert_main",
+				"frag_main",
+				true)
+		}
+		, ground_pipeline_ {
+			create_graphics_pipeline(
+				device.logical_device(),
+				pipeline_layout_,
+				color_format,
+				depth_format,
+				sample_count,
+				"ground_vert_main",
+				"ground_frag_main",
+				false)
 		}
 	{
 	}
@@ -302,5 +324,10 @@ namespace quokka
 	const vk::raii::Pipeline& GraphicsPipeline::player_pipeline() const noexcept
 	{
 		return player_pipeline_;
+	}
+
+	const vk::raii::Pipeline& GraphicsPipeline::ground_pipeline() const noexcept
+	{
+		return ground_pipeline_;
 	}
 }

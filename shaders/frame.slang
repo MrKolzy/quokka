@@ -20,6 +20,9 @@ struct FrameUniforms
 	// In pixels, for what keeps its size on screen whatever the distance, like damage numbers
 	float2 viewport_size;
 
+	// On the ground as world x and z, where the player aims, marked on the ground
+	float2 aim_point;
+
 	// In seconds since the start, for animations computed on the GPU
 	float time;
 };
