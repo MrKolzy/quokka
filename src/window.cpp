@@ -33,6 +33,8 @@ namespace quokka
 				return GLFW_KEY_Q;
 			case Key::s:
 				return GLFW_KEY_S;
+			case Key::space:
+				return GLFW_KEY_SPACE;
 			case Key::w:
 				return GLFW_KEY_W;
 			}

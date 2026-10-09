@@ -28,6 +28,7 @@ namespace quokka::constants
 
 	// Relative to the working directory
 	inline constexpr const char* shader_path { "shaders/shader.spv" };
+	inline constexpr const char* damage_number_shader_path { "shaders/damage_numbers.spv" };
 	inline constexpr const char* model_path { "models/viking_room.glb" };
 	inline constexpr const char* texture_path { "textures/viking_room.ktx2" };
 

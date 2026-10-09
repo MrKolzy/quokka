@@ -4,6 +4,7 @@
 #include "quokka/image.hpp"
 #include "quokka/worker_threads.hpp"
 
+#include <glm/glm.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
 #include <cstdint> // std::uint32_t
@@ -12,6 +13,7 @@
 namespace quokka
 {
 	class Camera;
+	class DamageNumbers;
 	class Device;
 	struct DirectionalLight;
 	class GpuTimer;
@@ -28,7 +30,8 @@ namespace quokka
 			const Swapchain& swapchain,
 			const GraphicsPipeline& graphics_pipeline,
 			GpuTimer& gpu_timer,
-			const Gui& gui);
+			const Gui& gui,
+			DamageNumbers& damage_numbers);
 		~Renderer();
 
 		// recording_threads_ can't be copied or moved, so neither can it
@@ -38,10 +41,17 @@ namespace quokka
 		Renderer& operator=(Renderer&&) = delete;
 
 		// Returns true when the swapchain must be recreated before the next frame
-		[[nodiscard]] bool draw_frame(const Camera& camera, const DirectionalLight& light);
+		// The time is in seconds since the start, for the animations computed on the GPU
+		[[nodiscard]] bool draw_frame(
+			const Camera& camera,
+			const DirectionalLight& light,
+			float time_seconds);
 
 		// Frames the whole grid, which the renderer still owns
 		[[nodiscard]] static Camera initial_camera() noexcept;
+
+		// Where an enemy of the grid stands, until enemies have a module of their own
+		[[nodiscard]] static glm::vec3 enemy_position(std::uint32_t enemy_index) noexcept;
 
 	private:
 		void create_command_pool();
@@ -62,14 +72,20 @@ namespace quokka
 		void update_uniform_buffer(
 			void* mapped_memory,
 			const Camera& camera,
-			const DirectionalLight& light) const;
+			const DirectionalLight& light,
+			float time_seconds) const;
 		void record_command_buffer(
 			const vk::raii::CommandBuffer& command_buffer,
 			const vk::raii::DescriptorSet& descriptor_set,
-			std::uint32_t image_index);
-		void record_gui(
+			std::uint32_t image_index,
+			float time_seconds);
+
+		// The damage numbers and the interface, over the finished scene
+		void record_overlay(
 			const vk::raii::CommandBuffer& command_buffer,
-			std::uint32_t image_index) const;
+			const vk::raii::DescriptorSet& descriptor_set,
+			std::uint32_t image_index,
+			float time_seconds) const;
 
 		// Called from several recording threads at once, so they must only read shared state
 		void begin_secondary_command_buffer(const vk::raii::CommandBuffer& command_buffer) const;
@@ -84,6 +100,7 @@ namespace quokka
 		const GraphicsPipeline& graphics_pipeline_;
 		GpuTimer& gpu_timer_;
 		const Gui& gui_;
+		DamageNumbers& damage_numbers_;
 
 		// Each one is destroyed before the object it came from, so don't reorder
 		vk::raii::CommandPool command_pool_ { nullptr };

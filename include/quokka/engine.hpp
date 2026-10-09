@@ -1,6 +1,7 @@
 #pragma once
 
 #include "quokka/camera.hpp"
+#include "quokka/damage_numbers.hpp"
 #include "quokka/device.hpp"
 #include "quokka/frame_timer.hpp"
 #include "quokka/gpu_timer.hpp"
@@ -13,6 +14,7 @@
 #include "quokka/window.hpp"
 
 #include <chrono> // std::chrono::steady_clock
+#include <random> // std::mt19937
 
 namespace quokka
 {
@@ -32,6 +34,10 @@ namespace quokka
 
 	private:
 		void update_camera(float delta_seconds) noexcept;
+
+		// A test until there's combat, every enemy takes a hit with its damage number
+		void update_test_hits(float time_seconds);
+
 		void recreate_swapchain();
 
 		// Each member uses the ones above it and is destroyed before them, so don't reorder
@@ -44,7 +50,12 @@ namespace quokka
 		};
 		GpuTimer gpu_timer_ { device_ };
 		Gui gui_ { window_, device_, swapchain_.surface_format().format };
-		Renderer renderer_ { device_, swapchain_, graphics_pipeline_, gpu_timer_, gui_ };
+		DamageNumbers damage_numbers_ {
+			device_, graphics_pipeline_.descriptor_set_layout(), swapchain_.surface_format().format
+		};
+		Renderer renderer_ {
+			device_, swapchain_, graphics_pipeline_, gpu_timer_, gui_, damage_numbers_
+		};
 
 		Camera camera_ { Renderer::initial_camera() };
 
@@ -54,9 +65,18 @@ namespace quokka
 		FrameTimer frame_timer_ {};
 		StatsOverlay stats_overlay_ { device_, swapchain_ };
 
+		// The animations computed on the GPU, such as damage numbers, are timed from here
+		std::chrono::steady_clock::time_point start_time_ { std::chrono::steady_clock::now() };
+
 		// The camera moves according to the time elapsed since then
 		std::chrono::steady_clock::time_point previous_frame_time_ {
 			std::chrono::steady_clock::now()
 		};
+
+		// Default seed, so every run deals the same damage, which keeps benchmarks repeatable
+		std::mt19937 random_engine_ {};
+
+		// So a hit happens once per press, not every frame while the key is held
+		bool was_hit_key_pressed_ { false };
 	};
 }

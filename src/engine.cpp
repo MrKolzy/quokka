@@ -4,7 +4,9 @@
 #include "quokka/light_panel.hpp"
 
 #include <chrono> // std::chrono::duration, std::chrono::steady_clock
+#include <cstdint> // std::uint32_t
 #include <format> // std::format
+#include <random> // std::bernoulli_distribution, std::uniform_int_distribution
 
 namespace quokka
 {
@@ -12,6 +14,14 @@ namespace quokka
 	{
 		// In world units per second, the copies of the grid are 2 units apart
 		constexpr float camera_speed { 5.0f };
+
+		// Above each enemy's head, since the viking room is about a unit tall
+		constexpr glm::vec3 damage_number_offset { 0.0f, 1.2f, 0.0f };
+
+		// Critical hits deal double damage
+		constexpr double critical_chance { 0.15 };
+		constexpr std::uint32_t min_damage { 100 };
+		constexpr std::uint32_t max_damage { 999 };
 
 		// In radians per pixel, without the delta time because the offset already is a distance
 		constexpr float mouse_sensitivity { 0.002f };
@@ -37,7 +47,8 @@ namespace quokka
 
 			const auto frame_time { std::chrono::steady_clock::now() };
 
-			// In seconds, as a float so the motion is smooth
+			// In seconds, as floats so the motion is smooth
+			const std::chrono::duration<float> elapsed_time { frame_time - start_time_ };
 			const std::chrono::duration<float> delta_time { frame_time - previous_frame_time_ };
 			previous_frame_time_ = frame_time;
 
@@ -55,8 +66,11 @@ namespace quokka
 			gui_.end_frame();
 
 			update_camera(delta_time.count());
+			update_test_hits(elapsed_time.count());
 
-			const bool is_swapchain_outdated { renderer_.draw_frame(camera_, light_) };
+			const bool is_swapchain_outdated {
+				renderer_.draw_frame(camera_, light_, elapsed_time.count())
+			};
 
 			// Not every platform reports out of date after a resize
 			if (is_swapchain_outdated || window_.was_resized())
@@ -123,6 +137,37 @@ namespace quokka
 		if (direction != glm::vec3 { 0.0f })
 		{
 			camera_.move(glm::normalize(direction) * camera_speed * delta_seconds);
+		}
+	}
+
+	void Engine::update_test_hits(float time_seconds)
+	{
+		// Ignored while typing into the interface, like the camera keys
+		const bool is_hit_key_pressed {
+			window_.is_key_pressed(Key::space) && !gui_.wants_keyboard()
+		};
+		const bool was_hit_key_just_pressed { is_hit_key_pressed && !was_hit_key_pressed_ };
+		was_hit_key_pressed_ = is_hit_key_pressed;
+
+		if (!was_hit_key_just_pressed)
+		{
+			return;
+		}
+
+		std::uniform_int_distribution<std::uint32_t> damage_distribution { min_damage, max_damage };
+		std::bernoulli_distribution critical_distribution { critical_chance };
+
+		for (std::uint32_t index { 0 }; index < constants::enemy_count; ++index)
+		{
+			const bool is_critical { critical_distribution(random_engine_) };
+			const std::uint32_t damage { damage_distribution(random_engine_) };
+
+			damage_numbers_.spawn({
+				.position { Renderer::enemy_position(index) + damage_number_offset },
+				.spawn_time { time_seconds },
+				.value { is_critical ? 2 * damage : damage },
+				.is_critical { is_critical ? 1u : 0u }
+			});
 		}
 	}
 

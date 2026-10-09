@@ -167,6 +167,6 @@ namespace quokka
 			slowest_frame_ms * graph_headroom,
 			graph_size);
 
-		ImGui::TextDisabled("F1 hides the interface");
+		ImGui::TextDisabled("Space hits every enemy, F1 hides the interface");
 	}
 }

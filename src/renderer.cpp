@@ -2,6 +2,7 @@
 
 #include "quokka/camera.hpp"
 #include "quokka/constants.hpp"
+#include "quokka/damage_numbers.hpp"
 #include "quokka/device.hpp"
 #include "quokka/gpu_timer.hpp"
 #include "quokka/graphics_pipeline.hpp"
@@ -33,7 +34,7 @@ namespace quokka
 	{
 		struct FrameUniforms
 		{
-			// Must match FrameUniforms in shader.slang
+			// Must match FrameUniforms in frame.slang
 			// Each vec3 is followed by a float, which fills its 16 bytes the same way as there
 			glm::mat4 view;
 			glm::mat4 projection;
@@ -46,10 +47,16 @@ namespace quokka
 
 			glm::vec3 light_color;
 			float shininess;
+
+			glm::vec2 viewport_size;
+			float time;
+
+			// Uniform buffers round the shader's struct up to 16 bytes
+			float padding;
 		};
 
-		// Two matrices and three groups of 16 bytes, so nothing was padded in between
-		static_assert(sizeof(FrameUniforms) == 2 * sizeof(glm::mat4) + 3 * 16);
+		// Two matrices and four groups of 16 bytes, so nothing was padded in between
+		static_assert(sizeof(FrameUniforms) == 2 * sizeof(glm::mat4) + 4 * 16);
 
 		struct InstanceData
 		{
@@ -264,12 +271,14 @@ namespace quokka
 		const Swapchain& swapchain,
 		const GraphicsPipeline& graphics_pipeline,
 		GpuTimer& gpu_timer,
-		const Gui& gui)
+		const Gui& gui,
+		DamageNumbers& damage_numbers)
 		: device_ { device }
 		, swapchain_ { swapchain }
 		, graphics_pipeline_ { graphics_pipeline }
 		, gpu_timer_ { gpu_timer }
 		, gui_ { gui }
+		, damage_numbers_ { damage_numbers }
 		, recording_threads_ { constants::recording_thread_count }
 	{
 		create_command_pool();
@@ -305,7 +314,10 @@ namespace quokka
 		}
 	}
 
-	bool Renderer::draw_frame(const Camera& camera, const DirectionalLight& light)
+	bool Renderer::draw_frame(
+		const Camera& camera,
+		const DirectionalLight& light,
+		float time_seconds)
 	{
 		constexpr auto no_timeout { std::numeric_limits<std::uint64_t>::max() };
 
@@ -343,10 +355,10 @@ namespace quokka
 		device_.logical_device().resetFences(*in_flight_fence);
 
 		// The fence wait above guarantees the GPU is no longer reading this frame's uniform buffer
-		update_uniform_buffer(mapped_uniform_buffer, camera, light);
+		update_uniform_buffer(mapped_uniform_buffer, camera, light, time_seconds);
 
 		// Beginning the command buffer implicitly resets it, since the pool has the reset flag
-		record_command_buffer(command_buffer, descriptor_set, image_index);
+		record_command_buffer(command_buffer, descriptor_set, image_index, time_seconds);
 
 		// Indexed by image, not by frame, since it's tied to the presentation of that image
 		const auto& render_finished_semaphore { swapchain_.render_finished_semaphore(image_index) };
@@ -406,6 +418,11 @@ namespace quokka
 		constexpr glm::vec3 grid_center { 0.0f, 0.0f, 0.0f };
 
 		return { camera_position, grid_center };
+	}
+
+	glm::vec3 Renderer::enemy_position(std::uint32_t enemy_index) noexcept
+	{
+		return object_transform(enemy_index).position;
 	}
 
 	void Renderer::create_command_pool()
@@ -742,7 +759,8 @@ namespace quokka
 
 	void Renderer::create_descriptor_pool()
 	{
-		// One uniform buffer, texture and storage buffer descriptor per frame in flight
+		// Per frame in flight, one uniform buffer, one texture, and the instance and damage
+		// number storage buffers
 		constexpr std::array pool_sizes {
 			vk::DescriptorPoolSize {
 				.type { vk::DescriptorType::eUniformBuffer },
@@ -754,7 +772,7 @@ namespace quokka
 			},
 			vk::DescriptorPoolSize {
 				.type { vk::DescriptorType::eStorageBuffer },
-				.descriptorCount { constants::max_frames_in_flight }
+				.descriptorCount { 2 * constants::max_frames_in_flight }
 			}
 		};
 
@@ -802,6 +820,13 @@ namespace quokka
 			.range { vk::WholeSize }
 		};
 
+		// A single ring that every frame reads, the copies into it are ordered by barriers
+		const vk::DescriptorBufferInfo damage_number_buffer_info {
+			.buffer { *damage_numbers_.buffer().handle },
+			.offset { 0 },
+			.range { vk::WholeSize }
+		};
+
 		for (std::uint32_t index { 0 }; index < constants::max_frames_in_flight; ++index)
 		{
 			const vk::DescriptorBufferInfo buffer_info {
@@ -841,7 +866,19 @@ namespace quokka
 				.pBufferInfo { &instance_buffer_info }
 			};
 
-			const std::array descriptor_writes { frame_write, texture_write, instance_write };
+			const vk::WriteDescriptorSet damage_number_write {
+				.dstSet { *descriptor_sets_[index] },
+				// Must match damage_number_binding in graphics_pipeline.cpp
+				.dstBinding { 3 },
+				.dstArrayElement { 0 },
+				.descriptorCount { 1 },
+				.descriptorType { vk::DescriptorType::eStorageBuffer },
+				.pBufferInfo { &damage_number_buffer_info }
+			};
+
+			const std::array descriptor_writes {
+				frame_write, texture_write, instance_write, damage_number_write
+			};
 
 			// No copies from other descriptor sets
 			device_.logical_device().updateDescriptorSets(descriptor_writes, {});
@@ -869,22 +906,25 @@ namespace quokka
 	void Renderer::update_uniform_buffer(
 		void* mapped_memory,
 		const Camera& camera,
-		const DirectionalLight& light) const
+		const DirectionalLight& light,
+		float time_seconds) const
 	{
 		const vk::Extent2D extent { swapchain_.extent() };
-		const float aspect_ratio {
-			static_cast<float>(extent.width) / static_cast<float>(extent.height)
+		const glm::vec2 viewport_size {
+			static_cast<float>(extent.width), static_cast<float>(extent.height)
 		};
 
 		const FrameUniforms frame_uniforms {
 			.view { camera.view_matrix() },
-			.projection { camera.projection_matrix(aspect_ratio) },
+			.projection { camera.projection_matrix(viewport_size.x / viewport_size.y) },
 			.camera_position { camera.position() },
 			.ambient_strength { light.ambient_strength },
 			.light_direction { light.direction() },
 			.specular_strength { light.specular_strength },
 			.light_color { light.color },
-			.shininess { light.shininess }
+			.shininess { light.shininess },
+			.viewport_size { viewport_size },
+			.time { time_seconds }
 		};
 
 		std::memcpy(mapped_memory, &frame_uniforms, sizeof(frame_uniforms));
@@ -893,7 +933,8 @@ namespace quokka
 	void Renderer::record_command_buffer(
 		const vk::raii::CommandBuffer& command_buffer,
 		const vk::raii::DescriptorSet& descriptor_set,
-		std::uint32_t image_index)
+		std::uint32_t image_index,
+		float time_seconds)
 	{
 		// Re-recorded every frame, so each recording is submitted only once
 		command_buffer.begin({ .flags { vk::CommandBufferUsageFlagBits::eOneTimeSubmit } });
@@ -953,6 +994,9 @@ namespace quokka
 			depth_test_stages,
 			depth_accesses
 		);
+
+		// Before the rendering begins, since copies can't be recorded inside one
+		damage_numbers_.record_upload(command_buffer, frame_index_);
 
 		constexpr vk::ClearValue clear_color {
 			.color { .float32 { std::array { 0.0f, 0.0f, 0.0f, 1.0f } } }
@@ -1036,7 +1080,7 @@ namespace quokka
 
 		command_buffer.endRendering();
 
-		record_gui(command_buffer, image_index);
+		record_overlay(command_buffer, descriptor_set, image_index, time_seconds);
 
 		// Wait for every color write to finish before the presentation engine reads the image
 		transition_image_layout(
@@ -1056,12 +1100,16 @@ namespace quokka
 		command_buffer.end();
 	}
 
-	void Renderer::record_gui(
+	void Renderer::record_overlay(
 		const vk::raii::CommandBuffer& command_buffer,
-		std::uint32_t image_index) const
+		const vk::raii::DescriptorSet& descriptor_set,
+		std::uint32_t image_index,
+		float time_seconds) const
 	{
-		// Hidden, so the frame is the same as without an interface, which benchmarks need
-		if (!gui_.is_visible())
+		const bool should_draw_damage_numbers { damage_numbers_.has_visible_numbers(time_seconds) };
+
+		// With nothing to draw, the frame is the same as without an overlay, which benchmarks need
+		if (!should_draw_damage_numbers && !gui_.is_visible())
 		{
 			return;
 		}
@@ -1080,7 +1128,7 @@ namespace quokka
 			vk::AccessFlagBits2::eColorAttachmentRead | vk::AccessFlagBits2::eColorAttachmentWrite
 		);
 
-		// Loaded instead of cleared, so the scene stays under the interface
+		// Loaded instead of cleared, so the scene stays under the overlay
 		const vk::RenderingAttachmentInfo color_attachment_info {
 			.imageView { *swapchain_.image_view(image_index) },
 			.imageLayout { vk::ImageLayout::eColorAttachmentOptimal },
@@ -1088,7 +1136,7 @@ namespace quokka
 			.storeOp { vk::AttachmentStoreOp::eStore }
 		};
 
-		// One sample and no depth, since the interface is flat and always on top
+		// One sample and no depth, since the overlay is flat and always on top
 		const vk::RenderingInfo rendering_info {
 			.renderArea { full_area(swapchain_.extent()) },
 			.layerCount { 1 },
@@ -1097,7 +1145,18 @@ namespace quokka
 		};
 
 		command_buffer.beginRendering(rendering_info);
-		gui_.record(command_buffer);
+
+		if (should_draw_damage_numbers)
+		{
+			damage_numbers_.record_draw(command_buffer, descriptor_set, swapchain_.extent());
+		}
+
+		// Last, so the interface stays on top of the damage numbers
+		if (gui_.is_visible())
+		{
+			gui_.record(command_buffer);
+		}
+
 		command_buffer.endRendering();
 	}
 
