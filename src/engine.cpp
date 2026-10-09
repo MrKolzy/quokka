@@ -3,6 +3,7 @@
 #include "quokka/constants.hpp"
 #include "quokka/light_panel.hpp"
 
+#include <algorithm> // std::min
 #include <chrono> // std::chrono::duration, std::chrono::steady_clock
 #include <cstdint> // std::uint32_t
 #include <format> // std::format
@@ -15,8 +16,9 @@ namespace quokka
 		// In world units per second, the copies of the grid are 2 units apart
 		constexpr float camera_speed { 5.0f };
 
-		// Above each enemy's head, since the viking room is about a unit tall
-		constexpr glm::vec3 damage_number_offset { 0.0f, 1.2f, 0.0f };
+		// In seconds, longer frames such as the one after a resize are simulated as this long,
+		// so the enemies don't jump
+		constexpr float max_simulation_delta { 0.1f };
 
 		// Critical hits deal double damage
 		constexpr double critical_chance { 0.15 };
@@ -34,6 +36,19 @@ namespace quokka
 		{
 			return static_cast<float>(window.is_key_pressed(positive_key)) -
 				static_cast<float>(window.is_key_pressed(negative_key));
+		}
+
+		// True only on the frame the key goes down, and was_pressed remembers it for the next one
+		[[nodiscard]] bool is_key_just_pressed(
+			const Window& window,
+			Key key,
+			bool& was_pressed) noexcept
+		{
+			const bool is_pressed { window.is_key_pressed(key) };
+			const bool is_just_pressed { is_pressed && !was_pressed };
+			was_pressed = is_pressed;
+
+			return is_just_pressed;
 		}
 	}
 
@@ -66,6 +81,7 @@ namespace quokka
 			gui_.end_frame();
 
 			update_camera(delta_time.count());
+			update_enemies(delta_time.count());
 			update_test_hits(elapsed_time.count());
 
 			const bool is_swapchain_outdated {
@@ -80,10 +96,12 @@ namespace quokka
 
 			if (frame_timer_.tick())
 			{
+				const GpuFrameTimes gpu_times { gpu_timer_.take_average_times() };
 				const FrameAverages averages {
 					.fps { frame_timer_.average_fps() },
 					.frame_time_ms { frame_timer_.average_frame_time_ms() },
-					.gpu_time_ms { gpu_timer_.take_average_times().total_ms }
+					.gpu_time_ms { gpu_times.total_ms },
+					.enemy_update_ms { gpu_times.enemy_update_ms }
 				};
 
 				stats_overlay_.set_averages(averages);
@@ -140,16 +158,35 @@ namespace quokka
 		}
 	}
 
+	void Engine::update_enemies(float delta_seconds) noexcept
+	{
+		// Where the view meets the ground, which never happens at or above the horizon
+		const glm::vec3 forward { camera_.forward() };
+		if (forward.y < 0.0f)
+		{
+			const glm::vec3 position { camera_.position() };
+			const glm::vec3 ground_point { position - forward * (position.y / forward.y) };
+			chase_target_ = { ground_point.x, ground_point.z };
+		}
+
+		// Ignored while typing into the interface, like the camera keys
+		if (is_key_just_pressed(window_, Key::r, was_reset_key_pressed_) && !gui_.wants_keyboard())
+		{
+			enemy_simulation_.reset();
+		}
+
+		enemy_simulation_.prepare_update(
+			chase_target_,
+			std::min(delta_seconds, max_simulation_delta));
+	}
+
 	void Engine::update_test_hits(float time_seconds)
 	{
 		// Ignored while typing into the interface, like the camera keys
-		const bool is_hit_key_pressed {
-			window_.is_key_pressed(Key::space) && !gui_.wants_keyboard()
+		const bool was_hit_key_just_pressed {
+			is_key_just_pressed(window_, Key::space, was_hit_key_pressed_)
 		};
-		const bool was_hit_key_just_pressed { is_hit_key_pressed && !was_hit_key_pressed_ };
-		was_hit_key_pressed_ = is_hit_key_pressed;
-
-		if (!was_hit_key_just_pressed)
+		if (!was_hit_key_just_pressed || gui_.wants_keyboard())
 		{
 			return;
 		}
@@ -163,7 +200,7 @@ namespace quokka
 			const std::uint32_t damage { damage_distribution(random_engine_) };
 
 			damage_numbers_.spawn({
-				.position { Renderer::enemy_position(index) + damage_number_offset },
+				.enemy_index { index },
 				.spawn_time { time_seconds },
 				.value { is_critical ? 2 * damage : damage },
 				.is_critical { is_critical ? 1u : 0u }

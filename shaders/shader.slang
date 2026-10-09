@@ -1,14 +1,12 @@
+#include "enemy.slang"
 #include "frame.slang"
 
-// Must match InstanceData in renderer.cpp
-struct InstanceData
-{
-	float4x4 model;
-};
-
-// One per enemy, must match instance_binding in graphics_pipeline.cpp
+// Written by the simulation every frame, must match enemy_binding in graphics_pipeline.cpp
 [[vk::binding(2, 0)]]
-StructuredBuffer<InstanceData> instances;
+StructuredBuffer<EnemyState> enemies;
+
+// In radians, turns the viking room so its open side faces along the enemy's yaw
+static const float model_yaw = -1.5707964;
 
 // Image and sampler in one descriptor, must match texture_binding in graphics_pipeline.cpp
 [[vk::binding(1, 0)]]
@@ -30,22 +28,35 @@ struct VertexOutput
 	float2 texture_coordinates;
 };
 
+// The same rotation as glm::rotate around y, so a quarter turn takes +z to +x
+float3 rotate_around_up(float3 value, float angle)
+{
+	const float cosine = cos(angle);
+	const float sine = sin(angle);
+
+	return float3(value.x * cosine + value.z * sine, value.y, value.z * cosine - value.x * sine);
+}
+
 // SV_VulkanInstanceID includes the first instance of the draw, unlike SV_InstanceID,
 // which matters because each recording thread draws its own range of instances
 [shader("vertex")]
 VertexOutput vert_main(VertexInput input, uint instance_index : SV_VulkanInstanceID)
 {
-	const float4x4 model = instances[instance_index].model;
+	const EnemyState enemy = enemies[instance_index];
 
-	const float4 world_position = mul(model, float4(input.position, 1.0));
-	const float4 view_position = mul(frame.view, world_position);
+	// Turned to face where the enemy looks, then moved to its spot on the ground
+	const float angle = enemy.yaw + model_yaw;
+	const float3 world_position = rotate_around_up(input.position, angle) +
+		float3(enemy.position.x, 0.0, enemy.position.y);
+
+	const float4 view_position = mul(frame.view, float4(world_position, 1.0));
 
 	VertexOutput output;
 	output.position = mul(frame.projection, view_position);
-	output.world_position = world_position.xyz;
+	output.world_position = world_position;
 
-	// In world space, w is 0 so the translation is skipped, enough while the scale is uniform
-	output.normal = mul(model, float4(input.normal, 0.0)).xyz;
+	// Only rotated, so the normal stays unit length and needs no inverse transpose
+	output.normal = rotate_around_up(input.normal, angle);
 
 	output.texture_coordinates = input.texture_coordinates;
 

@@ -15,6 +15,9 @@ namespace quokka
 		double fps;
 		double frame_time_ms;
 		double gpu_time_ms;
+
+		// The part of the GPU time spent simulating the enemies
+		double enemy_update_ms;
 	};
 
 	class StatsOverlay

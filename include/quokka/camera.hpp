@@ -11,6 +11,10 @@ namespace quokka
 		Camera(const glm::vec3& position, const glm::vec3& target) noexcept;
 
 		[[nodiscard]] glm::vec3 position() const noexcept;
+
+		// Unit length, where the camera looks
+		[[nodiscard]] glm::vec3 forward() const noexcept;
+
 		[[nodiscard]] glm::mat4 view_matrix() const noexcept;
 		[[nodiscard]] glm::mat4 projection_matrix(float aspect_ratio) const noexcept;
 
@@ -21,7 +25,6 @@ namespace quokka
 		void rotate(float yaw_offset, float pitch_offset) noexcept;
 
 	private:
-		[[nodiscard]] glm::vec3 forward() const noexcept;
 		[[nodiscard]] glm::vec3 right() const noexcept;
 
 		glm::vec3 position_;

@@ -4,6 +4,7 @@
 #include "quokka/constants.hpp"
 #include "quokka/damage_numbers.hpp"
 #include "quokka/device.hpp"
+#include "quokka/enemy_simulation.hpp"
 #include "quokka/gpu_timer.hpp"
 #include "quokka/graphics_pipeline.hpp"
 #include "quokka/gui.hpp"
@@ -13,7 +14,6 @@
 #include "quokka/swapchain.hpp"
 
 #include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
 #include <ktx.h>
 
 #include <algorithm> // std::max
@@ -57,70 +57,6 @@ namespace quokka
 
 		// Two matrices and four groups of 16 bytes, so nothing was padded in between
 		static_assert(sizeof(FrameUniforms) == 2 * sizeof(glm::mat4) + 4 * 16);
-
-		struct InstanceData
-		{
-			// Must match InstanceData in shader.slang
-			// Storage buffers lay out a matrix without padding, the same as C++
-			glm::mat4 model;
-		};
-
-		struct Transform
-		{
-			glm::vec3 position { 0.0f, 0.0f, 0.0f };
-
-			// Euler angles in radians around the x, y and z axes
-			glm::vec3 rotation { 0.0f, 0.0f, 0.0f };
-
-			glm::vec3 scale { 1.0f, 1.0f, 1.0f };
-
-			// Scales, then rotates, then moves, since the matrices apply from right to left
-			[[nodiscard]] glm::mat4 model_matrix() const noexcept
-			{
-				glm::mat4 model { glm::translate(glm::mat4 { 1.0f }, position) };
-				model = glm::rotate(model, rotation.x, glm::vec3 { 1.0f, 0.0f, 0.0f });
-				model = glm::rotate(model, rotation.y, glm::vec3 { 0.0f, 1.0f, 0.0f });
-				model = glm::rotate(model, rotation.z, glm::vec3 { 0.0f, 0.0f, 1.0f });
-
-				return glm::scale(model, scale);
-			}
-		};
-
-		// The smallest side whose square holds the count, so the last row may be incomplete
-		[[nodiscard]] constexpr std::uint32_t square_side(std::uint32_t count) noexcept
-		{
-			std::uint32_t side { 1 };
-			while (side * side < count)
-			{
-				++side;
-			}
-
-			return side;
-		}
-
-		constexpr std::uint32_t grid_side { square_side(constants::enemy_count) };
-
-		// Between the centers of neighboring copies, a bit more than the width of the model
-		constexpr float object_spacing { 2.0f };
-
-		// Turns the open side of the viking room toward the initial camera, which looks along -z
-		constexpr float model_yaw { glm::radians(-90.0f) };
-
-		// A square grid on the ground centered at the origin, each copy turned differently
-		[[nodiscard]] constexpr Transform object_transform(std::uint32_t object_index) noexcept
-		{
-			const std::uint32_t row { object_index / grid_side };
-			const std::uint32_t column { object_index % grid_side };
-			const float grid_offset { static_cast<float>(grid_side - 1) * object_spacing / 2.0f };
-			const float x { static_cast<float>(column) * object_spacing - grid_offset };
-			const float z { static_cast<float>(row) * object_spacing - grid_offset };
-			const float yaw { model_yaw + static_cast<float>(object_index) * glm::radians(40.0f) };
-
-			return {
-				.position { x, 0.0f, z },
-				.rotation { 0.0f, yaw, 0.0f }
-			};
-		}
 
 		[[nodiscard]] constexpr vk::Rect2D full_area(vk::Extent2D extent) noexcept
 		{
@@ -272,13 +208,15 @@ namespace quokka
 		const GraphicsPipeline& graphics_pipeline,
 		GpuTimer& gpu_timer,
 		const Gui& gui,
-		DamageNumbers& damage_numbers)
+		DamageNumbers& damage_numbers,
+		EnemySimulation& enemy_simulation)
 		: device_ { device }
 		, swapchain_ { swapchain }
 		, graphics_pipeline_ { graphics_pipeline }
 		, gpu_timer_ { gpu_timer }
 		, gui_ { gui }
 		, damage_numbers_ { damage_numbers }
+		, enemy_simulation_ { enemy_simulation }
 		, recording_threads_ { constants::recording_thread_count }
 	{
 		create_command_pool();
@@ -289,7 +227,6 @@ namespace quokka
 		const Mesh mesh { load_model() };
 		create_vertex_buffer(mesh);
 		create_index_buffer(mesh);
-		create_instance_buffer();
 
 		create_texture_image();
 		create_texture_image_view();
@@ -407,24 +344,6 @@ namespace quokka
 			present_result == vk::Result::eSuboptimalKHR;
 	}
 
-	Camera Renderer::initial_camera() noexcept
-	{
-		// Back and above the grid, far enough to see all of it, whatever its size
-		constexpr float grid_size { static_cast<float>(grid_side) * object_spacing };
-		constexpr glm::vec3 camera_position {
-			0.0f, grid_size * 0.7f + 1.0f, grid_size * 1.3f + 2.0f
-		};
-
-		constexpr glm::vec3 grid_center { 0.0f, 0.0f, 0.0f };
-
-		return { camera_position, grid_center };
-	}
-
-	glm::vec3 Renderer::enemy_position(std::uint32_t enemy_index) noexcept
-	{
-		return object_transform(enemy_index).position;
-	}
-
 	void Renderer::create_command_pool()
 	{
 		const vk::CommandPoolCreateInfo create_info {
@@ -504,25 +423,6 @@ namespace quokka
 		);
 
 		index_count_ = static_cast<std::uint32_t>(mesh.indices.size());
-	}
-
-	void Renderer::create_instance_buffer()
-	{
-		std::vector<InstanceData> instances {};
-		instances.reserve(constants::enemy_count);
-
-		for (std::uint32_t index { 0 }; index < constants::enemy_count; ++index)
-		{
-			instances.push_back({ .model { object_transform(index).model_matrix() } });
-		}
-
-		// Uploaded once, since the enemies don't move yet
-		instance_buffer_ = create_device_local_buffer(
-			device_,
-			command_pool_,
-			std::as_bytes(std::span { instances }),
-			vk::BufferUsageFlagBits::eStorageBuffer
-		);
 	}
 
 	void Renderer::create_texture_image()
@@ -812,9 +712,9 @@ namespace quokka
 			.imageLayout { vk::ImageLayout::eShaderReadOnlyOptimal }
 		};
 
-		// Also the same for every frame, since the enemies don't move yet
-		const vk::DescriptorBufferInfo instance_buffer_info {
-			.buffer { *instance_buffer_.handle },
+		// The simulation updates the enemies in place, and barriers order that with the draws
+		const vk::DescriptorBufferInfo enemy_buffer_info {
+			.buffer { *enemy_simulation_.state_buffer().handle },
 			.offset { 0 },
 			// The whole buffer, however many enemies it holds
 			.range { vk::WholeSize }
@@ -856,14 +756,14 @@ namespace quokka
 				.pImageInfo { &image_info }
 			};
 
-			const vk::WriteDescriptorSet instance_write {
+			const vk::WriteDescriptorSet enemy_write {
 				.dstSet { *descriptor_sets_[index] },
-				// Must match instance_binding in graphics_pipeline.cpp
+				// Must match enemy_binding in graphics_pipeline.cpp
 				.dstBinding { 2 },
 				.dstArrayElement { 0 },
 				.descriptorCount { 1 },
 				.descriptorType { vk::DescriptorType::eStorageBuffer },
-				.pBufferInfo { &instance_buffer_info }
+				.pBufferInfo { &enemy_buffer_info }
 			};
 
 			const vk::WriteDescriptorSet damage_number_write {
@@ -877,7 +777,7 @@ namespace quokka
 			};
 
 			const std::array descriptor_writes {
-				frame_write, texture_write, instance_write, damage_number_write
+				frame_write, texture_write, enemy_write, damage_number_write
 			};
 
 			// No copies from other descriptor sets
@@ -995,7 +895,11 @@ namespace quokka
 			depth_accesses
 		);
 
-		// Before the rendering begins, since copies can't be recorded inside one
+		// Before the rendering begins, since compute work and copies can't be recorded inside one
+		enemy_simulation_.record_update(command_buffer);
+
+		gpu_timer_.record_timestamp(command_buffer, frame_index_, GpuTimestamp::enemies_updated);
+
 		damage_numbers_.record_upload(command_buffer, frame_index_);
 
 		constexpr vk::ClearValue clear_color {

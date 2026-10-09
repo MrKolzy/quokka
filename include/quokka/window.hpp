@@ -17,6 +17,7 @@ namespace quokka
 		d,
 		e,
 		q,
+		r,
 		s,
 		space,
 		w

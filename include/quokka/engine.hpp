@@ -3,6 +3,7 @@
 #include "quokka/camera.hpp"
 #include "quokka/damage_numbers.hpp"
 #include "quokka/device.hpp"
+#include "quokka/enemy_simulation.hpp"
 #include "quokka/frame_timer.hpp"
 #include "quokka/gpu_timer.hpp"
 #include "quokka/graphics_pipeline.hpp"
@@ -12,6 +13,8 @@
 #include "quokka/stats_overlay.hpp"
 #include "quokka/swapchain.hpp"
 #include "quokka/window.hpp"
+
+#include <glm/glm.hpp>
 
 #include <chrono> // std::chrono::steady_clock
 #include <random> // std::mt19937
@@ -35,6 +38,9 @@ namespace quokka
 	private:
 		void update_camera(float delta_seconds) noexcept;
 
+		// Until there's a player, the enemies chase the point of the ground the camera looks at
+		void update_enemies(float delta_seconds) noexcept;
+
 		// A test until there's combat, every enemy takes a hit with its damage number
 		void update_test_hits(float time_seconds);
 
@@ -53,11 +59,13 @@ namespace quokka
 		DamageNumbers damage_numbers_ {
 			device_, graphics_pipeline_.descriptor_set_layout(), swapchain_.surface_format().format
 		};
+		EnemySimulation enemy_simulation_ { device_ };
 		Renderer renderer_ {
-			device_, swapchain_, graphics_pipeline_, gpu_timer_, gui_, damage_numbers_
+			device_, swapchain_, graphics_pipeline_, gpu_timer_, gui_, damage_numbers_,
+			enemy_simulation_
 		};
 
-		Camera camera_ { Renderer::initial_camera() };
+		Camera camera_ { EnemySimulation::initial_camera() };
 
 		// Edited live from the light panel
 		DirectionalLight light_ {};
@@ -76,7 +84,11 @@ namespace quokka
 		// Default seed, so every run deals the same damage, which keeps benchmarks repeatable
 		std::mt19937 random_engine_ {};
 
-		// So a hit happens once per press, not every frame while the key is held
+		// On the ground as world x and z, kept while the camera looks above the horizon
+		glm::vec2 chase_target_ {};
+
+		// So these keys act once per press, not every frame while they're held
 		bool was_hit_key_pressed_ { false };
+		bool was_reset_key_pressed_ { false };
 	};
 }

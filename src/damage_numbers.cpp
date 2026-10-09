@@ -1,5 +1,6 @@
 #include "quokka/damage_numbers.hpp"
 
+#include "quokka/barrier.hpp"
 #include "quokka/constants.hpp"
 #include "quokka/device.hpp"
 #include "quokka/shader_module.hpp"
@@ -21,7 +22,7 @@ namespace quokka
 		constexpr std::uint32_t vertices_per_number { max_digits * 6 };
 
 		// The stride of the shader's array, so the C++ struct must take the same space
-		static_assert(sizeof(DamageNumber) == 32);
+		static_assert(sizeof(DamageNumber) == 16);
 
 		constexpr vk::DeviceSize ring_size { sizeof(DamageNumber) * DamageNumbers::capacity };
 
@@ -181,28 +182,6 @@ namespace quokka
 				std::as_bytes(std::span { expired_numbers }),
 				vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst
 			);
-		}
-
-		void memory_barrier(
-			const vk::raii::CommandBuffer& command_buffer,
-			vk::PipelineStageFlags2 src_stage_mask,
-			vk::AccessFlags2 src_access_mask,
-			vk::PipelineStageFlags2 dst_stage_mask,
-			vk::AccessFlags2 dst_access_mask) noexcept
-		{
-			const vk::MemoryBarrier2 barrier {
-				.srcStageMask { src_stage_mask },
-				.srcAccessMask { src_access_mask },
-				.dstStageMask { dst_stage_mask },
-				.dstAccessMask { dst_access_mask }
-			};
-
-			const vk::DependencyInfo dependency_info {
-				.memoryBarrierCount { 1 },
-				.pMemoryBarriers { &barrier }
-			};
-
-			command_buffer.pipelineBarrier2(dependency_info);
 		}
 	}
 

@@ -2,10 +2,8 @@
 
 #include "quokka/buffer.hpp"
 
-#include <glm/glm.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
-#include <array> // std::array
 #include <cstdint> // std::uint32_t
 #include <limits> // std::numeric_limits
 #include <vector> // std::vector
@@ -17,7 +15,8 @@ namespace quokka
 	struct DamageNumber
 	{
 		// Must match DamageNumber in damage_numbers.slang
-		glm::vec3 position;
+		// The enemy it belongs to, whose position the shader reads every frame
+		std::uint32_t enemy_index;
 
 		// In seconds, on the same clock as the time in the frame uniforms
 		float spawn_time;
@@ -26,9 +25,6 @@ namespace quokka
 
 		// 0 or 1, since a bool has no fixed size in a shader buffer
 		std::uint32_t is_critical;
-
-		// The vec3 aligns the shader's struct to 16 bytes, which rounds it up to 32
-		std::array<std::uint32_t, 2> padding;
 	};
 
 	class DamageNumbers

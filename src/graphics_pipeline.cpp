@@ -33,8 +33,8 @@ namespace quokka
 				.stageFlags { vk::ShaderStageFlagBits::eFragment }
 			};
 
-			// Must match instances in shader.slang
-			constexpr vk::DescriptorSetLayoutBinding instance_binding {
+			// Must match enemies in shader.slang and damage_numbers.slang
+			constexpr vk::DescriptorSetLayoutBinding enemy_binding {
 				.binding { 2 },
 				.descriptorType { vk::DescriptorType::eStorageBuffer },
 				.descriptorCount { 1 },
@@ -50,7 +50,7 @@ namespace quokka
 			};
 
 			constexpr std::array bindings {
-				frame_binding, texture_binding, instance_binding, damage_number_binding
+				frame_binding, texture_binding, enemy_binding, damage_number_binding
 			};
 
 			const vk::DescriptorSetLayoutCreateInfo create_info {

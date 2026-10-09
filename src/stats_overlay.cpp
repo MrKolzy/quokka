@@ -135,6 +135,7 @@ namespace quokka
 			table_row("FPS", std::format("{:.0f}", averages_.fps));
 			table_row("Frame", std::format("{:.2f} ms", averages_.frame_time_ms));
 			table_row("GPU", std::format("{:.2f} ms", averages_.gpu_time_ms));
+			table_row("Enemy update", std::format("{:.3f} ms", averages_.enemy_update_ms));
 			ImGui::EndTable();
 		}
 
@@ -167,6 +168,8 @@ namespace quokka
 			slowest_frame_ms * graph_headroom,
 			graph_size);
 
-		ImGui::TextDisabled("Space hits every enemy, F1 hides the interface");
+		// The enemies chase the point of the ground the camera looks at
+		ImGui::TextDisabled("Look at enemies to pull them, Space hits, R resets");
+		ImGui::TextDisabled("F1 hides the interface");
 	}
 }

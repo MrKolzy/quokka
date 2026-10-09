@@ -1,17 +1,26 @@
+#include "enemy.slang"
 #include "frame.slang"
 
 // Must match DamageNumber in damage_numbers.hpp
 struct DamageNumber
 {
-	float3 position;
+	uint enemy_index;
 	float spawn_time;
 	uint value;
 	uint is_critical;
 };
 
+// Read for the position of the enemy each number belongs to, must match enemy_binding
+// in graphics_pipeline.cpp
+[[vk::binding(2, 0)]]
+StructuredBuffer<EnemyState> enemies;
+
 // A ring of the latest ones, must match damage_number_binding in graphics_pipeline.cpp
 [[vk::binding(3, 0)]]
 StructuredBuffer<DamageNumber> damage_numbers;
+
+// Above the enemy's head, since the viking room is about a unit tall
+static const float anchor_height = 1.2;
 
 // In seconds, must match damage_number_lifetime in damage_numbers.cpp
 static const float lifetime = 1.0;
@@ -128,7 +137,10 @@ VertexOutput vert_main(
 		return output;
 	}
 
-	const float4 anchor = mul(frame.projection, mul(frame.view, float4(number.position, 1.0)));
+	// Follows the enemy while it moves, the way nameplates do
+	const float2 ground_position = enemies[number.enemy_index].position;
+	const float3 position = float3(ground_position.x, anchor_height, ground_position.y);
+	const float4 anchor = mul(frame.projection, mul(frame.view, float4(position, 1.0)));
 
 	// Behind the camera
 	if (anchor.w <= 0.0)

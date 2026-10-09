@@ -4,7 +4,6 @@
 #include "quokka/image.hpp"
 #include "quokka/worker_threads.hpp"
 
-#include <glm/glm.hpp>
 #include <vulkan/vulkan_raii.hpp>
 
 #include <cstdint> // std::uint32_t
@@ -16,6 +15,7 @@ namespace quokka
 	class DamageNumbers;
 	class Device;
 	struct DirectionalLight;
+	class EnemySimulation;
 	class GpuTimer;
 	class GraphicsPipeline;
 	class Gui;
@@ -31,7 +31,8 @@ namespace quokka
 			const GraphicsPipeline& graphics_pipeline,
 			GpuTimer& gpu_timer,
 			const Gui& gui,
-			DamageNumbers& damage_numbers);
+			DamageNumbers& damage_numbers,
+			EnemySimulation& enemy_simulation);
 		~Renderer();
 
 		// recording_threads_ can't be copied or moved, so neither can it
@@ -47,12 +48,6 @@ namespace quokka
 			const DirectionalLight& light,
 			float time_seconds);
 
-		// Frames the whole grid, which the renderer still owns
-		[[nodiscard]] static Camera initial_camera() noexcept;
-
-		// Where an enemy of the grid stands, until enemies have a module of their own
-		[[nodiscard]] static glm::vec3 enemy_position(std::uint32_t enemy_index) noexcept;
-
 	private:
 		void create_command_pool();
 		void create_command_buffers();
@@ -60,7 +55,6 @@ namespace quokka
 		[[nodiscard]] Mesh load_model() const;
 		void create_vertex_buffer(const Mesh& mesh);
 		void create_index_buffer(const Mesh& mesh);
-		void create_instance_buffer();
 		void create_texture_image();
 		void create_texture_image_view();
 		void create_texture_sampler();
@@ -101,6 +95,7 @@ namespace quokka
 		GpuTimer& gpu_timer_;
 		const Gui& gui_;
 		DamageNumbers& damage_numbers_;
+		EnemySimulation& enemy_simulation_;
 
 		// Each one is destroyed before the object it came from, so don't reorder
 		vk::raii::CommandPool command_pool_ { nullptr };
@@ -121,10 +116,6 @@ namespace quokka
 
 		// Kept from the mesh, whose CPU copy is freed once it's uploaded
 		std::uint32_t index_count_ {};
-
-		// The model matrix of every enemy, read by the vertex shader at its instance index
-		Buffer instance_buffer_ {};
-
 		// Read from the texture file, which can store its texels in any format
 		vk::Format texture_format_ {};
 
