@@ -1,7 +1,11 @@
 #pragma once
 
+#include "quokka/abilities.hpp"
+
 #include <glm/glm.hpp>
 
+#include <array> // std::array
+#include <cstddef> // std::size_t
 #include <limits> // std::numeric_limits
 
 namespace quokka
@@ -29,8 +33,10 @@ namespace quokka
 
 		// True when the ability is ready at this time, in seconds since the start,
 		// which casts it and starts its cooldown
-		[[nodiscard]] bool try_blast(float time_seconds) noexcept;
-		[[nodiscard]] bool try_strike(float time_seconds) noexcept;
+		[[nodiscard]] bool try_cast(Ability ability, float time_seconds) noexcept;
+
+		// In seconds, 0 once the ability is ready
+		[[nodiscard]] float cooldown_left(Ability ability, float time_seconds) const noexcept;
 
 		// For the shock wave, in seconds since the start and on the ground as world x and z
 		[[nodiscard]] float last_blast_time() const noexcept;
@@ -43,9 +49,8 @@ namespace quokka
 		glm::vec2 aim_point_ { 0.0f };
 		float yaw_ {};
 
-		// In seconds since the start, when each ability can be cast again
-		float next_blast_time_ {};
-		float next_strike_time_ {};
+		// In seconds since the start, when each ability can be cast again, indexed by Ability
+		std::array<float, static_cast<std::size_t>(Ability::count)> next_cast_times_ {};
 
 		// Never cast yet, so there's no shock wave
 		float last_blast_time_ { -std::numeric_limits<float>::infinity() };

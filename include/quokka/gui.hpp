@@ -7,6 +7,10 @@ namespace quokka
 	class Device;
 	class Window;
 
+	// The swapchain is sRGB and encodes what ImGui draws, so colors picked in sRGB, like
+	// ImGui's style, must be converted to linear first or they'd come out washed out
+	[[nodiscard]] float srgb_to_linear(float value) noexcept;
+
 	class Gui
 	{
 	public:
@@ -26,8 +30,9 @@ namespace quokka
 		// Inside a rendering with one sample and no depth, after end_frame
 		void record(const vk::raii::CommandBuffer& command_buffer) const noexcept;
 
-		// Toggled with F1, and while hidden none of the interface is recorded
-		[[nodiscard]] bool is_visible() const noexcept;
+		// The debug panels, such as the stats and the light, toggled with F1 and hidden at first
+		// The game's own interface, such as the hotbar, is always shown
+		[[nodiscard]] bool are_panels_visible() const noexcept;
 
 		// True while the interface uses the input, so the camera must ignore it
 		[[nodiscard]] bool wants_mouse() const noexcept;
@@ -35,6 +40,6 @@ namespace quokka
 
 	private:
 		const Window& window_;
-		bool is_visible_ { true };
+		bool are_panels_visible_ { false };
 	};
 }

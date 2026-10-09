@@ -1,6 +1,8 @@
 #include "quokka/engine.hpp"
 
+#include "quokka/abilities.hpp"
 #include "quokka/constants.hpp"
+#include "quokka/hotbar.hpp"
 #include "quokka/light_panel.hpp"
 
 #include <algorithm> // std::clamp, std::min
@@ -81,11 +83,13 @@ namespace quokka
 			// Every ImGui call between the two adds to this frame's interface
 			gui_.begin_frame();
 
-			if (gui_.is_visible())
+			if (gui_.are_panels_visible())
 			{
 				stats_overlay_.show();
 				show_light_panel(light_);
 			}
+
+			show_hotbar(player_, elapsed_time.count());
 
 			gui_.end_frame();
 
@@ -279,23 +283,35 @@ namespace quokka
 
 	void Engine::update_abilities(float time_seconds) noexcept
 	{
-		// The free camera looks with the right button, and over the interface clicks are for it
-		if (is_camera_free_ || gui_.wants_mouse())
+		// The free camera looks around with the right button and moves with some of the keys
+		if (is_camera_free_)
 		{
 			return;
 		}
 
-		// Held buttons cast again as soon as each cooldown ends, like in Diablo
-		if (window_.is_mouse_button_pressed(MouseButton::left) && player_.try_strike(time_seconds))
-		{
-			enemy_simulation_.cast_strike();
-			damage_numbers_.note_cast(time_seconds);
-		}
+		// Over the interface clicks are for it, and typing into it mustn't cast
+		const bool can_click { !gui_.wants_mouse() };
+		const bool can_press_keys { !gui_.wants_keyboard() };
 
-		if (window_.is_mouse_button_pressed(MouseButton::right) && player_.try_blast(time_seconds))
+		for (const HotbarSlot& slot : hotbar_slots)
 		{
-			enemy_simulation_.cast_blast();
-			damage_numbers_.note_cast(time_seconds);
+			if (!slot.ability)
+			{
+				continue;
+			}
+
+			const Ability ability { *slot.ability };
+			const bool is_held {
+				(can_press_keys && window_.is_key_pressed(slot.key)) ||
+				(can_click && window_.is_mouse_button_pressed(ability_info(ability).mouse_button))
+			};
+
+			// Held keys and buttons cast again as soon as the cooldown ends, like in Diablo
+			if (is_held && player_.try_cast(ability, time_seconds))
+			{
+				enemy_simulation_.cast(ability);
+				damage_numbers_.note_cast(time_seconds);
+			}
 		}
 	}
 

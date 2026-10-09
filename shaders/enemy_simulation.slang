@@ -42,6 +42,13 @@ struct SimulationConstants
 
 	// Abilities cast this frame, as cast flags
 	uint casts;
+
+	// Minimum and maximum, from the ability definitions in abilities.hpp
+	float2 strike_damage;
+	float2 blast_damage;
+
+	// In percent, and critical hits deal double damage
+	uint critical_chance;
 };
 
 [[vk::push_constant]]
@@ -61,16 +68,8 @@ static const float chase_speed = 3.0;
 static const float separation_speed = 4.0;
 static const float max_speed = 6.0;
 
-// Balanced around enemy_health in enemy_simulation.cpp, so a few strikes or blasts kill one
-static const float strike_min_damage = 300.0;
-static const float strike_max_damage = 500.0;
-static const float blast_min_damage = 150.0;
-static const float blast_max_damage = 300.0;
-static const float test_min_damage = 100.0;
-static const float test_max_damage = 999.0;
-
-// In percent, and critical hits deal double damage
-static const uint critical_chance = 15;
+// The test isn't an ability, so its damage only lives here
+static const float2 test_damage = float2(100.0, 999.0);
 
 // So an enemy hit by both abilities in the same frame rolls its damage twice
 static const uint blast_seed = 1;
@@ -109,13 +108,14 @@ void spawn_number(uint index, uint damage, bool is_critical)
 
 // Different for every enemy, frame and ability, with its number spawned
 // Returns the damage, doubled by a critical hit
-uint roll_hit(uint index, uint seed, float min_damage, float max_damage)
+uint roll_hit(uint index, uint seed, float2 damage_range)
 {
 	const uint random = pcg_hash(index ^ pcg_hash(asuint(simulation.time) ^ seed));
 
 	// The low 16 bits pick the damage and the high ones the critical hit
-	const uint damage = uint(lerp(min_damage, max_damage, float(random & 0xFFFF) / 65535.0));
-	const bool is_critical = (random >> 16) % 100 < critical_chance;
+	const float roll = float(random & 0xFFFF) / 65535.0;
+	const uint damage = uint(lerp(damage_range.x, damage_range.y, roll));
+	const bool is_critical = (random >> 16) % 100 < simulation.critical_chance;
 	const uint dealt_damage = is_critical ? 2 * damage : damage;
 
 	spawn_number(index, dealt_damage, is_critical);
@@ -124,9 +124,9 @@ uint roll_hit(uint index, uint seed, float min_damage, float max_damage)
 }
 
 // The hit pulls the enemy however far it is
-void take_hit(inout EnemyState enemy, uint index, uint seed, float min_damage, float max_damage)
+void take_hit(inout EnemyState enemy, uint index, uint seed, float2 damage_range)
 {
-	enemy.health -= float(roll_hit(index, seed, min_damage, max_damage));
+	enemy.health -= float(roll_hit(index, seed, damage_range));
 	enemy.last_hit_time = simulation.time;
 	enemy.is_chasing = 1;
 }
@@ -182,7 +182,7 @@ void update_main(uint3 thread_id : SV_DispatchThreadID, uint3 local_id : SV_Grou
 	// The dead too, so a benchmark always shows a number for every enemy
 	if ((simulation.casts & test_cast) != 0)
 	{
-		roll_hit(index, test_seed, test_min_damage, test_max_damage);
+		roll_hit(index, test_seed, test_damage);
 	}
 
 	// Still written, because after a reset the states must be overwritten by the copy
@@ -228,7 +228,7 @@ void update_main(uint3 thread_id : SV_DispatchThreadID, uint3 local_id : SV_Grou
 
 	if ((simulation.casts & blast_cast) != 0 && aim_distance < blast_radius)
 	{
-		take_hit(enemy, index, blast_seed, blast_min_damage, blast_max_damage);
+		take_hit(enemy, index, blast_seed, simulation.blast_damage);
 	}
 
 	// Killed by the blast, it can no longer be the target
@@ -255,7 +255,7 @@ void strike_main()
 	const uint index = target_key & 0xFFFF;
 
 	EnemyState enemy = enemies[index];
-	take_hit(enemy, index, strike_seed, strike_min_damage, strike_max_damage);
+	take_hit(enemy, index, strike_seed, simulation.strike_damage);
 	enemies[index] = enemy;
 }
 

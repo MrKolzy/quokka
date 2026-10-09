@@ -31,6 +31,12 @@ namespace quokka
 				return GLFW_KEY_E;
 			case Key::f2:
 				return GLFW_KEY_F2;
+			case Key::five:
+				return GLFW_KEY_5;
+			case Key::four:
+				return GLFW_KEY_4;
+			case Key::one:
+				return GLFW_KEY_1;
 			case Key::q:
 				return GLFW_KEY_Q;
 			case Key::r:
@@ -39,6 +45,12 @@ namespace quokka
 				return GLFW_KEY_S;
 			case Key::space:
 				return GLFW_KEY_SPACE;
+			case Key::t:
+				return GLFW_KEY_T;
+			case Key::three:
+				return GLFW_KEY_3;
+			case Key::two:
+				return GLFW_KEY_2;
 			case Key::w:
 				return GLFW_KEY_W;
 			}

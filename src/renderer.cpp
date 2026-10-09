@@ -739,14 +739,6 @@ namespace quokka
 		std::uint32_t image_index,
 		float time_seconds) const
 	{
-		const bool should_draw_damage_numbers { damage_numbers_.has_visible_numbers(time_seconds) };
-
-		// With nothing to draw, the frame is the same as without an overlay, which benchmarks need
-		if (!should_draw_damage_numbers && !gui_.is_visible())
-		{
-			return;
-		}
-
 		// Drawn over the finished scene, so it waits for its color writes, the MSAA resolve too
 		// The layout stays the same, so this barrier only orders the writes
 		transition_image_layout(
@@ -779,7 +771,7 @@ namespace quokka
 
 		command_buffer.beginRendering(rendering_info);
 
-		if (should_draw_damage_numbers)
+		if (damage_numbers_.has_visible_numbers(time_seconds))
 		{
 			damage_numbers_.record_draw(
 				command_buffer,
@@ -790,10 +782,7 @@ namespace quokka
 		}
 
 		// Last, so the interface stays on top of the damage numbers
-		if (gui_.is_visible())
-		{
-			gui_.record(command_buffer);
-		}
+		gui_.record(command_buffer);
 
 		command_buffer.endRendering();
 	}

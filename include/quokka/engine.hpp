@@ -51,8 +51,8 @@ namespace quokka
 		// The player aims where the cursor points on the ground, so it must run after the camera
 		void update_aim() noexcept;
 
-		// The left mouse button strikes the enemy under the cursor and the right one blasts
-		// everyone around it, so it must run after the aim
+		// Casts the abilities of the hotbar keys and of their mouse buttons toward the cursor,
+		// so it must run after the aim
 		void update_abilities(float time_seconds) noexcept;
 
 		// The enemies chase the player and take the hits cast this frame

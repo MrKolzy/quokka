@@ -108,7 +108,12 @@ VertexOutput enemy_vert_main(VertexInput input, uint instance_index : SV_VulkanI
 	VertexOutput output = place_on_ground(
 		input, enemy.position, enemy.yaw, -sink_depth * sink_amount * sink_amount);
 	output.hit_flash = saturate(1.0 - time_since_hit / hit_flash_duration);
-	output.target_highlight = is_target(combat[0].target_key, instance_index) ? 1.0 : 0.0;
+
+	// Everyone the blast would hit is selected, and the strike's target the most
+	const bool is_in_blast = !is_dead && distance(enemy.position, frame.aim_point) < blast_radius;
+	output.target_highlight = is_target(combat[0].target_key, instance_index)
+		? 1.0
+		: (is_in_blast ? 0.5 : 0.0);
 
 	// Fully sunk, every vertex goes to the same point in front of the near plane,
 	// so the rasterizer clips every triangle and nothing is drawn

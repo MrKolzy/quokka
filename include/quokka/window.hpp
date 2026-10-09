@@ -17,10 +17,16 @@ namespace quokka
 		d,
 		e,
 		f2,
+		five,
+		four,
+		one,
 		q,
 		r,
 		s,
 		space,
+		t,
+		three,
+		two,
 		w
 	};
 

@@ -1,5 +1,6 @@
 #include "quokka/player.hpp"
 
+#include <algorithm> // std::max
 #include <cmath> // std::atan2
 
 namespace quokka
@@ -12,10 +13,6 @@ namespace quokka
 		// In world units, closer than this the direction to the aim point is too unsteady to face,
 		// for example with the cursor right below the player
 		constexpr float min_aim_distance { 0.3f };
-
-		// In seconds between casts while the button is held, the strike is the quick one
-		constexpr float blast_cooldown { 0.8f };
-		constexpr float strike_cooldown { 0.3f };
 
 		// Yaw 0 faces +z and positive values turn toward +x, so x goes first
 		[[nodiscard]] float yaw_toward(glm::vec2 direction) noexcept
@@ -59,30 +56,28 @@ namespace quokka
 		face_aim_point();
 	}
 
-	bool Player::try_blast(float time_seconds) noexcept
+	bool Player::try_cast(Ability ability, float time_seconds) noexcept
 	{
-		if (time_seconds < next_blast_time_)
+		float& next_cast_time { next_cast_times_[static_cast<std::size_t>(ability)] };
+		if (time_seconds < next_cast_time)
 		{
 			return false;
 		}
 
-		next_blast_time_ = time_seconds + blast_cooldown;
-		last_blast_time_ = time_seconds;
-		last_blast_point_ = aim_point_;
+		next_cast_time = time_seconds + ability_info(ability).cooldown;
+
+		if (ability == Ability::blast)
+		{
+			last_blast_time_ = time_seconds;
+			last_blast_point_ = aim_point_;
+		}
 
 		return true;
 	}
 
-	bool Player::try_strike(float time_seconds) noexcept
+	float Player::cooldown_left(Ability ability, float time_seconds) const noexcept
 	{
-		if (time_seconds < next_strike_time_)
-		{
-			return false;
-		}
-
-		next_strike_time_ = time_seconds + strike_cooldown;
-
-		return true;
+		return std::max(next_cast_times_[static_cast<std::size_t>(ability)] - time_seconds, 0.0f);
 	}
 
 	float Player::last_blast_time() const noexcept

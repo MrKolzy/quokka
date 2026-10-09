@@ -74,6 +74,7 @@ namespace quokka
 			float time_seconds);
 
 		// The damage numbers and the interface, over the finished scene
+		// Recorded every frame, since the game's interface is always on screen
 		void record_overlay(
 			const vk::raii::CommandBuffer& command_buffer,
 			const vk::raii::DescriptorSet& descriptor_set,

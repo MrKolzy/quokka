@@ -26,7 +26,20 @@ namespace quokka
 			glm::vec2 aim_point;
 			float time;
 			std::uint32_t casts;
+
+			// Minimum and maximum, from the abilities so their descriptions match what they do
+			glm::vec2 strike_damage;
+			glm::vec2 blast_damage;
+			std::uint32_t critical_chance;
+
+			// The shader's struct holds float2 members, so its size is a multiple of 8
+			std::uint32_t padding;
 		};
+
+		[[nodiscard]] glm::vec2 damage_range(Ability ability) noexcept
+		{
+			return { ability_info(ability).min_damage, ability_info(ability).max_damage };
+		}
 
 		// Cast flags, must match blast_cast and test_cast in enemy_simulation.slang
 		// The strike has no flag, since it's a dispatch of its own
@@ -56,7 +69,7 @@ namespace quokka
 		// The target key keeps the index in 16 bits, and the largest key means no target
 		static_assert(constants::enemy_count < 0xFFFF);
 
-		// The damage in enemy_simulation.slang is balanced around it
+		// The abilities in abilities.hpp are balanced around it
 		constexpr float enemy_health { 1000.0f };
 
 		// The smallest side whose square holds the count, so the last row may be incomplete
@@ -239,14 +252,19 @@ namespace quokka
 		time_seconds_ = time_seconds;
 	}
 
-	void EnemySimulation::cast_blast() noexcept
+	void EnemySimulation::cast(Ability ability) noexcept
 	{
-		is_blast_cast_ = true;
-	}
-
-	void EnemySimulation::cast_strike() noexcept
-	{
-		is_strike_cast_ = true;
+		switch (ability)
+		{
+		case Ability::strike:
+			is_strike_cast_ = true;
+			break;
+		case Ability::blast:
+			is_blast_cast_ = true;
+			break;
+		case Ability::count:
+			break;
+		}
 	}
 
 	void EnemySimulation::cast_test_hits() noexcept
@@ -334,7 +352,10 @@ namespace quokka
 			.enemy_count { constants::enemy_count },
 			.aim_point { aim_point_ },
 			.time { time_seconds_ },
-			.casts { (is_blast_cast_ ? blast_cast : 0) | (is_test_cast_ ? test_cast : 0) }
+			.casts { (is_blast_cast_ ? blast_cast : 0) | (is_test_cast_ ? test_cast : 0) },
+			.strike_damage { damage_range(Ability::strike) },
+			.blast_damage { damage_range(Ability::blast) },
+			.critical_chance { critical_chance }
 		};
 		command_buffer.pushConstants<SimulationConstants>(
 			*pipeline_layout_,

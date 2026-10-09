@@ -17,14 +17,8 @@ namespace quokka
 {
 	namespace
 	{
-		// Shows and hides the interface, like the debug overlays of many games
-		constexpr ImGuiKey visibility_key { ImGuiKey_F1 };
-
-		// The exact sRGB curve, which is linear near black and a 2.4 power above it
-		[[nodiscard]] float srgb_to_linear(float value) noexcept
-		{
-			return value <= 0.04045f ? value / 12.92f : std::pow((value + 0.055f) / 1.055f, 2.4f);
-		}
+		// Shows and hides the debug panels, like the debug overlays of many games
+		constexpr ImGuiKey panels_key { ImGuiKey_F1 };
 
 		// Shrinks each window that's bigger than the viewport and moves it back inside,
 		// so none is left cut off at the edges
@@ -79,6 +73,12 @@ namespace quokka
 	}
 
 	// ***
+
+	float srgb_to_linear(float value) noexcept
+	{
+		// The exact sRGB curve, which is linear near black and a 2.4 power above it
+		return value <= 0.04045f ? value / 12.92f : std::pow((value + 0.055f) / 1.055f, 2.4f);
+	}
 
 	// ImGui cycles through one copy of its vertex buffers per frame, and needs at least 2
 	static_assert(constants::max_frames_in_flight >= 2);
@@ -172,10 +172,9 @@ namespace quokka
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 
-		// Checked even while hidden, since ImGui keeps reading the keyboard
-		if (ImGui::IsKeyPressed(visibility_key, false))
+		if (ImGui::IsKeyPressed(panels_key, false))
 		{
-			is_visible_ = !is_visible_;
+			are_panels_visible_ = !are_panels_visible_;
 		}
 
 		keep_windows_inside(*ImGui::GetMainViewport());
@@ -192,9 +191,9 @@ namespace quokka
 		ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), *command_buffer);
 	}
 
-	bool Gui::is_visible() const noexcept
+	bool Gui::are_panels_visible() const noexcept
 	{
-		return is_visible_;
+		return are_panels_visible_;
 	}
 
 	bool Gui::wants_mouse() const noexcept

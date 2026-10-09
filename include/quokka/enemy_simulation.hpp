@@ -1,5 +1,6 @@
 #pragma once
 
+#include "quokka/abilities.hpp"
 #include "quokka/buffer.hpp"
 
 #include <glm/glm.hpp>
@@ -57,8 +58,7 @@ namespace quokka
 
 		// During the next record_update, the blast hits everyone around the aim point
 		// and the strike hits only the enemy closest to it
-		void cast_blast() noexcept;
-		void cast_strike() noexcept;
+		void cast(Ability ability) noexcept;
 
 		// During the next record_update, a damage number on every enemy without hurting anyone,
 		// so a benchmark can show as many numbers as there are enemies again and again
