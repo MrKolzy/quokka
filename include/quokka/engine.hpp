@@ -52,8 +52,12 @@ namespace quokka
 		// The player aims where the cursor points on the ground, so it must run after the camera
 		void update_aim() noexcept;
 
-		// The enemies chase the player
-		void update_enemies(float delta_seconds) noexcept;
+		// The left mouse button strikes the enemy under the cursor and the right one blasts
+		// everyone around it, so it must run after the aim
+		void update_abilities(float time_seconds) noexcept;
+
+		// The enemies chase the player and take the hits cast this frame
+		void update_enemies(float delta_seconds, float time_seconds) noexcept;
 
 		// A test until there's combat, every enemy takes a hit with its damage number
 		void update_test_hits(float time_seconds);

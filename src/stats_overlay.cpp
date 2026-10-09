@@ -169,7 +169,8 @@ namespace quokka
 			graph_size);
 
 		ImGui::TextDisabled("WASD walks, the mouse aims, the wheel zooms");
-		ImGui::TextDisabled("Space hits, R resets");
+		ImGui::TextDisabled("Left click strikes, right click blasts");
+		ImGui::TextDisabled("Space shows test hits, R resets");
 		ImGui::TextDisabled("F1 hides the interface, F2 frees the camera");
 	}
 }

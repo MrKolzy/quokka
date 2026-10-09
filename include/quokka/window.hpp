@@ -24,6 +24,12 @@ namespace quokka
 		w
 	};
 
+	enum class MouseButton
+	{
+		left,
+		right
+	};
+
 	class Window
 	{
 	public:
@@ -52,7 +58,7 @@ namespace quokka
 
 		// Held down as of the last poll_events
 		[[nodiscard]] bool is_key_pressed(Key key) const noexcept;
-		[[nodiscard]] bool is_right_mouse_button_pressed() const noexcept;
+		[[nodiscard]] bool is_mouse_button_pressed(MouseButton button) const noexcept;
 
 		// A captured cursor is hidden and moves without limits, so it can turn the camera
 		[[nodiscard]] bool is_cursor_captured() const noexcept;

@@ -5,6 +5,10 @@
 [[vk::binding(1, 0)]]
 StructuredBuffer<EnemyState> enemies;
 
+// Written by the simulation every frame, must match combat_binding in graphics_pipeline.cpp
+[[vk::binding(3, 0)]]
+StructuredBuffer<CombatState> combat;
+
 // Image and sampler in one descriptor, in the set of the model being drawn
 // Must match texture_binding in graphics_pipeline.cpp
 [[vk::binding(0, 1)]]
@@ -37,7 +41,23 @@ struct VertexOutput
 	float3 world_position;
 	float3 normal;
 	float2 texture_coordinates;
+
+	// From 0 to 1, the same for the whole model, so they aren't interpolated
+	nointerpolation float hit_flash;
+	nointerpolation float target_highlight;
 };
+
+// Linear, the color that marks what the player aims at, on the ground and around the target
+static const float3 aim_color = float3(1.0, 0.55, 0.12);
+
+// In seconds, how long a hit turns an enemy white
+static const float hit_flash_duration = 0.12;
+
+// A dead enemy stays up for the delay, then sinks this deep in world units, deeper than it's
+// tall, so the ground drawn after it hides it
+static const float death_delay = 0.2;
+static const float sink_duration = 1.2;
+static const float sink_depth = 3.0;
 
 // The same rotation as glm::rotate around y, so a quarter turn takes +z to +x
 float3 rotate_around_up(float3 value, float angle)
@@ -48,12 +68,12 @@ float3 rotate_around_up(float3 value, float angle)
 	return float3(value.x * cosine + value.z * sine, value.y, value.z * cosine - value.x * sine);
 }
 
-// Turned to face along the yaw, then moved to its spot on the ground
+// Turned to face along the yaw, then moved to its spot on the ground, or below it when sinking
 // glTF models face +z, which is yaw 0, so they need no extra turn
-VertexOutput place_on_ground(VertexInput input, float2 ground_position, float yaw)
+VertexOutput place_on_ground(VertexInput input, float2 ground_position, float yaw, float height)
 {
 	const float3 world_position = rotate_around_up(input.position, yaw) +
-		float3(ground_position.x, 0.0, ground_position.y);
+		float3(ground_position.x, height, ground_position.y);
 
 	const float4 view_position = mul(frame.view, float4(world_position, 1.0));
 
@@ -65,6 +85,8 @@ VertexOutput place_on_ground(VertexInput input, float2 ground_position, float ya
 	output.normal = rotate_around_up(input.normal, yaw);
 
 	output.texture_coordinates = input.texture_coordinates;
+	output.hit_flash = 0.0;
+	output.target_highlight = 0.0;
 
 	return output;
 }
@@ -75,14 +97,33 @@ VertexOutput place_on_ground(VertexInput input, float2 ground_position, float ya
 VertexOutput enemy_vert_main(VertexInput input, uint instance_index : SV_VulkanInstanceID)
 {
 	const EnemyState enemy = enemies[instance_index];
+	const bool is_dead = enemy.health <= 0.0;
 
-	return place_on_ground(input, enemy.position, enemy.yaw);
+	// Never hit is minus infinity, which saturates to no flash and no sinking
+	const float time_since_hit = frame.time - enemy.last_hit_time;
+	const float sink_amount = is_dead
+		? saturate((time_since_hit - death_delay) / sink_duration)
+		: 0.0;
+
+	VertexOutput output = place_on_ground(
+		input, enemy.position, enemy.yaw, -sink_depth * sink_amount * sink_amount);
+	output.hit_flash = saturate(1.0 - time_since_hit / hit_flash_duration);
+	output.target_highlight = is_target(combat[0].target_key, instance_index) ? 1.0 : 0.0;
+
+	// Fully sunk, every vertex goes to the same point in front of the near plane,
+	// so the rasterizer clips every triangle and nothing is drawn
+	if (sink_amount >= 1.0)
+	{
+		output.position = float4(0.0, 0.0, -1.0, 1.0);
+	}
+
+	return output;
 }
 
 [shader("vertex")]
 VertexOutput player_vert_main(VertexInput input)
 {
-	return place_on_ground(input, player.position, player.yaw);
+	return place_on_ground(input, player.position, player.yaw, 0.0);
 }
 
 // In world units, half the side of the ground square, which is centered below the camera
@@ -112,11 +153,16 @@ static const float tile_variation = 0.3;
 static const float shadow_radius = 0.9;
 static const float shadow_strength = 0.6;
 
-// In world units, the ring marking where the player aims, glowing so it reads on any tile
-static const float aim_ring_radius = 1.0;
+// In world units, the ring around the aim point is as wide as the blast, so it shows who it hits,
+// and it glows so it reads on any tile
 static const float aim_ring_width = 0.08;
-static const float3 aim_color = float3(1.0, 0.55, 0.12);
-static const float aim_fill_opacity = 0.12;
+static const float aim_fill_opacity = 0.08;
+
+// The blast's shock wave spreads to blast_radius over its duration in seconds, fading out,
+// with a hot linear color, brighter than the aim color
+static const float shock_wave_duration = 0.35;
+static const float shock_wave_width = 0.3;
+static const float3 shock_wave_color = float3(1.0, 0.35, 0.08);
 
 struct GroundOutput
 {
@@ -169,11 +215,36 @@ float aim_marker_amount(float2 ground_position)
 	const float half_width = 0.5 * aim_ring_width;
 
 	const float ring = 1.0 - smoothstep(
-		half_width - pixel_size, half_width + pixel_size, abs(distance_to_aim - aim_ring_radius));
+		half_width - pixel_size, half_width + pixel_size, abs(distance_to_aim - blast_radius));
 	const float fill = aim_fill_opacity * (1.0 - smoothstep(
-		aim_ring_radius - pixel_size, aim_ring_radius + pixel_size, distance_to_aim));
+		blast_radius - pixel_size, blast_radius + pixel_size, distance_to_aim));
 
 	return max(ring, fill);
+}
+
+// 1 on the shock wave's front and less inside it, all of it fading out as it spreads
+float shock_wave_amount(float2 ground_position)
+{
+	// Never cast is minus infinity, which is never this recent
+	const float progress = (frame.time - frame.last_blast_time) / shock_wave_duration;
+	if (progress >= 1.0)
+	{
+		return 0.0;
+	}
+
+	// Fast at first and slowing down, like an explosion
+	const float radius = blast_radius * (1.0 - (1.0 - progress) * (1.0 - progress));
+
+	const float distance_to_blast = distance(ground_position, frame.last_blast_point);
+	const float pixel_size = fwidth(distance_to_blast);
+	const float half_width = 0.5 * shock_wave_width;
+
+	const float front = 1.0 - smoothstep(
+		half_width - pixel_size, half_width + pixel_size, abs(distance_to_blast - radius));
+	const float inside = 0.4 * (1.0 - smoothstep(
+		radius - pixel_size, radius + pixel_size, distance_to_blast));
+
+	return max(front, inside) * (1.0 - progress);
 }
 
 [shader("fragment")]
@@ -206,6 +277,7 @@ float4 ground_frag_main(GroundOutput input) : SV_Target
 
 	// Unlit, so it's equally visible in light and in shadow
 	color = lerp(color, aim_color, aim_marker_amount(ground_position));
+	color = lerp(color, shock_wave_color, shock_wave_amount(ground_position));
 
 	const float camera_distance = distance(ground_position, frame.camera_position.xz);
 	color *= 1.0 - smoothstep(fade_start_distance, fade_end_distance, camera_distance);
@@ -238,7 +310,14 @@ float4 frag_main(VertexOutput input) : SV_Target
 	// The texture is sRGB, so sampling returns linear colors, where light adds up correctly
 	// The highlight is the color of the light, so it's added after tinting by the texture
 	const float3 lighting = frame.light_color * diffuse + frame.ambient_strength;
-	const float3 lit_color = texture_color.rgb * lighting + frame.light_color * specular;
+	float3 color = texture_color.rgb * lighting + frame.light_color * specular;
 
-	return float4(lit_color, texture_color.a);
+	// The target glows at its silhouette, where the surface turns away from the camera
+	const float rim = 1.0 - saturate(dot(normal, to_camera));
+	color += aim_color * input.target_highlight * (0.15 + 1.5 * rim * rim);
+
+	// Unlit, so a hit reads the same in light and in shadow
+	color = lerp(color, float3(1.0, 1.0, 1.0), 0.8 * input.hit_flash);
+
+	return float4(color, texture_color.a);
 }

@@ -152,9 +152,13 @@ namespace quokka
 		return glfwGetKey(handle_, glfw_key(key)) == GLFW_PRESS;
 	}
 
-	bool Window::is_right_mouse_button_pressed() const noexcept
+	bool Window::is_mouse_button_pressed(MouseButton button) const noexcept
 	{
-		return glfwGetMouseButton(handle_, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
+		const int glfw_button {
+			button == MouseButton::left ? GLFW_MOUSE_BUTTON_LEFT : GLFW_MOUSE_BUTTON_RIGHT
+		};
+
+		return glfwGetMouseButton(handle_, glfw_button) == GLFW_PRESS;
 	}
 
 	bool Window::is_cursor_captured() const noexcept

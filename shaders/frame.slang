@@ -25,6 +25,10 @@ struct FrameUniforms
 
 	// In seconds since the start, for animations computed on the GPU
 	float time;
+
+	// The blast's shock wave spreads on the ground from here, in seconds and as world x and z
+	float last_blast_time;
+	float2 last_blast_point;
 };
 
 // Must match frame_binding in graphics_pipeline.cpp

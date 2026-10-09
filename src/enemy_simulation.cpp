@@ -6,6 +6,8 @@
 #include "quokka/shader_module.hpp"
 
 #include <array> // std::array
+#include <cstdint> // std::uint32_t
+#include <limits> // std::numeric_limits
 #include <span> // std::as_bytes, std::span
 #include <utility> // std::move
 #include <vector> // std::vector
@@ -20,12 +22,31 @@ namespace quokka
 			glm::vec2 target;
 			float delta_seconds;
 			std::uint32_t enemy_count;
+			glm::vec2 aim_point;
+			float time;
+			std::uint32_t casts;
 		};
+
+		// Cast flags, must match blast_cast in enemy_simulation.slang
+		// The strike has no flag, since it's a dispatch of its own
+		constexpr std::uint32_t blast_cast { 1 };
 
 		// Must match workgroup_size in enemy_simulation.slang
 		constexpr std::uint32_t workgroup_size { 64 };
 
 		constexpr vk::DeviceSize states_size { sizeof(EnemyState) * constants::enemy_count };
+
+		// Must match CombatState in enemy.slang
+		constexpr vk::DeviceSize combat_size { sizeof(std::uint32_t) };
+
+		// Must match no_target in enemy.slang
+		constexpr std::uint32_t no_target { 0xFFFFFFFF };
+
+		// The target key keeps the index in 16 bits, and the largest key means no target
+		static_assert(constants::enemy_count < 0xFFFF);
+
+		// The damage in enemy_simulation.slang is balanced around it
+		constexpr float enemy_health { 1000.0f };
 
 		// The smallest side whose square holds the count, so the last row may be incomplete
 		[[nodiscard]] constexpr std::uint32_t square_side(std::uint32_t count) noexcept
@@ -63,7 +84,10 @@ namespace quokka
 						static_cast<float>(row) * grid_spacing - grid_offset
 					},
 					.yaw { static_cast<float>(index) * glm::radians(40.0f) },
-					.is_chasing { 0 }
+					.is_chasing { 0 },
+					.health { enemy_health },
+					// Never hit, so there's no flash
+					.last_hit_time { -std::numeric_limits<float>::infinity() }
 				});
 			}
 
@@ -88,7 +112,15 @@ namespace quokka
 				.stageFlags { vk::ShaderStageFlagBits::eCompute }
 			};
 
-			constexpr std::array bindings { state_binding, previous_binding };
+			// Must match combat in enemy_simulation.slang
+			constexpr vk::DescriptorSetLayoutBinding combat_binding {
+				.binding { 2 },
+				.descriptorType { vk::DescriptorType::eStorageBuffer },
+				.descriptorCount { 1 },
+				.stageFlags { vk::ShaderStageFlagBits::eCompute }
+			};
+
+			constexpr std::array bindings { state_binding, previous_binding, combat_binding };
 
 			const vk::DescriptorSetLayoutCreateInfo create_info {
 				.bindingCount { static_cast<std::uint32_t>(bindings.size()) },
@@ -121,17 +153,18 @@ namespace quokka
 
 		vk::raii::Pipeline create_pipeline(
 			const vk::raii::Device& device,
-			const vk::raii::PipelineLayout& pipeline_layout)
+			const vk::raii::PipelineLayout& pipeline_layout,
+			const char* entry_point)
 		{
 			const auto shader_code { read_shader_file(constants::enemy_simulation_shader_path) };
 			const auto shader_module { create_shader_module(device, shader_code) };
 
-			// Must match the entry point in enemy_simulation.slang and in the slangc command
+			// Must match the entry points in enemy_simulation.slang and in the slangc command
 			const vk::ComputePipelineCreateInfo pipeline_info {
 				.stage {
 					.stage { vk::ShaderStageFlagBits::eCompute },
 					.module { *shader_module },
-					.pName { "update_main" }
+					.pName { entry_point }
 				},
 				.layout { *pipeline_layout }
 			};
@@ -147,7 +180,12 @@ namespace quokka
 		, pipeline_layout_ {
 			create_pipeline_layout(device.logical_device(), descriptor_set_layout_)
 		}
-		, pipeline_ { create_pipeline(device.logical_device(), pipeline_layout_) }
+		, update_pipeline_ {
+			create_pipeline(device.logical_device(), pipeline_layout_, "update_main")
+		}
+		, strike_pipeline_ {
+			create_pipeline(device.logical_device(), pipeline_layout_, "strike_main")
+		}
 	{
 		create_buffers(device);
 		create_descriptor_set(device);
@@ -165,10 +203,26 @@ namespace quokka
 		return { corner_offset, corner_offset };
 	}
 
-	void EnemySimulation::prepare_update(glm::vec2 target, float delta_seconds) noexcept
+	void EnemySimulation::prepare_update(
+		glm::vec2 target,
+		glm::vec2 aim_point,
+		float delta_seconds,
+		float time_seconds) noexcept
 	{
 		target_ = target;
+		aim_point_ = aim_point;
 		delta_seconds_ = delta_seconds;
+		time_seconds_ = time_seconds;
+	}
+
+	void EnemySimulation::cast_blast() noexcept
+	{
+		is_blast_cast_ = true;
+	}
+
+	void EnemySimulation::cast_strike() noexcept
+	{
+		is_strike_cast_ = true;
 	}
 
 	void EnemySimulation::reset() noexcept
@@ -181,10 +235,15 @@ namespace quokka
 		return states_;
 	}
 
+	const Buffer& EnemySimulation::combat_buffer() const noexcept
+	{
+		return combat_;
+	}
+
 	void EnemySimulation::record_update(const vk::raii::CommandBuffer& command_buffer)
 	{
-		// The previous frame copied, read the copy and wrote the states, and its vertex shaders
-		// read the states, so the new copy waits for all of them
+		// The previous frame copied, read the copy and wrote the states and the combat state,
+		// and its vertex shaders read them, so the new copy and clear wait for all of them
 		memory_barrier(
 			command_buffer,
 			vk::PipelineStageFlagBits2::eTransfer | vk::PipelineStageFlagBits2::eComputeShader |
@@ -204,6 +263,9 @@ namespace quokka
 			vk::BufferCopy { .srcOffset { 0 }, .dstOffset { 0 }, .size { states_size } }
 		);
 
+		// Nobody bid to be the target yet, and the bids keep the smallest key
+		command_buffer.fillBuffer(*combat_.handle, 0, combat_size, no_target);
+
 		// The update reads the copy and rewrites the states the earlier work used
 		memory_barrier(
 			command_buffer,
@@ -214,9 +276,9 @@ namespace quokka
 			vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite
 		);
 
-		command_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, *pipeline_);
+		command_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, *update_pipeline_);
 
-		// Set 0, with no dynamic offsets
+		// Set 0, with no dynamic offsets, kept for the strike since it shares the layout
 		command_buffer.bindDescriptorSets(
 			vk::PipelineBindPoint::eCompute,
 			*pipeline_layout_,
@@ -228,7 +290,10 @@ namespace quokka
 		const SimulationConstants simulation_constants {
 			.target { target_ },
 			.delta_seconds { delta_seconds_ },
-			.enemy_count { constants::enemy_count }
+			.enemy_count { constants::enemy_count },
+			.aim_point { aim_point_ },
+			.time { time_seconds_ },
+			.casts { is_blast_cast_ ? blast_cast : 0 }
 		};
 		command_buffer.pushConstants<SimulationConstants>(
 			*pipeline_layout_,
@@ -242,6 +307,25 @@ namespace quokka
 			(constants::enemy_count + workgroup_size - 1) / workgroup_size
 		};
 		command_buffer.dispatch(workgroup_count, 1, 1);
+
+		// Only once every enemy has moved and bid, so the strike reads the final target
+		if (is_strike_cast_)
+		{
+			memory_barrier(
+				command_buffer,
+				vk::PipelineStageFlagBits2::eComputeShader,
+				vk::AccessFlagBits2::eShaderStorageWrite,
+				vk::PipelineStageFlagBits2::eComputeShader,
+				vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite
+			);
+
+			// The push constants and the set stay bound, since the layout is the same
+			command_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, *strike_pipeline_);
+			command_buffer.dispatch(1, 1, 1);
+		}
+
+		is_blast_cast_ = false;
+		is_strike_cast_ = false;
 
 		// The scene and the damage numbers read the new states in their vertex shaders
 		memory_barrier(
@@ -289,13 +373,21 @@ namespace quokka
 			vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
 			vk::MemoryPropertyFlagBits::eDeviceLocal
 		);
+
+		// Cleared by every update before it's used, so it needs no contents yet either
+		combat_ = create_buffer(
+			device,
+			combat_size,
+			vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
+			vk::MemoryPropertyFlagBits::eDeviceLocal
+		);
 	}
 
 	void EnemySimulation::create_descriptor_set(const Device& device)
 	{
 		constexpr vk::DescriptorPoolSize pool_size {
 			.type { vk::DescriptorType::eStorageBuffer },
-			.descriptorCount { 2 }
+			.descriptorCount { 3 }
 		};
 
 		const vk::DescriptorPoolCreateInfo pool_info {
@@ -328,6 +420,12 @@ namespace quokka
 			.range { vk::WholeSize }
 		};
 
+		const vk::DescriptorBufferInfo combat_info {
+			.buffer { *combat_.handle },
+			.offset { 0 },
+			.range { vk::WholeSize }
+		};
+
 		const std::array descriptor_writes {
 			vk::WriteDescriptorSet {
 				.dstSet { *descriptor_set_ },
@@ -346,6 +444,15 @@ namespace quokka
 				.descriptorCount { 1 },
 				.descriptorType { vk::DescriptorType::eStorageBuffer },
 				.pBufferInfo { &previous_info }
+			},
+			vk::WriteDescriptorSet {
+				.dstSet { *descriptor_set_ },
+				// Must match combat_binding above
+				.dstBinding { 2 },
+				.dstArrayElement { 0 },
+				.descriptorCount { 1 },
+				.descriptorType { vk::DescriptorType::eStorageBuffer },
+				.pBufferInfo { &combat_info }
 			}
 		};
 

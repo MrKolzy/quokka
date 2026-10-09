@@ -99,7 +99,8 @@ namespace quokka
 			update_player(delta_time.count());
 			update_camera(delta_time.count());
 			update_aim();
-			update_enemies(delta_time.count());
+			update_abilities(elapsed_time.count());
+			update_enemies(delta_time.count(), elapsed_time.count());
 			update_test_hits(elapsed_time.count());
 
 			const bool is_swapchain_outdated {
@@ -244,7 +245,9 @@ namespace quokka
 	{
 		// Held to look around like in the Unity, Unreal and Godot editors, so the cursor is free
 		// Pressed over the interface it's for the interface, while looking ImGui ignores the mouse
-		const bool is_looking { window_.is_right_mouse_button_pressed() && !gui_.wants_mouse() };
+		const bool is_looking {
+			window_.is_mouse_button_pressed(MouseButton::right) && !gui_.wants_mouse()
+		};
 		if (is_looking != window_.is_cursor_captured())
 		{
 			// This frame's offset was measured before the change, so it's skipped
@@ -281,7 +284,27 @@ namespace quokka
 		}
 	}
 
-	void Engine::update_enemies(float delta_seconds) noexcept
+	void Engine::update_abilities(float time_seconds) noexcept
+	{
+		// The free camera looks with the right button, and over the interface clicks are for it
+		if (is_camera_free_ || gui_.wants_mouse())
+		{
+			return;
+		}
+
+		// Held buttons cast again as soon as each cooldown ends, like in Diablo
+		if (window_.is_mouse_button_pressed(MouseButton::left) && player_.try_strike(time_seconds))
+		{
+			enemy_simulation_.cast_strike();
+		}
+
+		if (window_.is_mouse_button_pressed(MouseButton::right) && player_.try_blast(time_seconds))
+		{
+			enemy_simulation_.cast_blast();
+		}
+	}
+
+	void Engine::update_enemies(float delta_seconds, float time_seconds) noexcept
 	{
 		// Ignored while typing into the interface, like the movement keys
 		if (is_key_just_pressed(window_, Key::r, was_reset_key_pressed_) && !gui_.wants_keyboard())
@@ -293,7 +316,9 @@ namespace quokka
 
 		enemy_simulation_.prepare_update(
 			player_.position(),
-			std::min(delta_seconds, max_simulation_delta));
+			player_.aim_point(),
+			std::min(delta_seconds, max_simulation_delta),
+			time_seconds);
 	}
 
 	void Engine::update_test_hits(float time_seconds)

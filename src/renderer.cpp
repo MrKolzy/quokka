@@ -47,9 +47,8 @@ namespace quokka
 			glm::vec2 viewport_size;
 			glm::vec2 aim_point;
 			float time;
-
-			// Uniform buffers round the shader's struct up to 16 bytes
-			glm::vec3 padding;
+			float last_blast_time;
+			glm::vec2 last_blast_point;
 		};
 
 		// Two matrices and five groups of 16 bytes, so nothing was padded in between
@@ -343,7 +342,7 @@ namespace quokka
 
 	void Renderer::create_descriptor_pool()
 	{
-		// Per frame in flight, one uniform buffer and the enemy and damage number storage
+		// Per frame in flight, one uniform buffer and the enemy, damage number and combat storage
 		// buffers, and per model one texture
 		constexpr std::uint32_t model_count { 2 };
 
@@ -354,7 +353,7 @@ namespace quokka
 			},
 			vk::DescriptorPoolSize {
 				.type { vk::DescriptorType::eStorageBuffer },
-				.descriptorCount { 2 * constants::max_frames_in_flight }
+				.descriptorCount { 3 * constants::max_frames_in_flight }
 			},
 			vk::DescriptorPoolSize {
 				.type { vk::DescriptorType::eCombinedImageSampler },
@@ -405,6 +404,13 @@ namespace quokka
 			.range { vk::WholeSize }
 		};
 
+		// Rewritten by the simulation every frame, ordered by barriers like the enemies
+		const vk::DescriptorBufferInfo combat_buffer_info {
+			.buffer { *enemy_simulation_.combat_buffer().handle },
+			.offset { 0 },
+			.range { vk::WholeSize }
+		};
+
 		for (std::uint32_t index { 0 }; index < constants::max_frames_in_flight; ++index)
 		{
 			const vk::DescriptorBufferInfo buffer_info {
@@ -444,7 +450,19 @@ namespace quokka
 				.pBufferInfo { &damage_number_buffer_info }
 			};
 
-			const std::array descriptor_writes { frame_write, enemy_write, damage_number_write };
+			const vk::WriteDescriptorSet combat_write {
+				.dstSet { *descriptor_sets_[index] },
+				// Must match combat_binding in graphics_pipeline.cpp
+				.dstBinding { 3 },
+				.dstArrayElement { 0 },
+				.descriptorCount { 1 },
+				.descriptorType { vk::DescriptorType::eStorageBuffer },
+				.pBufferInfo { &combat_buffer_info }
+			};
+
+			const std::array descriptor_writes {
+				frame_write, enemy_write, damage_number_write, combat_write
+			};
 
 			// No copies from other descriptor sets
 			device_.logical_device().updateDescriptorSets(descriptor_writes, {});
@@ -525,7 +543,9 @@ namespace quokka
 			.shininess { light.shininess },
 			.viewport_size { viewport_size },
 			.aim_point { player.aim_point() },
-			.time { time_seconds }
+			.time { time_seconds },
+			.last_blast_time { player.last_blast_time() },
+			.last_blast_point { player.last_blast_point() }
 		};
 
 		std::memcpy(mapped_memory, &frame_uniforms, sizeof(frame_uniforms));

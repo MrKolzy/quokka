@@ -42,7 +42,17 @@ namespace quokka
 				.stageFlags { vk::ShaderStageFlagBits::eVertex }
 			};
 
-			constexpr std::array bindings { frame_binding, enemy_binding, damage_number_binding };
+			// Must match combat in shader.slang
+			constexpr vk::DescriptorSetLayoutBinding combat_binding {
+				.binding { 3 },
+				.descriptorType { vk::DescriptorType::eStorageBuffer },
+				.descriptorCount { 1 },
+				.stageFlags { vk::ShaderStageFlagBits::eVertex }
+			};
+
+			constexpr std::array bindings {
+				frame_binding, enemy_binding, damage_number_binding, combat_binding
+			};
 
 			const vk::DescriptorSetLayoutCreateInfo create_info {
 				.bindingCount { static_cast<std::uint32_t>(bindings.size()) },
