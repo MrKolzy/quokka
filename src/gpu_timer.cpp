@@ -93,12 +93,6 @@ namespace quokka
 			}
 		};
 
-		time_sums_.particle_update_ms +=
-			milliseconds_between(GpuTimestamp::frame_start, GpuTimestamp::particles_updated);
-		time_sums_.object_draws_ms +=
-			milliseconds_between(GpuTimestamp::particles_updated, GpuTimestamp::objects_drawn);
-		time_sums_.particle_draws_ms +=
-			milliseconds_between(GpuTimestamp::objects_drawn, GpuTimestamp::frame_end);
 		time_sums_.total_ms +=
 			milliseconds_between(GpuTimestamp::frame_start, GpuTimestamp::frame_end);
 		++collected_frame_count_;
@@ -114,9 +108,6 @@ namespace quokka
 
 		const auto frame_count { static_cast<double>(collected_frame_count_) };
 		const GpuFrameTimes average_times {
-			.particle_update_ms { time_sums_.particle_update_ms / frame_count },
-			.object_draws_ms { time_sums_.object_draws_ms / frame_count },
-			.particle_draws_ms { time_sums_.particle_draws_ms / frame_count },
 			.total_ms { time_sums_.total_ms / frame_count }
 		};
 

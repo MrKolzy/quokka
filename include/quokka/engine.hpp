@@ -5,7 +5,6 @@
 #include "quokka/frame_timer.hpp"
 #include "quokka/gpu_timer.hpp"
 #include "quokka/graphics_pipeline.hpp"
-#include "quokka/particle_system.hpp"
 #include "quokka/renderer.hpp"
 #include "quokka/swapchain.hpp"
 #include "quokka/window.hpp"
@@ -40,14 +39,8 @@ namespace quokka
 			device_, swapchain_.surface_format().format,
 			swapchain_.depth_format(), swapchain_.sample_count()
 		};
-		ParticleSystem particle_system_ {
-			device_, graphics_pipeline_, swapchain_.surface_format().format,
-			swapchain_.depth_format(), swapchain_.sample_count()
-		};
 		GpuTimer gpu_timer_ { device_ };
-		Renderer renderer_ {
-			device_, swapchain_, graphics_pipeline_, particle_system_, gpu_timer_
-		};
+		Renderer renderer_ { device_, swapchain_, graphics_pipeline_, gpu_timer_ };
 
 		Camera camera_ { Renderer::initial_camera() };
 
@@ -56,7 +49,7 @@ namespace quokka
 		// The objects rotate according to the time elapsed since then
 		std::chrono::steady_clock::time_point start_time_ { std::chrono::steady_clock::now() };
 
-		// The camera and the particles move according to the time elapsed since then
+		// The camera moves according to the time elapsed since then
 		std::chrono::steady_clock::time_point previous_frame_time_ {
 			std::chrono::steady_clock::now()
 		};

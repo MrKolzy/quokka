@@ -14,7 +14,7 @@ namespace quokka
 	{
 		vk::raii::DescriptorSetLayout create_descriptor_set_layout(const vk::raii::Device& device)
 		{
-			// Must match camera in shader.slang and particles.slang
+			// Must match camera in shader.slang
 			constexpr vk::DescriptorSetLayoutBinding camera_binding {
 				.binding { 0 },
 				.descriptorType { vk::DescriptorType::eUniformBuffer },

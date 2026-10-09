@@ -12,8 +12,6 @@ namespace quokka
 	{
 		// In the order they're written every frame, so each phase lasts until the next one
 		frame_start,
-		particles_updated,
-		objects_drawn,
 		frame_end,
 
 		// Not a timestamp, but how many there are
@@ -22,9 +20,6 @@ namespace quokka
 
 	struct GpuFrameTimes
 	{
-		double particle_update_ms;
-		double object_draws_ms;
-		double particle_draws_ms;
 		double total_ms;
 	};
 

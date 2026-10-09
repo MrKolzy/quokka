@@ -7,7 +7,6 @@
 #include "quokka/graphics_pipeline.hpp"
 #include "quokka/mesh.hpp"
 #include "quokka/one_time_commands.hpp"
-#include "quokka/particle_system.hpp"
 #include "quokka/swapchain.hpp"
 
 #include <glm/glm.hpp>
@@ -231,12 +230,10 @@ namespace quokka
 		const Device& device,
 		const Swapchain& swapchain,
 		const GraphicsPipeline& graphics_pipeline,
-		const ParticleSystem& particle_system,
 		GpuTimer& gpu_timer)
 		: device_ { device }
 		, swapchain_ { swapchain }
 		, graphics_pipeline_ { graphics_pipeline }
-		, particle_system_ { particle_system }
 		, gpu_timer_ { gpu_timer }
 		, recording_threads_ { constants::recording_thread_count }
 	{
@@ -272,10 +269,7 @@ namespace quokka
 		}
 	}
 
-	bool Renderer::draw_frame(
-		const Camera& camera,
-		float elapsed_seconds,
-		float delta_seconds)
+	bool Renderer::draw_frame(const Camera& camera, float elapsed_seconds)
 	{
 		constexpr auto no_timeout { std::numeric_limits<std::uint64_t>::max() };
 
@@ -316,13 +310,7 @@ namespace quokka
 		update_uniform_buffer(mapped_uniform_buffer, camera);
 
 		// Beginning the command buffer implicitly resets it, since the pool has the reset flag
-		record_command_buffer(
-			command_buffer,
-			descriptor_set,
-			image_index,
-			elapsed_seconds,
-			delta_seconds
-		);
+		record_command_buffer(command_buffer, descriptor_set, image_index, elapsed_seconds);
 
 		// Indexed by image, not by frame, since it's tied to the presentation of that image
 		const auto& render_finished_semaphore { swapchain_.render_finished_semaphore(image_index) };
@@ -437,15 +425,6 @@ namespace quokka
 			secondary_command_buffers_.push_back(
 				logical_device.allocateCommandBuffers(allocate_info));
 		}
-
-		// Recorded on the main thread, so they come from the same pool as the primary ones
-		const vk::CommandBufferAllocateInfo particle_allocate_info {
-			.commandPool { *command_pool_ },
-			.level { vk::CommandBufferLevel::eSecondary },
-			.commandBufferCount { constants::max_frames_in_flight }
-		};
-
-		particle_command_buffers_ = logical_device.allocateCommandBuffers(particle_allocate_info);
 	}
 
 	Mesh Renderer::load_model() const
@@ -831,8 +810,7 @@ namespace quokka
 		const vk::raii::CommandBuffer& command_buffer,
 		const vk::raii::DescriptorSet& descriptor_set,
 		std::uint32_t image_index,
-		float elapsed_seconds,
-		float delta_seconds)
+		float elapsed_seconds)
 	{
 		// Re-recorded every frame, so each recording is submitted only once
 		command_buffer.begin({ .flags { vk::CommandBufferUsageFlagBits::eOneTimeSubmit } });
@@ -892,11 +870,6 @@ namespace quokka
 			depth_test_stages,
 			depth_accesses
 		);
-
-		// Before the rendering begins, since compute work can't be recorded inside one
-		particle_system_.record_update(command_buffer, frame_index_, delta_seconds);
-
-		gpu_timer_.record_timestamp(command_buffer, frame_index_, GpuTimestamp::particles_updated);
 
 		constexpr vk::ClearValue clear_color {
 			.color { .float32 { std::array { 0.0f, 0.0f, 0.0f, 1.0f } } }
@@ -978,20 +951,6 @@ namespace quokka
 		}
 
 		command_buffer.executeCommands(thread_command_buffers);
-
-		// Only a few commands, so they're recorded on this thread
-		const auto& particle_command_buffer { particle_command_buffers_[frame_index_] };
-		begin_secondary_command_buffer(particle_command_buffer);
-
-		// In the secondary, because the primary can only execute secondaries during this rendering
-		gpu_timer_.record_timestamp(
-			particle_command_buffer, frame_index_, GpuTimestamp::objects_drawn);
-
-		particle_system_.record_draw(particle_command_buffer, descriptor_set, frame_index_);
-		particle_command_buffer.end();
-
-		// After the objects, since the particles are hidden by their depth but don't write it
-		command_buffer.executeCommands(*particle_command_buffer);
 
 		command_buffer.endRendering();
 

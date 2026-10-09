@@ -34,7 +34,7 @@ namespace quokka
 		{
 			window_.poll_events();
 
-			// Measured once, so the camera, the particles and the recording threads share the time
+			// Measured once, so the camera and the recording threads share the time
 			const auto frame_time { std::chrono::steady_clock::now() };
 
 			// In seconds, as floats so the motion is smooth
@@ -45,7 +45,7 @@ namespace quokka
 			update_camera(delta_time.count());
 
 			const bool is_swapchain_outdated {
-				renderer_.draw_frame(camera_, elapsed_time.count(), delta_time.count())
+				renderer_.draw_frame(camera_, elapsed_time.count())
 			};
 
 			// Not every platform reports out of date after a resize
@@ -61,12 +61,9 @@ namespace quokka
 					const auto gpu_times { gpu_timer_.take_average_times() };
 
 					window_.set_title(std::format(
-						"{} | {:.0f} FPS | {:.2f} ms | GPU {:.2f} ms, update {:.2f}, "
-						"objects {:.2f}, particles {:.2f}",
+						"{} | {:.0f} FPS | {:.2f} ms | GPU {:.2f} ms",
 						constants::app_name, frame_timer_.average_fps(),
-						frame_timer_.average_frame_time_ms(), gpu_times.total_ms,
-						gpu_times.particle_update_ms, gpu_times.object_draws_ms,
-						gpu_times.particle_draws_ms));
+						frame_timer_.average_frame_time_ms(), gpu_times.total_ms));
 				}
 			}
 		}

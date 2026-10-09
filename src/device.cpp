@@ -195,7 +195,6 @@ namespace quokka
 			{
 				// One family for everything means a single queue, and nearly every GPU has one
 				if ((queue_families[index].queueFlags & vk::QueueFlagBits::eGraphics) &&
-					(queue_families[index].queueFlags & vk::QueueFlagBits::eCompute) &&
 					// Timestamps without valid bits are meaningless
 					queue_families[index].timestampValidBits > 0 &&
 					physical_device.getSurfaceSupportKHR(index, *surface))
@@ -246,8 +245,6 @@ namespace quokka
 			};
 
 			const bool has_required_features {
-				// Large points let the particles be bigger than one pixel
-				features.get<vk::PhysicalDeviceFeatures2>().features.largePoints &&
 				features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy &&
 				// Lets the CPU reset the timestamp queries once it has read them
 				features.get<vk::PhysicalDeviceVulkan12Features>().hostQueryReset &&
@@ -336,7 +333,7 @@ namespace quokka
 				vk::PhysicalDeviceFeatures2,
 				vk::PhysicalDeviceVulkan12Features,
 				vk::PhysicalDeviceVulkan13Features> feature_chain {
-				{ .features { .largePoints { vk::True }, .samplerAnisotropy { vk::True } } },
+				{ .features { .samplerAnisotropy { vk::True } } },
 				{ .hostQueryReset { vk::True } },
 				{ .synchronization2 { vk::True }, .dynamicRendering { vk::True } }
 			};

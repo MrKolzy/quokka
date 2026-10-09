@@ -16,7 +16,6 @@ namespace quokka
 	class GpuTimer;
 	class GraphicsPipeline;
 	struct Mesh;
-	class ParticleSystem;
 	class Swapchain;
 
 	class Renderer
@@ -26,7 +25,6 @@ namespace quokka
 			const Device& device,
 			const Swapchain& swapchain,
 			const GraphicsPipeline& graphics_pipeline,
-			const ParticleSystem& particle_system,
 			GpuTimer& gpu_timer);
 		~Renderer();
 
@@ -37,10 +35,7 @@ namespace quokka
 		Renderer& operator=(Renderer&&) = delete;
 
 		// Returns true when the swapchain must be recreated before the next frame
-		[[nodiscard]] bool draw_frame(
-			const Camera& camera,
-			float elapsed_seconds,
-			float delta_seconds);
+		[[nodiscard]] bool draw_frame(const Camera& camera, float elapsed_seconds);
 
 		// Frames the whole grid, which the renderer still owns
 		[[nodiscard]] static Camera initial_camera() noexcept;
@@ -65,8 +60,7 @@ namespace quokka
 			const vk::raii::CommandBuffer& command_buffer,
 			const vk::raii::DescriptorSet& descriptor_set,
 			std::uint32_t image_index,
-			float elapsed_seconds,
-			float delta_seconds);
+			float elapsed_seconds);
 
 		// Called from several recording threads at once, so they must only read shared state
 		void begin_secondary_command_buffer(const vk::raii::CommandBuffer& command_buffer) const;
@@ -80,7 +74,6 @@ namespace quokka
 		const Device& device_;
 		const Swapchain& swapchain_;
 		const GraphicsPipeline& graphics_pipeline_;
-		const ParticleSystem& particle_system_;
 		GpuTimer& gpu_timer_;
 
 		// Each one is destroyed before the object it came from, so don't reorder
@@ -94,9 +87,6 @@ namespace quokka
 
 		// Indexed by recording thread, then by frame in flight
 		std::vector<std::vector<vk::raii::CommandBuffer>> secondary_command_buffers_ {};
-
-		// One per frame in flight
-		std::vector<vk::raii::CommandBuffer> particle_command_buffers_ {};
 
 		Buffer vertex_buffer_ {};
 

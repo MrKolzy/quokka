@@ -28,7 +28,6 @@ namespace quokka::constants
 
 	// Relative to the working directory
 	inline constexpr const char* shader_path { "shaders/shader.spv" };
-	inline constexpr const char* particle_shader_path { "shaders/particles.spv" };
 	inline constexpr const char* model_path { "models/viking_room.glb" };
 	inline constexpr const char* texture_path { "textures/viking_room.ktx2" };
 
@@ -50,8 +49,4 @@ namespace quokka::constants
 	// Threads that record the draws in parallel, 1 to compare against a single thread
 	inline constexpr std::uint32_t recording_thread_count { 4 };
 	static_assert(recording_thread_count > 0);
-
-	// Simulated on the GPU by a compute shader every frame
-	inline constexpr std::uint32_t particle_count { 65536 };
-	static_assert(particle_count > 0);
 }

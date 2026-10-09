@@ -54,7 +54,6 @@ and **C/C++ > General > Multi-processor Compilation** to `No`.
 **Build Events > Pre-Build Event > Command Line:**
 
 	"$(VULKAN_SDK)\Bin\slangc.exe" "$(ProjectDir)shaders\shader.slang" -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name -entry vert_main -entry frag_main -o "$(ProjectDir)shaders\shader.spv"
-	"$(VULKAN_SDK)\Bin\slangc.exe" "$(ProjectDir)shaders\particles.slang" -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name -entry update_main -entry particle_vert_main -entry particle_frag_main -o "$(ProjectDir)shaders\particles.spv"
 
 **Build Events > Post-Build Event > Command Line:**
 
