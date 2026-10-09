@@ -35,7 +35,7 @@ namespace quokka
 		Renderer& operator=(Renderer&&) = delete;
 
 		// Returns true when the swapchain must be recreated before the next frame
-		[[nodiscard]] bool draw_frame(const Camera& camera, float elapsed_seconds);
+		[[nodiscard]] bool draw_frame(const Camera& camera);
 
 		// Frames the whole grid, which the renderer still owns
 		[[nodiscard]] static Camera initial_camera() noexcept;
@@ -59,8 +59,7 @@ namespace quokka
 		void record_command_buffer(
 			const vk::raii::CommandBuffer& command_buffer,
 			const vk::raii::DescriptorSet& descriptor_set,
-			std::uint32_t image_index,
-			float elapsed_seconds);
+			std::uint32_t image_index);
 
 		// Called from several recording threads at once, so they must only read shared state
 		void begin_secondary_command_buffer(const vk::raii::CommandBuffer& command_buffer) const;
@@ -68,8 +67,7 @@ namespace quokka
 			const vk::raii::CommandBuffer& command_buffer,
 			const vk::raii::DescriptorSet& descriptor_set,
 			std::uint32_t first_object,
-			std::uint32_t object_count,
-			float elapsed_seconds) const;
+			std::uint32_t object_count) const;
 
 		const Device& device_;
 		const Swapchain& swapchain_;

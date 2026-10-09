@@ -68,6 +68,9 @@ namespace quokka
 		// Between the centers of neighboring copies, a bit more than the width of the model
 		constexpr float object_spacing { 2.0f };
 
+		// Turns the open side of the viking room toward the initial camera, which looks along -z
+		constexpr float model_yaw { glm::radians(-90.0f) };
+
 		// A square grid on the ground centered at the origin, each copy turned differently
 		[[nodiscard]] constexpr Transform object_transform(std::uint32_t object_index) noexcept
 		{
@@ -78,10 +81,11 @@ namespace quokka
 			};
 			const float x { static_cast<float>(column) * object_spacing - grid_offset };
 			const float z { static_cast<float>(row) * object_spacing - grid_offset };
+			const float yaw { model_yaw + static_cast<float>(object_index) * glm::radians(40.0f) };
 
 			return {
 				.position { x, 0.0f, z },
-				.rotation { 0.0f, static_cast<float>(object_index) * glm::radians(40.0f), 0.0f }
+				.rotation { 0.0f, yaw, 0.0f }
 			};
 		}
 
@@ -272,7 +276,7 @@ namespace quokka
 		}
 	}
 
-	bool Renderer::draw_frame(const Camera& camera, float elapsed_seconds)
+	bool Renderer::draw_frame(const Camera& camera)
 	{
 		constexpr auto no_timeout { std::numeric_limits<std::uint64_t>::max() };
 
@@ -313,7 +317,7 @@ namespace quokka
 		update_uniform_buffer(mapped_uniform_buffer, camera);
 
 		// Beginning the command buffer implicitly resets it, since the pool has the reset flag
-		record_command_buffer(command_buffer, descriptor_set, image_index, elapsed_seconds);
+		record_command_buffer(command_buffer, descriptor_set, image_index);
 
 		// Indexed by image, not by frame, since it's tied to the presentation of that image
 		const auto& render_finished_semaphore { swapchain_.render_finished_semaphore(image_index) };
@@ -813,8 +817,7 @@ namespace quokka
 	void Renderer::record_command_buffer(
 		const vk::raii::CommandBuffer& command_buffer,
 		const vk::raii::DescriptorSet& descriptor_set,
-		std::uint32_t image_index,
-		float elapsed_seconds)
+		std::uint32_t image_index)
 	{
 		// Re-recorded every frame, so each recording is submitted only once
 		command_buffer.begin({ .flags { vk::CommandBufferUsageFlagBits::eOneTimeSubmit } });
@@ -928,7 +931,7 @@ namespace quokka
 
 		// Each thread records its share of the objects into its own secondary command buffer,
 		// and run returns once all of them are done
-		recording_threads_.run([this, &descriptor_set, elapsed_seconds](std::uint32_t thread_index)
+		recording_threads_.run([this, &descriptor_set](std::uint32_t thread_index)
 		{
 			// Contiguous shares, as even as possible
 			const std::uint32_t first_object {
@@ -942,8 +945,7 @@ namespace quokka
 				secondary_command_buffers_[thread_index][frame_index_],
 				descriptor_set,
 				first_object,
-				end_object - first_object,
-				elapsed_seconds
+				end_object - first_object
 			);
 		});
 
@@ -1023,8 +1025,7 @@ namespace quokka
 		const vk::raii::CommandBuffer& command_buffer,
 		const vk::raii::DescriptorSet& descriptor_set,
 		std::uint32_t first_object,
-		std::uint32_t object_count,
-		float elapsed_seconds) const
+		std::uint32_t object_count) const
 	{
 		begin_secondary_command_buffer(command_buffer);
 
@@ -1055,11 +1056,9 @@ namespace quokka
 		// The objects share the mesh, texture and camera, so only the model matrix changes
 		for (std::uint32_t object_index { first_object }; object_index < end_object; ++object_index)
 		{
-			// Each one also turns around its own vertical axis, 30 degrees per second
-			Transform transform { object_transform(object_index) };
-			transform.rotation.y += elapsed_seconds * glm::radians(30.0f);
-
-			const ObjectConstants object_constants { .model { transform.model_matrix() } };
+			const ObjectConstants object_constants {
+				.model { object_transform(object_index).model_matrix() }
+			};
 			command_buffer.pushConstants<ObjectConstants>(
 				*graphics_pipeline_.pipeline_layout(),
 				vk::ShaderStageFlagBits::eVertex,

@@ -34,19 +34,15 @@ namespace quokka
 		{
 			window_.poll_events();
 
-			// Measured once, so the camera and the recording threads share the time
 			const auto frame_time { std::chrono::steady_clock::now() };
 
-			// In seconds, as floats so the motion is smooth
-			const std::chrono::duration<float> elapsed_time { frame_time - start_time_ };
+			// In seconds, as a float so the motion is smooth
 			const std::chrono::duration<float> delta_time { frame_time - previous_frame_time_ };
 			previous_frame_time_ = frame_time;
 
 			update_camera(delta_time.count());
 
-			const bool is_swapchain_outdated {
-				renderer_.draw_frame(camera_, elapsed_time.count())
-			};
+			const bool is_swapchain_outdated { renderer_.draw_frame(camera_) };
 
 			// Not every platform reports out of date after a resize
 			if (is_swapchain_outdated || window_.was_resized())

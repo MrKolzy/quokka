@@ -46,9 +46,6 @@ namespace quokka
 
 		FrameTimer frame_timer_ {};
 
-		// The objects rotate according to the time elapsed since then
-		std::chrono::steady_clock::time_point start_time_ { std::chrono::steady_clock::now() };
-
 		// The camera moves according to the time elapsed since then
 		std::chrono::steady_clock::time_point previous_frame_time_ {
 			std::chrono::steady_clock::now()
