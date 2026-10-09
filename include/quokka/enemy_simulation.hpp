@@ -33,7 +33,8 @@ namespace quokka
 	class EnemySimulation
 	{
 	public:
-		explicit EnemySimulation(const Device& device);
+		// The hits spawn their damage numbers into the ring of damage_number_buffer
+		EnemySimulation(const Device& device, const Buffer& damage_number_buffer);
 		~EnemySimulation() = default;
 
 		// Renderer keeps a reference to it, so it can't be copied or moved
@@ -59,10 +60,15 @@ namespace quokka
 		void cast_blast() noexcept;
 		void cast_strike() noexcept;
 
+		// During the next record_update, a damage number on every enemy without hurting anyone,
+		// so a benchmark can show as many numbers as there are enemies again and again
+		void cast_test_hits() noexcept;
+
 		// Puts every enemy back where it started, during the next record_update
 		void reset() noexcept;
 
 		// Read by the vertex shaders, so they go into the renderer's descriptor sets
+		// The combat state holds the target and the total damage
 		[[nodiscard]] const Buffer& state_buffer() const noexcept;
 		[[nodiscard]] const Buffer& combat_buffer() const noexcept;
 
@@ -71,13 +77,17 @@ namespace quokka
 
 	private:
 		void create_buffers(const Device& device);
-		void create_descriptor_set(const Device& device);
+		void create_descriptor_set(const Device& device, const Buffer& damage_number_buffer);
+
+		// Between dispatches, so each one reads what the previous one wrote
+		void record_compute_to_compute_barrier(const vk::raii::CommandBuffer& command_buffer) const;
 
 		// Each member uses the ones above it and is destroyed before them, so don't reorder
 		vk::raii::DescriptorSetLayout descriptor_set_layout_;
 		vk::raii::PipelineLayout pipeline_layout_;
 		vk::raii::Pipeline update_pipeline_;
 		vk::raii::Pipeline strike_pipeline_;
+		vk::raii::Pipeline tally_pipeline_;
 
 		vk::raii::DescriptorPool descriptor_pool_ { nullptr };
 
@@ -93,7 +103,7 @@ namespace quokka
 		// What states_ held before this frame's update, so neighbors are read before they move
 		Buffer previous_states_ {};
 
-		// The target picked this frame, which the vertex shaders highlight
+		// The target picked this frame, which the vertex shaders highlight, and the total damage
 		Buffer combat_ {};
 
 		glm::vec2 target_ {};
@@ -105,5 +115,6 @@ namespace quokka
 		// Cleared after each record_update, so every cast hits once
 		bool is_blast_cast_ { false };
 		bool is_strike_cast_ { false };
+		bool is_test_cast_ { false };
 	};
 }

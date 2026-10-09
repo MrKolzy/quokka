@@ -71,7 +71,7 @@ namespace quokka
 		const GraphicsPipeline& graphics_pipeline,
 		GpuTimer& gpu_timer,
 		const Gui& gui,
-		DamageNumbers& damage_numbers,
+		const DamageNumbers& damage_numbers,
 		EnemySimulation& enemy_simulation)
 		: device_ { device }
 		, swapchain_ { swapchain }
@@ -618,11 +618,10 @@ namespace quokka
 		);
 
 		// Before the rendering begins, since compute work and copies can't be recorded inside one
+		// The hits also spawn their damage numbers here
 		enemy_simulation_.record_update(command_buffer);
 
 		gpu_timer_.record_timestamp(command_buffer, frame_index_, GpuTimestamp::enemies_updated);
-
-		damage_numbers_.record_upload(command_buffer, frame_index_);
 
 		constexpr vk::ClearValue clear_color {
 			.color { .float32 { std::array { 0.0f, 0.0f, 0.0f, 1.0f } } }

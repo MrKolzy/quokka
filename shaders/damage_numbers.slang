@@ -1,38 +1,20 @@
 #include "enemy.slang"
 #include "frame.slang"
 
-// Must match DamageNumber in damage_numbers.hpp
-struct DamageNumber
-{
-	uint enemy_index;
-	float spawn_time;
-	uint value;
-	uint is_critical;
-};
-
 // Read for the position of the enemy each number belongs to, must match enemy_binding
 // in graphics_pipeline.cpp
 [[vk::binding(1, 0)]]
 StructuredBuffer<EnemyState> enemies;
 
-// A ring of the latest ones, must match damage_number_binding in graphics_pipeline.cpp
+// A ring of the latest ones, spawned by the simulation's hits, must match damage_number_binding
+// in graphics_pipeline.cpp
 [[vk::binding(2, 0)]]
 StructuredBuffer<DamageNumber> damage_numbers;
 
-// Must match TotalDamageConstants in damage_numbers.cpp
-struct TotalDamageConstants
-{
-	uint value;
-
-	// What it counts up from after the last hit
-	uint previous_value;
-
-	// In seconds, on the same clock as the time in the frame uniforms
-	float last_hit_time;
-};
-
-[[vk::push_constant]]
-ConstantBuffer<TotalDamageConstants> total;
+// For the total, which the simulation adds every frame's hits to, must match combat_binding
+// in graphics_pipeline.cpp
+[[vk::binding(3, 0)]]
+StructuredBuffer<CombatState> combat;
 
 // Above the enemy's head, since the skeleton is about 2.2 units tall
 static const float anchor_height = 2.5;
@@ -109,11 +91,6 @@ static const uint label_glyphs[label_length] = {
 
 // Must match total_glyph_count in damage_numbers.cpp, so any uint fits
 static const uint max_total_digits = 10;
-
-// In seconds, must match total_hold_time and total_fade_time in damage_numbers.cpp
-// Fully visible until this long after the last hit, then it fades out
-static const float total_hold_time = 5.0;
-static const float total_fade_time = 1.5;
 
 // In seconds, how long it takes to count up to the value after a hit
 static const float count_up_time = 0.4;
@@ -268,9 +245,10 @@ VertexOutput vert_main(
 VertexOutput total_vert_main(uint vertex_index : SV_VulkanVertexID)
 {
 	VertexOutput output = hidden_vertex();
+	const CombatState state = combat[0];
 
 	// Every hit restarts the pop, the count up and the wait before fading out
-	const float idle_time = frame.time - total.last_hit_time;
+	const float idle_time = frame.time - state.last_total_hit_time;
 	if (idle_time < 0.0 || idle_time >= total_hold_time + total_fade_time)
 	{
 		return output;
@@ -279,8 +257,8 @@ VertexOutput total_vert_main(uint vertex_index : SV_VulkanVertexID)
 	// Counts fast at first and slows down as it reaches the value
 	const float progress = saturate(idle_time / count_up_time);
 	const float eased_progress = 1.0 - (1.0 - progress) * (1.0 - progress);
-	const uint value = total.previous_value +
-		uint(float(total.value - total.previous_value) * eased_progress);
+	const uint value = state.previous_total_damage +
+		uint(float(state.total_damage - state.previous_total_damage) * eased_progress);
 
 	const uint count = digit_count(value);
 	const uint line_length = label_length + count;

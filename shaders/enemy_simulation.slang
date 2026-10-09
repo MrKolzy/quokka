@@ -9,12 +9,19 @@ RWStructuredBuffer<EnemyState> enemies;
 [[vk::binding(1, 0)]]
 StructuredBuffer<EnemyState> previous_enemies;
 
-// Cleared to no_target before the update, must match combat_binding in enemy_simulation.cpp
+// Partly cleared before every update, must match combat_binding in enemy_simulation.cpp
 [[vk::binding(2, 0)]]
 RWStructuredBuffer<CombatState> combat;
 
+// The ring every hit spawns its number into, must match damage_number_binding
+// in enemy_simulation.cpp
+[[vk::binding(3, 0)]]
+RWStructuredBuffer<DamageNumber> damage_numbers;
+
 // Must match the cast flags in enemy_simulation.cpp
+// The test gives every enemy a number without hurting it, so benchmarks can repeat it
 static const uint blast_cast = 1;
+static const uint test_cast = 2;
 
 // Must match SimulationConstants in enemy_simulation.cpp
 struct SimulationConstants
@@ -59,6 +66,8 @@ static const float strike_min_damage = 300.0;
 static const float strike_max_damage = 500.0;
 static const float blast_min_damage = 150.0;
 static const float blast_max_damage = 300.0;
+static const float test_min_damage = 100.0;
+static const float test_max_damage = 999.0;
 
 // In percent, and critical hits deal double damage
 static const uint critical_chance = 15;
@@ -66,6 +75,7 @@ static const uint critical_chance = 15;
 // So an enemy hit by both abilities in the same frame rolls its damage twice
 static const uint blast_seed = 1;
 static const uint strike_seed = 2;
+static const uint test_seed = 3;
 
 // Must match workgroup_size in enemy_simulation.cpp
 static const uint workgroup_size = 64;
@@ -83,16 +93,40 @@ uint pcg_hash(uint value)
 	return (word >> 22u) ^ word;
 }
 
-// Different for every enemy, hit and ability, and the hit pulls the enemy however far it is
-void take_hit(inout EnemyState enemy, uint index, uint seed, float min_damage, float max_damage)
+// A hit's number above the enemy, and its damage toward the frame's total
+// Once the ring is full, the oldest numbers are overwritten
+void spawn_number(uint index, uint damage, bool is_critical)
+{
+	uint count;
+	InterlockedAdd(combat[0].spawned_number_count, 1, count);
+
+	damage_numbers[count % damage_number_capacity] = {
+		index, simulation.time, damage, is_critical ? 1u : 0u
+	};
+
+	InterlockedAdd(combat[0].frame_damage, damage);
+}
+
+// Different for every enemy, frame and ability, with its number spawned
+// Returns the damage, doubled by a critical hit
+uint roll_hit(uint index, uint seed, float min_damage, float max_damage)
 {
 	const uint random = pcg_hash(index ^ pcg_hash(asuint(simulation.time) ^ seed));
 
 	// The low 16 bits pick the damage and the high ones the critical hit
-	const float damage = lerp(min_damage, max_damage, float(random & 0xFFFF) / 65535.0);
+	const uint damage = uint(lerp(min_damage, max_damage, float(random & 0xFFFF) / 65535.0));
 	const bool is_critical = (random >> 16) % 100 < critical_chance;
+	const uint dealt_damage = is_critical ? 2 * damage : damage;
 
-	enemy.health -= is_critical ? 2.0 * damage : damage;
+	spawn_number(index, dealt_damage, is_critical);
+
+	return dealt_damage;
+}
+
+// The hit pulls the enemy however far it is
+void take_hit(inout EnemyState enemy, uint index, uint seed, float min_damage, float max_damage)
+{
+	enemy.health -= float(roll_hit(index, seed, min_damage, max_damage));
 	enemy.last_hit_time = simulation.time;
 	enemy.is_chasing = 1;
 }
@@ -143,6 +177,12 @@ void update_main(uint3 thread_id : SV_DispatchThreadID, uint3 local_id : SV_Grou
 	if (!is_enemy)
 	{
 		return;
+	}
+
+	// The dead too, so a benchmark always shows a number for every enemy
+	if ((simulation.casts & test_cast) != 0)
+	{
+		roll_hit(index, test_seed, test_min_damage, test_max_damage);
 	}
 
 	// Still written, because after a reset the states must be overwritten by the copy
@@ -217,4 +257,29 @@ void strike_main()
 	EnemyState enemy = enemies[index];
 	take_hit(enemy, index, strike_seed, strike_min_damage, strike_max_damage);
 	enemies[index] = enemy;
+}
+
+// Dispatched as a single thread after every hit of the frame, adds their damage to the total
+[shader("compute")]
+[numthreads(1, 1, 1)]
+void tally_main()
+{
+	CombatState state = combat[0];
+	if (state.frame_damage == 0)
+	{
+		return;
+	}
+
+	// Starts again from 0 once the last total has faded out
+	if (simulation.time - state.last_total_hit_time >= total_hold_time + total_fade_time)
+	{
+		state.total_damage = 0;
+	}
+
+	// Stops at the largest value instead of wrapping around to a small one
+	state.previous_total_damage = state.total_damage;
+	state.total_damage += min(state.frame_damage, 0xFFFFFFFF - state.total_damage);
+	state.last_total_hit_time = simulation.time;
+
+	combat[0] = state;
 }

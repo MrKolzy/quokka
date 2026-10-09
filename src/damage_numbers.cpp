@@ -1,14 +1,13 @@
 #include "quokka/damage_numbers.hpp"
 
-#include "quokka/barrier.hpp"
 #include "quokka/constants.hpp"
 #include "quokka/device.hpp"
 #include "quokka/shader_module.hpp"
 
-#include <algorithm> // std::max, std::min
+#include <algorithm> // std::max
 #include <array> // std::array
-#include <cstring> // std::memcpy
 #include <span> // std::as_bytes, std::span
+#include <vector> // std::vector
 
 namespace quokka
 {
@@ -25,40 +24,22 @@ namespace quokka
 		constexpr std::uint32_t total_glyph_count { 24 };
 		constexpr std::uint32_t total_vertex_count { total_glyph_count * 6 };
 
-		// In seconds, must match total_hold_time and total_fade_time in damage_numbers.slang
+		// In seconds, must match total_hold_time and total_fade_time in enemy.slang
 		constexpr float total_hold_time { 5.0f };
 		constexpr float total_fade_time { 1.5f };
 
-		struct TotalDamageConstants
-		{
-			// Must match TotalDamageConstants in damage_numbers.slang
-			std::uint32_t value;
-			std::uint32_t previous_value;
-			float last_hit_time;
-		};
-
 		// The stride of the shader's array, so the C++ struct must take the same space
 		static_assert(sizeof(DamageNumber) == 16);
-
-		constexpr vk::DeviceSize ring_size { sizeof(DamageNumber) * DamageNumbers::capacity };
 
 		// The scene's frame set layout, so the renderer's frame sets work for both
 		vk::raii::PipelineLayout create_pipeline_layout(
 			const vk::raii::Device& device,
 			const vk::raii::DescriptorSetLayout& descriptor_set_layout)
 		{
-			// Only the total reads them, pushed every frame it's drawn
-			constexpr vk::PushConstantRange constants_range {
-				.stageFlags { vk::ShaderStageFlagBits::eVertex },
-				.offset { 0 },
-				.size { sizeof(TotalDamageConstants) }
-			};
-
+			// No push constants, the total comes from the combat state the simulation writes
 			const vk::PipelineLayoutCreateInfo pipeline_layout_info {
 				.setLayoutCount { 1 },
-				.pSetLayouts { &*descriptor_set_layout },
-				.pushConstantRangeCount { 1 },
-				.pPushConstantRanges { &constants_range }
+				.pSetLayouts { &*descriptor_set_layout }
 			};
 
 			return device.createPipelineLayout(pipeline_layout_info);
@@ -201,12 +182,11 @@ namespace quokka
 				DamageNumber { .spawn_time { -std::numeric_limits<float>::infinity() } }
 			);
 
-			// Also a copy destination, for the numbers each frame uploads
 			return create_device_local_buffer(
 				device,
 				command_pool,
 				std::as_bytes(std::span { expired_numbers }),
-				vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst
+				vk::BufferUsageFlagBits::eStorageBuffer
 			);
 		}
 	}
@@ -227,58 +207,11 @@ namespace quokka
 		}
 		, ring_buffer_ { create_ring_buffer(device) }
 	{
-		// Host visible to map them, host coherent so the writes need no explicit flushes
-		constexpr vk::MemoryPropertyFlags memory_properties {
-			vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent
-		};
-
-		staging_buffers_.reserve(constants::max_frames_in_flight);
-		mapped_staging_buffers_.reserve(constants::max_frames_in_flight);
-
-		// As big as the ring, since one frame can spawn that many
-		for (std::uint32_t index { 0 }; index < constants::max_frames_in_flight; ++index)
-		{
-			staging_buffers_.push_back(create_buffer(
-				device,
-				ring_size,
-				vk::BufferUsageFlagBits::eTransferSrc,
-				memory_properties
-			));
-
-			// Never unmapped explicitly, freeing the memory unmaps it
-			mapped_staging_buffers_.push_back(
-				staging_buffers_.back().memory.mapMemory(0, ring_size));
-		}
-
-		pending_numbers_.reserve(capacity);
 	}
 
-	void DamageNumbers::spawn(const DamageNumber& number)
+	void DamageNumbers::note_cast(float time) noexcept
 	{
-		// The first number of a hit, since every number of a hit spawns at the same time
-		if (number.spawn_time > last_spawn_time_)
-		{
-			// Starts again from 0 once the last total has faded out
-			if (number.spawn_time - last_spawn_time_ >= total_hold_time + total_fade_time)
-			{
-				total_damage_ = 0;
-			}
-
-			previous_total_damage_ = total_damage_;
-		}
-
-		// Stops at the largest value instead of wrapping around to a small one
-		const std::uint32_t room_left { std::numeric_limits<std::uint32_t>::max() - total_damage_ };
-		total_damage_ += std::min(number.value, room_left);
-		last_spawn_time_ = std::max(last_spawn_time_, number.spawn_time);
-
-		// More would overwrite numbers spawned since the same upload
-		if (pending_numbers_.size() == capacity)
-		{
-			return;
-		}
-
-		pending_numbers_.push_back(number);
+		last_cast_time_ = std::max(last_cast_time_, time);
 	}
 
 	const Buffer& DamageNumbers::buffer() const noexcept
@@ -289,69 +222,7 @@ namespace quokka
 	bool DamageNumbers::has_visible_numbers(float time) const noexcept
 	{
 		// The total stays longer than any number
-		return time - last_spawn_time_ < total_hold_time + total_fade_time;
-	}
-
-	void DamageNumbers::record_upload(
-		const vk::raii::CommandBuffer& command_buffer,
-		std::uint32_t frame_index)
-	{
-		if (pending_numbers_.empty())
-		{
-			return;
-		}
-
-		// The fence wait for this frame guarantees its previous copy is done reading this buffer
-		std::memcpy(
-			mapped_staging_buffers_[frame_index],
-			pending_numbers_.data(),
-			pending_numbers_.size() * sizeof(DamageNumber));
-
-		// Up to the end of the ring, and the rest from its start when it wraps around
-		const auto count { static_cast<std::uint32_t>(pending_numbers_.size()) };
-		const std::uint32_t count_before_wrap { std::min(count, capacity - next_slot_) };
-
-		const std::array regions {
-			vk::BufferCopy {
-				.srcOffset { 0 },
-				.dstOffset { next_slot_ * sizeof(DamageNumber) },
-				.size { count_before_wrap * sizeof(DamageNumber) }
-			},
-			vk::BufferCopy {
-				.srcOffset { count_before_wrap * sizeof(DamageNumber) },
-				.dstOffset { 0 },
-				.size { (count - count_before_wrap) * sizeof(DamageNumber) }
-			}
-		};
-		const std::uint32_t region_count { count_before_wrap < count ? 2u : 1u };
-
-		// Earlier frames may still be drawing from the ring, so the copy waits for their reads
-		// Waiting for a read needs no source access, only the stage
-		memory_barrier(
-			command_buffer,
-			vk::PipelineStageFlagBits2::eVertexShader,
-			{},
-			vk::PipelineStageFlagBits2::eTransfer,
-			vk::AccessFlagBits2::eTransferWrite
-		);
-
-		command_buffer.copyBuffer(
-			*staging_buffers_[frame_index].handle,
-			*ring_buffer_.handle,
-			vk::ArrayProxy<const vk::BufferCopy> { region_count, regions.data() }
-		);
-
-		// And this frame's draw waits for the copy
-		memory_barrier(
-			command_buffer,
-			vk::PipelineStageFlagBits2::eTransfer,
-			vk::AccessFlagBits2::eTransferWrite,
-			vk::PipelineStageFlagBits2::eVertexShader,
-			vk::AccessFlagBits2::eShaderStorageRead
-		);
-
-		next_slot_ = (next_slot_ + count) % capacity;
-		pending_numbers_.clear();
+		return time - last_cast_time_ < total_hold_time + total_fade_time;
 	}
 
 	void DamageNumbers::record_draw(
@@ -383,7 +254,7 @@ namespace quokka
 		);
 
 		// Skipped once every number has expired, since the total stays on screen much longer
-		if (time - last_spawn_time_ < damage_number_lifetime)
+		if (time - last_cast_time_ < damage_number_lifetime)
 		{
 			command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *pipeline_);
 
@@ -391,22 +262,11 @@ namespace quokka
 			command_buffer.draw(vertices_per_number, capacity, 0, 0);
 		}
 
-		const TotalDamageConstants total_constants {
-			.value { total_damage_ },
-			.previous_value { previous_total_damage_ },
-			.last_hit_time { last_spawn_time_ }
-		};
-
 		// Last, so the numbers never cover it
 		command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *total_pipeline_);
-		command_buffer.pushConstants<TotalDamageConstants>(
-			*pipeline_layout_,
-			vk::ShaderStageFlagBits::eVertex,
-			0,
-			total_constants
-		);
 
 		// Every glyph the line can have, and the vertex shader drops the unused ones
+		// It hides the whole line when the last hit is too old, or when a cast hit nobody
 		command_buffer.draw(total_vertex_count, 1, 0, 0);
 	}
 }

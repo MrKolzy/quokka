@@ -6,7 +6,6 @@
 
 #include <cstdint> // std::uint32_t
 #include <limits> // std::numeric_limits
-#include <vector> // std::vector
 
 namespace quokka
 {
@@ -14,7 +13,7 @@ namespace quokka
 
 	struct DamageNumber
 	{
-		// Must match DamageNumber in damage_numbers.slang
+		// Must match DamageNumber in enemy.slang
 		// The enemy it belongs to, whose position the shader reads every frame
 		std::uint32_t enemy_index;
 
@@ -42,20 +41,17 @@ namespace quokka
 		DamageNumbers(DamageNumbers&&) = delete;
 		DamageNumbers& operator=(DamageNumbers&&) = delete;
 
-		// Shown from the next upload on, and once the ring is full the oldest ones are replaced
-		// Its value is added to the total even then
-		void spawn(const DamageNumber& number);
+		// The hits happen on the GPU, so the CPU only knows when they may have, at this time
+		// in seconds since the start, which keeps the numbers and the total drawn long enough
+		void note_cast(float time) noexcept;
 
-		// The ring the vertex shader reads, for the descriptor sets
+		// The ring the simulation spawns into and the vertex shader reads, for the descriptor sets
 		[[nodiscard]] const Buffer& buffer() const noexcept;
 
-		// Whether a number or the total is still on screen at this time
+		// Whether a number or the total may still be on screen at this time
 		[[nodiscard]] bool has_visible_numbers(float time) const noexcept;
 
-		// Outside a rendering, because it copies the numbers spawned since the last upload
-		void record_upload(const vk::raii::CommandBuffer& command_buffer, std::uint32_t frame_index);
-
-		// Inside a rendering with one sample and no depth, after this frame's upload
+		// Inside a rendering with one sample and no depth, after this frame's simulation
 		void record_draw(
 			const vk::raii::CommandBuffer& command_buffer,
 			const vk::raii::DescriptorSet& descriptor_set,
@@ -63,6 +59,7 @@ namespace quokka
 			float time) const;
 
 		// Enough for a hit on 1000 enemies every frame for 16 frames in a row
+		// Must match damage_number_capacity in enemy.slang
 		static constexpr std::uint32_t capacity { 16384 };
 
 	private:
@@ -74,21 +71,6 @@ namespace quokka
 		// Every number that may still be on screen, the GPU reads all of it
 		Buffer ring_buffer_;
 
-		// Where the next number goes in the ring
-		std::uint32_t next_slot_ {};
-
-		// One per frame in flight, written by the CPU and copied into the ring by the GPU
-		std::vector<Buffer> staging_buffers_ {};
-		std::vector<void*> mapped_staging_buffers_ {};
-
-		// Spawned since the last upload
-		std::vector<DamageNumber> pending_numbers_ {};
-
-		float last_spawn_time_ { -std::numeric_limits<float>::infinity() };
-
-		// Of every number spawned since the total last appeared, and what it was before the
-		// latest hit, so the shader can count up from there
-		std::uint32_t total_damage_ {};
-		std::uint32_t previous_total_damage_ {};
+		float last_cast_time_ { -std::numeric_limits<float>::infinity() };
 	};
 }

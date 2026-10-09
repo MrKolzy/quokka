@@ -31,7 +31,7 @@ namespace quokka
 			const GraphicsPipeline& graphics_pipeline,
 			GpuTimer& gpu_timer,
 			const Gui& gui,
-			DamageNumbers& damage_numbers,
+			const DamageNumbers& damage_numbers,
 			EnemySimulation& enemy_simulation);
 		~Renderer();
 
@@ -106,7 +106,7 @@ namespace quokka
 		const GraphicsPipeline& graphics_pipeline_;
 		GpuTimer& gpu_timer_;
 		const Gui& gui_;
-		DamageNumbers& damage_numbers_;
+		const DamageNumbers& damage_numbers_;
 		EnemySimulation& enemy_simulation_;
 
 		// Each one is destroyed before the object it came from, so don't reorder

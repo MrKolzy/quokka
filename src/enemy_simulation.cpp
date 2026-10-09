@@ -6,6 +6,7 @@
 #include "quokka/shader_module.hpp"
 
 #include <array> // std::array
+#include <cstddef> // offsetof
 #include <cstdint> // std::uint32_t
 #include <limits> // std::numeric_limits
 #include <span> // std::as_bytes, std::span
@@ -27,17 +28,27 @@ namespace quokka
 			std::uint32_t casts;
 		};
 
-		// Cast flags, must match blast_cast in enemy_simulation.slang
+		// Cast flags, must match blast_cast and test_cast in enemy_simulation.slang
 		// The strike has no flag, since it's a dispatch of its own
 		constexpr std::uint32_t blast_cast { 1 };
+		constexpr std::uint32_t test_cast { 2 };
+
+		struct CombatState
+		{
+			// Must match CombatState in enemy.slang
+			// The first two are cleared before every update, the rest are kept between frames
+			std::uint32_t target_key;
+			std::uint32_t frame_damage;
+			std::uint32_t spawned_number_count;
+			std::uint32_t total_damage;
+			std::uint32_t previous_total_damage;
+			float last_total_hit_time;
+		};
 
 		// Must match workgroup_size in enemy_simulation.slang
 		constexpr std::uint32_t workgroup_size { 64 };
 
 		constexpr vk::DeviceSize states_size { sizeof(EnemyState) * constants::enemy_count };
-
-		// Must match CombatState in enemy.slang
-		constexpr vk::DeviceSize combat_size { sizeof(std::uint32_t) };
 
 		// Must match no_target in enemy.slang
 		constexpr std::uint32_t no_target { 0xFFFFFFFF };
@@ -120,7 +131,17 @@ namespace quokka
 				.stageFlags { vk::ShaderStageFlagBits::eCompute }
 			};
 
-			constexpr std::array bindings { state_binding, previous_binding, combat_binding };
+			// Must match damage_numbers in enemy_simulation.slang
+			constexpr vk::DescriptorSetLayoutBinding damage_number_binding {
+				.binding { 3 },
+				.descriptorType { vk::DescriptorType::eStorageBuffer },
+				.descriptorCount { 1 },
+				.stageFlags { vk::ShaderStageFlagBits::eCompute }
+			};
+
+			constexpr std::array bindings {
+				state_binding, previous_binding, combat_binding, damage_number_binding
+			};
 
 			const vk::DescriptorSetLayoutCreateInfo create_info {
 				.bindingCount { static_cast<std::uint32_t>(bindings.size()) },
@@ -175,7 +196,7 @@ namespace quokka
 
 	// ***
 
-	EnemySimulation::EnemySimulation(const Device& device)
+	EnemySimulation::EnemySimulation(const Device& device, const Buffer& damage_number_buffer)
 		: descriptor_set_layout_ { create_descriptor_set_layout(device.logical_device()) }
 		, pipeline_layout_ {
 			create_pipeline_layout(device.logical_device(), descriptor_set_layout_)
@@ -186,9 +207,12 @@ namespace quokka
 		, strike_pipeline_ {
 			create_pipeline(device.logical_device(), pipeline_layout_, "strike_main")
 		}
+		, tally_pipeline_ {
+			create_pipeline(device.logical_device(), pipeline_layout_, "tally_main")
+		}
 	{
 		create_buffers(device);
-		create_descriptor_set(device);
+		create_descriptor_set(device, damage_number_buffer);
 	}
 
 	glm::vec2 EnemySimulation::player_start() noexcept
@@ -223,6 +247,11 @@ namespace quokka
 	void EnemySimulation::cast_strike() noexcept
 	{
 		is_strike_cast_ = true;
+	}
+
+	void EnemySimulation::cast_test_hits() noexcept
+	{
+		is_test_cast_ = true;
 	}
 
 	void EnemySimulation::reset() noexcept
@@ -264,7 +293,19 @@ namespace quokka
 		);
 
 		// Nobody bid to be the target yet, and the bids keep the smallest key
-		command_buffer.fillBuffer(*combat_.handle, 0, combat_size, no_target);
+		// No hits yet either, which add their damage to the frame's
+		command_buffer.fillBuffer(
+			*combat_.handle,
+			offsetof(CombatState, target_key),
+			sizeof(CombatState::target_key),
+			no_target
+		);
+		command_buffer.fillBuffer(
+			*combat_.handle,
+			offsetof(CombatState, frame_damage),
+			sizeof(CombatState::frame_damage),
+			0
+		);
 
 		// The update reads the copy and rewrites the states the earlier work used
 		memory_barrier(
@@ -293,7 +334,7 @@ namespace quokka
 			.enemy_count { constants::enemy_count },
 			.aim_point { aim_point_ },
 			.time { time_seconds_ },
-			.casts { is_blast_cast_ ? blast_cast : 0 }
+			.casts { (is_blast_cast_ ? blast_cast : 0) | (is_test_cast_ ? test_cast : 0) }
 		};
 		command_buffer.pushConstants<SimulationConstants>(
 			*pipeline_layout_,
@@ -309,25 +350,28 @@ namespace quokka
 		command_buffer.dispatch(workgroup_count, 1, 1);
 
 		// Only once every enemy has moved and bid, so the strike reads the final target
+		// The push constants and the set stay bound, since the layout is the same
 		if (is_strike_cast_)
 		{
-			memory_barrier(
-				command_buffer,
-				vk::PipelineStageFlagBits2::eComputeShader,
-				vk::AccessFlagBits2::eShaderStorageWrite,
-				vk::PipelineStageFlagBits2::eComputeShader,
-				vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite
-			);
-
-			// The push constants and the set stay bound, since the layout is the same
+			record_compute_to_compute_barrier(command_buffer);
 			command_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, *strike_pipeline_);
+			command_buffer.dispatch(1, 1, 1);
+		}
+
+		// Without a cast nothing was hit, so there's nothing to add to the total
+		if (is_blast_cast_ || is_strike_cast_ || is_test_cast_)
+		{
+			record_compute_to_compute_barrier(command_buffer);
+			command_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, *tally_pipeline_);
 			command_buffer.dispatch(1, 1, 1);
 		}
 
 		is_blast_cast_ = false;
 		is_strike_cast_ = false;
+		is_test_cast_ = false;
 
-		// The scene and the damage numbers read the new states in their vertex shaders
+		// The scene and the damage numbers read the new states, the numbers spawned and the total
+		// in their vertex shaders
 		memory_barrier(
 			command_buffer,
 			vk::PipelineStageFlagBits2::eComputeShader,
@@ -374,20 +418,45 @@ namespace quokka
 			vk::MemoryPropertyFlagBits::eDeviceLocal
 		);
 
-		// Cleared by every update before it's used, so it needs no contents yet either
-		combat_ = create_buffer(
+		// No numbers spawned and no total yet, which no hit ever reached
+		// The fields cleared every update are filled again before they're read
+		const CombatState initial_combat {
+			.target_key { no_target },
+			.frame_damage { 0 },
+			.spawned_number_count { 0 },
+			.total_damage { 0 },
+			.previous_total_damage { 0 },
+			.last_total_hit_time { -std::numeric_limits<float>::infinity() }
+		};
+
+		// Also a fill destination, which create_device_local_buffer allows for its upload
+		combat_ = create_device_local_buffer(
 			device,
-			combat_size,
-			vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
-			vk::MemoryPropertyFlagBits::eDeviceLocal
+			command_pool,
+			std::as_bytes(std::span { &initial_combat, 1 }),
+			vk::BufferUsageFlagBits::eStorageBuffer
 		);
 	}
 
-	void EnemySimulation::create_descriptor_set(const Device& device)
+	void EnemySimulation::record_compute_to_compute_barrier(
+		const vk::raii::CommandBuffer& command_buffer) const
+	{
+		memory_barrier(
+			command_buffer,
+			vk::PipelineStageFlagBits2::eComputeShader,
+			vk::AccessFlagBits2::eShaderStorageWrite,
+			vk::PipelineStageFlagBits2::eComputeShader,
+			vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite
+		);
+	}
+
+	void EnemySimulation::create_descriptor_set(
+		const Device& device,
+		const Buffer& damage_number_buffer)
 	{
 		constexpr vk::DescriptorPoolSize pool_size {
 			.type { vk::DescriptorType::eStorageBuffer },
-			.descriptorCount { 3 }
+			.descriptorCount { 4 }
 		};
 
 		const vk::DescriptorPoolCreateInfo pool_info {
@@ -426,6 +495,12 @@ namespace quokka
 			.range { vk::WholeSize }
 		};
 
+		const vk::DescriptorBufferInfo damage_number_info {
+			.buffer { *damage_number_buffer.handle },
+			.offset { 0 },
+			.range { vk::WholeSize }
+		};
+
 		const std::array descriptor_writes {
 			vk::WriteDescriptorSet {
 				.dstSet { *descriptor_set_ },
@@ -453,6 +528,15 @@ namespace quokka
 				.descriptorCount { 1 },
 				.descriptorType { vk::DescriptorType::eStorageBuffer },
 				.pBufferInfo { &combat_info }
+			},
+			vk::WriteDescriptorSet {
+				.dstSet { *descriptor_set_ },
+				// Must match damage_number_binding above
+				.dstBinding { 3 },
+				.dstArrayElement { 0 },
+				.descriptorCount { 1 },
+				.descriptorType { vk::DescriptorType::eStorageBuffer },
+				.pBufferInfo { &damage_number_info }
 			}
 		};
 

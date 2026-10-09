@@ -6,9 +6,7 @@
 #include <algorithm> // std::clamp, std::min
 #include <chrono> // std::chrono::duration, std::chrono::steady_clock
 #include <cmath> // std::cos, std::pow, std::sin
-#include <cstdint> // std::uint32_t
 #include <format> // std::format
-#include <random> // std::bernoulli_distribution, std::uniform_int_distribution
 
 namespace quokka
 {
@@ -20,11 +18,6 @@ namespace quokka
 		// In seconds, longer frames such as the one after a resize are simulated as this long,
 		// so the enemies don't jump
 		constexpr float max_simulation_delta { 0.1f };
-
-		// Critical hits deal double damage
-		constexpr double critical_chance { 0.15 };
-		constexpr std::uint32_t min_damage { 100 };
-		constexpr std::uint32_t max_damage { 999 };
 
 		// In radians per pixel, without the delta time because the offset already is a distance
 		constexpr float mouse_sensitivity { 0.002f };
@@ -296,11 +289,13 @@ namespace quokka
 		if (window_.is_mouse_button_pressed(MouseButton::left) && player_.try_strike(time_seconds))
 		{
 			enemy_simulation_.cast_strike();
+			damage_numbers_.note_cast(time_seconds);
 		}
 
 		if (window_.is_mouse_button_pressed(MouseButton::right) && player_.try_blast(time_seconds))
 		{
 			enemy_simulation_.cast_blast();
+			damage_numbers_.note_cast(time_seconds);
 		}
 	}
 
@@ -321,7 +316,7 @@ namespace quokka
 			time_seconds);
 	}
 
-	void Engine::update_test_hits(float time_seconds)
+	void Engine::update_test_hits(float time_seconds) noexcept
 	{
 		// Ignored while typing into the interface, like the camera keys
 		const bool was_hit_key_just_pressed {
@@ -332,21 +327,8 @@ namespace quokka
 			return;
 		}
 
-		std::uniform_int_distribution<std::uint32_t> damage_distribution { min_damage, max_damage };
-		std::bernoulli_distribution critical_distribution { critical_chance };
-
-		for (std::uint32_t index { 0 }; index < constants::enemy_count; ++index)
-		{
-			const bool is_critical { critical_distribution(random_engine_) };
-			const std::uint32_t damage { damage_distribution(random_engine_) };
-
-			damage_numbers_.spawn({
-				.enemy_index { index },
-				.spawn_time { time_seconds },
-				.value { is_critical ? 2 * damage : damage },
-				.is_critical { is_critical ? 1u : 0u }
-			});
-		}
+		enemy_simulation_.cast_test_hits();
+		damage_numbers_.note_cast(time_seconds);
 	}
 
 	void Engine::recreate_swapchain()

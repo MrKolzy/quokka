@@ -18,7 +18,6 @@
 #include <glm/glm.hpp>
 
 #include <chrono> // std::chrono::steady_clock
-#include <random> // std::mt19937
 
 namespace quokka
 {
@@ -59,8 +58,8 @@ namespace quokka
 		// The enemies chase the player and take the hits cast this frame
 		void update_enemies(float delta_seconds, float time_seconds) noexcept;
 
-		// A test until there's combat, every enemy takes a hit with its damage number
-		void update_test_hits(float time_seconds);
+		// Space shows a damage number on every enemy without hurting it, for benchmarks
+		void update_test_hits(float time_seconds) noexcept;
 
 		void recreate_swapchain();
 
@@ -78,7 +77,7 @@ namespace quokka
 			device_, graphics_pipeline_.frame_descriptor_set_layout(),
 			swapchain_.surface_format().format
 		};
-		EnemySimulation enemy_simulation_ { device_ };
+		EnemySimulation enemy_simulation_ { device_, damage_numbers_.buffer() };
 		Renderer renderer_ {
 			device_, swapchain_, graphics_pipeline_, gpu_timer_, gui_, damage_numbers_,
 			enemy_simulation_
@@ -107,9 +106,6 @@ namespace quokka
 		std::chrono::steady_clock::time_point previous_frame_time_ {
 			std::chrono::steady_clock::now()
 		};
-
-		// Default seed, so every run deals the same damage, which keeps benchmarks repeatable
-		std::mt19937 random_engine_ {};
 
 		// So these keys act once per press, not every frame while they're held
 		bool was_camera_key_pressed_ { false };
