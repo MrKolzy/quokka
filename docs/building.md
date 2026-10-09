@@ -58,6 +58,7 @@ and **C/C++ > General > Multi-processor Compilation** to `No`.
 	"$(VULKAN_SDK)\Bin\slangc.exe" "$(ProjectDir)shaders\shader.slang" -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name -entry enemy_vert_main -entry player_vert_main -entry frag_main -entry ground_vert_main -entry ground_frag_main -o "$(ProjectDir)shaders\shader.spv"
 	"$(VULKAN_SDK)\Bin\slangc.exe" "$(ProjectDir)shaders\damage_numbers.slang" -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name -entry vert_main -entry total_vert_main -entry frag_main -o "$(ProjectDir)shaders\damage_numbers.spv"
 	"$(VULKAN_SDK)\Bin\slangc.exe" "$(ProjectDir)shaders\enemy_simulation.slang" -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name -entry update_main -entry strike_main -entry tally_main -o "$(ProjectDir)shaders\enemy_simulation.spv"
+	"$(VULKAN_SDK)\Bin\slangc.exe" "$(ProjectDir)shaders\health_bars.slang" -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name -entry vert_main -entry frag_main -o "$(ProjectDir)shaders\health_bars.spv"
 
 **Build Events > Post-Build Event > Command Line:**
 

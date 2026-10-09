@@ -17,7 +17,13 @@ struct EnemyState
 
 	// In seconds since the start, for the flash, and for dead enemies the moment they died
 	float last_hit_time;
+
+	// In seconds since the start, when it can attack the player again
+	float next_attack_time;
 };
+
+// What every enemy starts with, must match enemy_health in enemy_simulation.cpp
+static const float enemy_max_health = 1000.0;
 
 // Must match CombatState in enemy_simulation.cpp
 struct CombatState
@@ -27,8 +33,10 @@ struct CombatState
 	// so the smallest key wins an atomic minimum, or no_target when nobody is close enough
 	uint target_key;
 
-	// Cleared before every update, the damage of this frame's hits
+	// Cleared before every update, the damage of this frame's hits on the enemies
+	// and of their attacks on the player, which the CPU reads back
 	uint frame_damage;
+	uint player_damage;
 
 	// Kept from frame to frame, how many numbers were ever spawned, so modulo the capacity
 	// it's where the next one goes in the ring

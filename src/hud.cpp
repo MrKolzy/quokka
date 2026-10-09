@@ -1,4 +1,4 @@
-#include "quokka/hotbar.hpp"
+#include "quokka/hud.hpp"
 
 #include "quokka/abilities.hpp"
 #include "quokka/gui.hpp"
@@ -6,6 +6,7 @@
 
 #include <imgui.h>
 
+#include <cfloat> // FLT_MAX
 #include <cmath> // std::cos, std::sin
 #include <cstddef> // std::size_t
 #include <format> // std::format
@@ -33,6 +34,13 @@ namespace quokka
 		// Enough triangles for the cooldown sweep to look round at this size
 		constexpr int sweep_segments { 48 };
 
+		// In pixels, as wide as the slots below it
+		constexpr float health_bar_height { 18.0f };
+
+		// In pixels, the death screen's title and the hint below it
+		constexpr float death_title_size { 64.0f };
+		constexpr float death_hint_size { 22.0f };
+
 		// In sRGB, as image editors show colors, converted for the sRGB swapchain
 		[[nodiscard]] ImVec4 srgb_color(float red, float green, float blue, float alpha = 1.0f)
 		{
@@ -42,6 +50,32 @@ namespace quokka
 		[[nodiscard]] ImU32 to_u32(const ImVec4& color)
 		{
 			return ImGui::ColorConvertFloat4ToU32(color);
+		}
+
+		// White with a black shadow in every diagonal, so it reads over anything behind it
+		void add_centered_text(
+			ImDrawList& draw_list,
+			float font_size,
+			ImVec2 center,
+			const char* text,
+			ImU32 color = IM_COL32_WHITE)
+		{
+			ImFont& font { *ImGui::GetFont() };
+			const ImVec2 size { font.CalcTextSizeA(font_size, FLT_MAX, 0.0f, text) };
+			const ImVec2 position { center.x - size.x / 2.0f, center.y - size.y / 2.0f };
+
+			for (const ImVec2 shift : { ImVec2 { -1.0f, -1.0f }, ImVec2 { 1.0f, -1.0f },
+				ImVec2 { -1.0f, 1.0f }, ImVec2 { 1.0f, 1.0f } })
+			{
+				draw_list.AddText(
+					&font,
+					font_size,
+					{ position.x + shift.x, position.y + shift.y },
+					IM_COL32_BLACK,
+					text);
+			}
+
+			draw_list.AddText(&font, font_size, position, color, text);
 		}
 
 		// The blast matches the aim ring on the ground, which shows its area
@@ -181,23 +215,7 @@ namespace quokka
 					draw_cooldown(draw_list, min, max, fraction_left);
 
 					const std::string seconds { std::format("{:.1f}", cooldown_left) };
-					const ImVec2 text_size { ImGui::CalcTextSize(seconds.c_str()) };
-					const ImVec2 text_position {
-						center.x - text_size.x / 2.0f, center.y - text_size.y / 2.0f
-					};
-
-					// A shadow in every diagonal, so it reads over the icon
-					for (const ImVec2 shift : { ImVec2 { -1.0f, -1.0f }, ImVec2 { 1.0f, -1.0f },
-						ImVec2 { -1.0f, 1.0f }, ImVec2 { 1.0f, 1.0f } })
-					{
-						draw_list.AddText(
-							{ text_position.x + shift.x, text_position.y + shift.y },
-							to_u32({ 0.0f, 0.0f, 0.0f, 1.0f }),
-							seconds.c_str());
-					}
-
-					const ImU32 text_color { to_u32({ 1.0f, 1.0f, 1.0f, 1.0f }) };
-					draw_list.AddText(text_position, text_color, seconds.c_str());
+					add_centered_text(draw_list, ImGui::GetFontSize(), center, seconds.c_str());
 				}
 
 				if (ImGui::BeginItemTooltip())
@@ -218,11 +236,65 @@ namespace quokka
 				to_u32(srgb_color(0.9f, 0.9f, 0.9f)),
 				slot.key_label);
 		}
+
+		// As wide as the row of slots, red like the enemies' bars, with the exact health on it
+		void show_health_bar(const Player& player)
+		{
+			const auto slot_count { static_cast<float>(hotbar_slots.size()) };
+			const float width { slot_size * slot_count + slot_spacing * (slot_count - 1.0f) };
+
+			// Takes the bar's place in the layout, without drawing
+			ImGui::Dummy({ width, health_bar_height });
+
+			const ImVec2 min { ImGui::GetItemRectMin() };
+			const ImVec2 max { ImGui::GetItemRectMax() };
+			ImDrawList& draw_list { *ImGui::GetWindowDrawList() };
+
+			const float fraction { player.health() / Player::max_health() };
+			const ImVec2 fill_max { min.x + (max.x - min.x) * fraction, max.y };
+
+			draw_list.AddRectFilled(min, max, to_u32(srgb_color(0.15f, 0.02f, 0.02f)), 4.0f);
+			draw_list.AddRectFilled(min, fill_max, to_u32(srgb_color(0.8f, 0.1f, 0.08f)), 4.0f);
+			draw_list.AddRect(min, max, to_u32(srgb_color(0.55f, 0.55f, 0.6f)), 4.0f, 0, 1.5f);
+
+			const std::string text {
+				std::format("{:.0f} / {:.0f}", player.health(), Player::max_health())
+			};
+			add_centered_text(
+				draw_list,
+				ImGui::GetFontSize(),
+				{ (min.x + max.x) / 2.0f, (min.y + max.y) / 2.0f },
+				text.c_str());
+		}
+
+		// Darkens the whole screen behind the message, over every window
+		void show_death_screen()
+		{
+			const ImGuiViewport& viewport { *ImGui::GetMainViewport() };
+			const ImVec2 min { viewport.Pos };
+			const ImVec2 max { viewport.Pos.x + viewport.Size.x, viewport.Pos.y + viewport.Size.y };
+			const ImVec2 center { (min.x + max.x) / 2.0f, (min.y + max.y) / 2.0f };
+
+			ImDrawList& draw_list { *ImGui::GetForegroundDrawList() };
+			draw_list.AddRectFilled(min, max, to_u32({ 0.0f, 0.0f, 0.0f, 0.6f }));
+
+			add_centered_text(
+				draw_list,
+				death_title_size,
+				{ center.x, center.y - death_title_size / 2.0f },
+				"YOU DIED",
+				to_u32(srgb_color(0.8f, 0.1f, 0.08f)));
+			add_centered_text(
+				draw_list,
+				death_hint_size,
+				{ center.x, center.y + death_hint_size },
+				"Press R to try again");
+		}
 	}
 
 	// ***
 
-	void show_hotbar(const Player& player, float time_seconds)
+	void show_hud(const Player& player, float time_seconds)
 	{
 		const ImGuiViewport& viewport { *ImGui::GetMainViewport() };
 
@@ -246,10 +318,11 @@ namespace quokka
 
 		if (ImGui::Begin("Hotbar", nullptr, window_flags))
 		{
+			show_health_bar(player);
+
 			for (std::size_t index { 0 }; index < hotbar_slots.size(); ++index)
 			{
-				// The number row first, then the letters below it
-				if (index % hotbar_row_length != 0)
+				if (index != 0)
 				{
 					ImGui::SameLine();
 				}
@@ -260,5 +333,10 @@ namespace quokka
 		ImGui::End();
 
 		ImGui::PopStyleVar();
+
+		if (player.is_dead())
+		{
+			show_death_screen();
+		}
 	}
 }

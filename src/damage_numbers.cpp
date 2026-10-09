@@ -2,10 +2,9 @@
 
 #include "quokka/constants.hpp"
 #include "quokka/device.hpp"
-#include "quokka/shader_module.hpp"
+#include "quokka/overlay_pipeline.hpp"
 
 #include <algorithm> // std::max
-#include <array> // std::array
 #include <span> // std::as_bytes, std::span
 #include <vector> // std::vector
 
@@ -45,126 +44,6 @@ namespace quokka
 			return device.createPipelineLayout(pipeline_layout_info);
 		}
 
-		vk::raii::Pipeline create_pipeline(
-			const vk::raii::Device& device,
-			const vk::raii::PipelineLayout& pipeline_layout,
-			vk::Format color_format,
-			const char* vertex_entry_point)
-		{
-			const auto shader_code { read_shader_file(constants::damage_number_shader_path) };
-			const auto shader_module { create_shader_module(device, shader_code) };
-
-			// Must match the entry points in damage_numbers.slang and in the slangc command
-			const std::array shader_stages {
-				vk::PipelineShaderStageCreateInfo {
-					.stage { vk::ShaderStageFlagBits::eVertex },
-					.module { *shader_module },
-					.pName { vertex_entry_point }
-				},
-				vk::PipelineShaderStageCreateInfo {
-					.stage { vk::ShaderStageFlagBits::eFragment },
-					.module { *shader_module },
-					.pName { "frag_main" }
-				}
-			};
-
-			// No vertex buffers, the vertex shader builds the quads from its indices
-			constexpr vk::PipelineVertexInputStateCreateInfo vertex_input_info {};
-
-			constexpr vk::PipelineInputAssemblyStateCreateInfo input_assembly_info {
-				.topology { vk::PrimitiveTopology::eTriangleList }
-			};
-
-			// Only the counts, the actual viewport and scissor are dynamic
-			constexpr vk::PipelineViewportStateCreateInfo viewport_state_info {
-				.viewportCount { 1 },
-				.scissorCount { 1 }
-			};
-
-			// Not culled, since the quads always face the screen
-			constexpr vk::PipelineRasterizationStateCreateInfo rasterization_info {
-				.depthClampEnable { vk::False },
-				.rasterizerDiscardEnable { vk::False },
-				.polygonMode { vk::PolygonMode::eFill },
-				.cullMode { vk::CullModeFlagBits::eNone },
-				.frontFace { vk::FrontFace::eCounterClockwise },
-				.depthBiasEnable { vk::False },
-				.lineWidth { 1.0f }
-			};
-
-			// One sample, like the rendering after the MSAA resolve that it's drawn in
-			constexpr vk::PipelineMultisampleStateCreateInfo multisample_info {
-				.rasterizationSamples { vk::SampleCountFlagBits::e1 },
-				.sampleShadingEnable { vk::False }
-			};
-
-			// No depth attachment, so numbers are always drawn over the scene
-			constexpr vk::PipelineDepthStencilStateCreateInfo depth_stencil_info {
-				.depthTestEnable { vk::False },
-				.depthWriteEnable { vk::False },
-				.depthBoundsTestEnable { vk::False },
-				.stencilTestEnable { vk::False }
-			};
-
-			// Blended by alpha, so numbers can fade out
-			constexpr vk::PipelineColorBlendAttachmentState color_blend_attachment {
-				.blendEnable { vk::True },
-				.srcColorBlendFactor { vk::BlendFactor::eSrcAlpha },
-				.dstColorBlendFactor { vk::BlendFactor::eOneMinusSrcAlpha },
-				.colorBlendOp { vk::BlendOp::eAdd },
-				.srcAlphaBlendFactor { vk::BlendFactor::eOne },
-				.dstAlphaBlendFactor { vk::BlendFactor::eOneMinusSrcAlpha },
-				.alphaBlendOp { vk::BlendOp::eAdd },
-				.colorWriteMask {
-					vk::ColorComponentFlagBits::eR |
-					vk::ColorComponentFlagBits::eG |
-					vk::ColorComponentFlagBits::eB |
-					vk::ColorComponentFlagBits::eA
-				}
-			};
-
-			const vk::PipelineColorBlendStateCreateInfo color_blend_info {
-				.logicOpEnable { vk::False },
-				.attachmentCount { 1 },
-				.pAttachments { &color_blend_attachment }
-			};
-
-			// Set when recording commands, so a resize doesn't need a new pipeline
-			constexpr std::array dynamic_states {
-				vk::DynamicState::eViewport,
-				vk::DynamicState::eScissor
-			};
-
-			const vk::PipelineDynamicStateCreateInfo dynamic_state_info {
-				.dynamicStateCount { static_cast<std::uint32_t>(dynamic_states.size()) },
-				.pDynamicStates { dynamic_states.data() }
-			};
-
-			// Straight into the swapchain image, without depth
-			const vk::PipelineRenderingCreateInfo rendering_info {
-				.colorAttachmentCount { 1 },
-				.pColorAttachmentFormats { &color_format }
-			};
-
-			const vk::GraphicsPipelineCreateInfo pipeline_info {
-				.pNext { &rendering_info },
-				.stageCount { static_cast<std::uint32_t>(shader_stages.size()) },
-				.pStages { shader_stages.data() },
-				.pVertexInputState { &vertex_input_info },
-				.pInputAssemblyState { &input_assembly_info },
-				.pViewportState { &viewport_state_info },
-				.pRasterizationState { &rasterization_info },
-				.pMultisampleState { &multisample_info },
-				.pDepthStencilState { &depth_stencil_info },
-				.pColorBlendState { &color_blend_info },
-				.pDynamicState { &dynamic_state_info },
-				.layout { *pipeline_layout },
-				.renderPass { nullptr }
-			};
-
-			return device.createGraphicsPipeline(nullptr, pipeline_info);
-		}
-
 		// Every slot starts expired, so nothing shows until the first spawn
 		Buffer create_ring_buffer(const Device& device)
 		{
@@ -199,11 +78,22 @@ namespace quokka
 		vk::Format color_format)
 		: pipeline_layout_ { create_pipeline_layout(device.logical_device(), descriptor_set_layout) }
 		, pipeline_ {
-			create_pipeline(device.logical_device(), pipeline_layout_, color_format, "vert_main")
+			create_overlay_pipeline(
+				device.logical_device(),
+				pipeline_layout_,
+				color_format,
+				constants::damage_number_shader_path,
+				"vert_main",
+				"frag_main")
 		}
 		, total_pipeline_ {
-			create_pipeline(
-				device.logical_device(), pipeline_layout_, color_format, "total_vert_main")
+			create_overlay_pipeline(
+				device.logical_device(),
+				pipeline_layout_,
+				color_format,
+				constants::damage_number_shader_path,
+				"total_vert_main",
+				"frag_main")
 		}
 		, ring_buffer_ { create_ring_buffer(device) }
 	{
@@ -231,18 +121,7 @@ namespace quokka
 		vk::Extent2D extent,
 		float time) const
 	{
-		// Flipped like the scene's, so clip space y points up for the projection and the offsets
-		const vk::Viewport viewport {
-			.x { 0.0f },
-			.y { static_cast<float>(extent.height) },
-			.width { static_cast<float>(extent.width) },
-			.height { -static_cast<float>(extent.height) },
-			.minDepth { 0.0f },
-			.maxDepth { 1.0f }
-		};
-
-		command_buffer.setViewport(0, viewport);
-		command_buffer.setScissor(0, vk::Rect2D { .offset { 0, 0 }, .extent { extent } });
+		set_overlay_viewport(command_buffer, extent);
 
 		// Set 0, with no dynamic offsets, kept for both draws since they share the layout
 		command_buffer.bindDescriptorSets(

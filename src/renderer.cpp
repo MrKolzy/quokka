@@ -9,6 +9,7 @@
 #include "quokka/gpu_timer.hpp"
 #include "quokka/graphics_pipeline.hpp"
 #include "quokka/gui.hpp"
+#include "quokka/health_bars.hpp"
 #include "quokka/light.hpp"
 #include "quokka/mesh.hpp"
 #include "quokka/player.hpp"
@@ -72,6 +73,7 @@ namespace quokka
 		GpuTimer& gpu_timer,
 		const Gui& gui,
 		const DamageNumbers& damage_numbers,
+		const HealthBars& health_bars,
 		EnemySimulation& enemy_simulation)
 		: device_ { device }
 		, swapchain_ { swapchain }
@@ -79,6 +81,7 @@ namespace quokka
 		, gpu_timer_ { gpu_timer }
 		, gui_ { gui }
 		, damage_numbers_ { damage_numbers }
+		, health_bars_ { health_bars }
 		, enemy_simulation_ { enemy_simulation }
 		, recording_threads_ { constants::recording_thread_count }
 	{
@@ -143,8 +146,10 @@ namespace quokka
 			throw std::runtime_error("Failed to wait for the in flight fence");
 		}
 
-		// The fence wait above also guarantees this frame's previous timestamps are written
+		// The fence wait above also guarantees this frame's previous timestamps are written,
+		// and its copy of the damage dealt to the player
 		gpu_timer_.collect(frame_index_);
+		enemy_simulation_.collect(frame_index_);
 
 		// The semaphore is signaled once the presentation engine stops reading the image
 		// Out of date is returned instead of thrown, here and in presentKHR,
@@ -619,7 +624,7 @@ namespace quokka
 
 		// Before the rendering begins, since compute work and copies can't be recorded inside one
 		// The hits also spawn their damage numbers here
-		enemy_simulation_.record_update(command_buffer);
+		enemy_simulation_.record_update(command_buffer, frame_index_);
 
 		gpu_timer_.record_timestamp(command_buffer, frame_index_, GpuTimestamp::enemies_updated);
 
@@ -771,6 +776,9 @@ namespace quokka
 
 		command_buffer.beginRendering(rendering_info);
 
+		// First, so the damage numbers rising from the enemies cover their bars
+		health_bars_.record_draw(command_buffer, descriptor_set, swapchain_.extent());
+
 		if (damage_numbers_.has_visible_numbers(time_seconds))
 		{
 			damage_numbers_.record_draw(
@@ -866,7 +874,8 @@ namespace quokka
 		// The ground also reads them, for the player's shadow
 		const PlayerConstants player_constants {
 			.position { player.position() },
-			.yaw { player.yaw() }
+			.yaw { player.yaw() },
+			.last_hit_time { player.last_hit_time() }
 		};
 		command_buffer.pushConstants<PlayerConstants>(
 			*graphics_pipeline_.pipeline_layout(),

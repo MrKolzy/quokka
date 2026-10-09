@@ -22,6 +22,9 @@ struct PlayerConstants
 
 	// The same convention as EnemyState
 	float yaw;
+
+	// In seconds since the start, for the flash like EnemyState
+	float last_hit_time;
 };
 
 [[vk::push_constant]]
@@ -128,7 +131,13 @@ VertexOutput enemy_vert_main(VertexInput input, uint instance_index : SV_VulkanI
 [shader("vertex")]
 VertexOutput player_vert_main(VertexInput input)
 {
-	return place_on_ground(input, player.position, player.yaw, 0.0);
+	VertexOutput output = place_on_ground(input, player.position, player.yaw, 0.0);
+
+	// Weaker than an enemy's, since a surrounded player is hit several times a second
+	const float time_since_hit = frame.time - player.last_hit_time;
+	output.hit_flash = 0.5 * saturate(1.0 - time_since_hit / hit_flash_duration);
+
+	return output;
 }
 
 // In world units, half the side of the ground square, which is centered below the camera

@@ -13,6 +13,9 @@ namespace quokka
 		// On the ground as world x and z, with the yaw convention of EnemyState
 		glm::vec2 position;
 		float yaw;
+
+		// In seconds since the start, for the flash like EnemyState
+		float last_hit_time;
 	};
 
 	class GraphicsPipeline

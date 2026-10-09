@@ -42,6 +42,19 @@ namespace quokka
 		[[nodiscard]] float last_blast_time() const noexcept;
 		[[nodiscard]] glm::vec2 last_blast_point() const noexcept;
 
+		[[nodiscard]] float health() const noexcept;
+		[[nodiscard]] static float max_health() noexcept;
+		[[nodiscard]] bool is_dead() const noexcept;
+
+		// For the flash, in seconds since the start
+		[[nodiscard]] float last_hit_time() const noexcept;
+
+		// Ignored once dead, so the death can't be undone by regeneration either
+		void take_damage(float damage, float time_seconds) noexcept;
+
+		// Heals over time, once a while has passed since the last hit
+		void regenerate(float delta_seconds, float time_seconds) noexcept;
+
 	private:
 		void face_aim_point() noexcept;
 
@@ -55,5 +68,10 @@ namespace quokka
 		// Never cast yet, so there's no shock wave
 		float last_blast_time_ { -std::numeric_limits<float>::infinity() };
 		glm::vec2 last_blast_point_ { 0.0f };
+
+		float health_ { max_health() };
+
+		// Never hit yet, so there's no flash and regeneration can start
+		float last_hit_time_ { -std::numeric_limits<float>::infinity() };
 	};
 }

@@ -2,7 +2,7 @@
 
 #include "quokka/abilities.hpp"
 #include "quokka/constants.hpp"
-#include "quokka/hotbar.hpp"
+#include "quokka/hud.hpp"
 #include "quokka/light_panel.hpp"
 
 #include <algorithm> // std::clamp, std::min
@@ -89,11 +89,11 @@ namespace quokka
 				show_light_panel(light_);
 			}
 
-			show_hotbar(player_, elapsed_time.count());
+			show_hud(player_, elapsed_time.count());
 
 			gui_.end_frame();
 
-			update_player(delta_time.count());
+			update_player(delta_time.count(), elapsed_time.count());
 			update_camera(delta_time.count());
 			update_aim();
 			update_abilities(elapsed_time.count());
@@ -133,10 +133,16 @@ namespace quokka
 		}
 	}
 
-	void Engine::update_player(float delta_seconds) noexcept
+	void Engine::update_player(float delta_seconds, float time_seconds) noexcept
 	{
-		// The free camera takes the movement keys, and typing into the interface mustn't move
-		if (is_camera_free_ || gui_.wants_keyboard())
+		// Read back from the frames the GPU finished since the last update
+		const auto damage { static_cast<float>(enemy_simulation_.take_player_damage()) };
+		player_.take_damage(damage, time_seconds);
+		player_.regenerate(delta_seconds, time_seconds);
+
+		// The free camera takes the movement keys, typing into the interface mustn't move,
+		// and the dead don't walk
+		if (is_camera_free_ || gui_.wants_keyboard() || player_.is_dead())
 		{
 			return;
 		}
@@ -284,7 +290,7 @@ namespace quokka
 	void Engine::update_abilities(float time_seconds) noexcept
 	{
 		// The free camera looks around with the right button and moves with some of the keys
-		if (is_camera_free_)
+		if (is_camera_free_ || player_.is_dead())
 		{
 			return;
 		}
@@ -328,6 +334,7 @@ namespace quokka
 		enemy_simulation_.prepare_update(
 			player_.position(),
 			player_.aim_point(),
+			!player_.is_dead(),
 			std::min(delta_seconds, max_simulation_delta),
 			time_seconds);
 	}

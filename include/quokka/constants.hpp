@@ -30,6 +30,7 @@ namespace quokka::constants
 	inline constexpr const char* shader_path { "shaders/shader.spv" };
 	inline constexpr const char* damage_number_shader_path { "shaders/damage_numbers.spv" };
 	inline constexpr const char* enemy_simulation_shader_path { "shaders/enemy_simulation.spv" };
+	inline constexpr const char* health_bar_shader_path { "shaders/health_bars.spv" };
 	inline constexpr const char* enemy_model_path { "models/skeleton_minion.glb" };
 	inline constexpr const char* enemy_texture_path { "textures/skeleton.ktx2" };
 	inline constexpr const char* player_model_path { "models/knight.glb" };

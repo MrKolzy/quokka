@@ -8,6 +8,7 @@
 #include "quokka/gpu_timer.hpp"
 #include "quokka/graphics_pipeline.hpp"
 #include "quokka/gui.hpp"
+#include "quokka/health_bars.hpp"
 #include "quokka/light.hpp"
 #include "quokka/player.hpp"
 #include "quokka/renderer.hpp"
@@ -36,8 +37,9 @@ namespace quokka
 		void run();
 
 	private:
-		// Walks relative to where the camera looks, so W always goes up the screen
-		void update_player(float delta_seconds) noexcept;
+		// Takes the enemies' attacks and heals, and walks relative to where the camera looks,
+		// so W always goes up the screen
+		void update_player(float delta_seconds, float time_seconds) noexcept;
 
 		// Follows the player, or flies freely after F2
 		void update_camera(float delta_seconds) noexcept;
@@ -77,10 +79,14 @@ namespace quokka
 			device_, graphics_pipeline_.frame_descriptor_set_layout(),
 			swapchain_.surface_format().format
 		};
+		HealthBars health_bars_ {
+			device_, graphics_pipeline_.frame_descriptor_set_layout(),
+			swapchain_.surface_format().format
+		};
 		EnemySimulation enemy_simulation_ { device_, damage_numbers_.buffer() };
 		Renderer renderer_ {
 			device_, swapchain_, graphics_pipeline_, gpu_timer_, gui_, damage_numbers_,
-			enemy_simulation_
+			health_bars_, enemy_simulation_
 		};
 
 		Player player_ { EnemySimulation::player_start() };

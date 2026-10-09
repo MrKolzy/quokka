@@ -49,6 +49,9 @@ struct SimulationConstants
 
 	// In percent, and critical hits deal double damage
 	uint critical_chance;
+
+	// 0 or 1, the enemies stop attacking a dead target
+	uint is_target_alive;
 };
 
 [[vk::push_constant]]
@@ -67,6 +70,16 @@ static const float pick_radius = 1.5;
 static const float chase_speed = 3.0;
 static const float separation_speed = 4.0;
 static const float max_speed = 6.0;
+
+// In world units, a bit past stop_distance, so the enemies that stopped next to the target
+// reach it, and only the first ring around it does, since the separation keeps the rest out
+static const float attack_range = 2.4;
+
+// Damage per attack, and seconds between attacks, each one a little longer or shorter so a crowd
+// doesn't hit in step, balanced around the player's health in player.cpp
+static const uint attack_damage = 6;
+static const float attack_interval = 1.5;
+static const float attack_interval_variation = 0.3;
 
 // The test isn't an ability, so its damage only lives here
 static const float2 test_damage = float2(100.0, 999.0);
@@ -222,6 +235,17 @@ void update_main(uint3 thread_id : SV_DispatchThreadID, uint3 local_id : SV_Grou
 	}
 
 	enemy.position += velocity * simulation.delta_seconds;
+
+	const bool can_attack = simulation.is_target_alive != 0 && enemy.is_chasing != 0 &&
+		distance(enemy.position, simulation.target) < attack_range;
+	if (can_attack && simulation.time >= enemy.next_attack_time)
+	{
+		InterlockedAdd(combat[0].player_damage, attack_damage);
+
+		const float random = float(pcg_hash(index ^ asuint(simulation.time)) & 0xFFFF) / 65535.0;
+		enemy.next_attack_time = simulation.time + attack_interval +
+			(random * 2.0 - 1.0) * attack_interval_variation;
+	}
 
 	// At the new position, so the blast and the target match what this frame draws
 	const float aim_distance = distance(enemy.position, simulation.aim_point);

@@ -70,19 +70,12 @@ namespace quokka
 		std::optional<Ability> ability;
 	};
 
-	// The number row above the letters, like on the keyboard
-	inline constexpr std::size_t hotbar_row_length { 5 };
-
-	inline constexpr std::array<HotbarSlot, 2 * hotbar_row_length> hotbar_slots {
+	// Only the number keys, since the letters around WASD already walk, reset and fly
+	inline constexpr std::array hotbar_slots {
 		HotbarSlot { Key::one, "1", Ability::strike },
 		HotbarSlot { Key::two, "2", Ability::blast },
 		HotbarSlot { Key::three, "3", std::nullopt },
 		HotbarSlot { Key::four, "4", std::nullopt },
-		HotbarSlot { Key::five, "5", std::nullopt },
-		HotbarSlot { Key::q, "Q", std::nullopt },
-		HotbarSlot { Key::w, "W", std::nullopt },
-		HotbarSlot { Key::e, "E", std::nullopt },
-		HotbarSlot { Key::r, "R", std::nullopt },
-		HotbarSlot { Key::t, "T", std::nullopt }
+		HotbarSlot { Key::five, "5", std::nullopt }
 	};
 }

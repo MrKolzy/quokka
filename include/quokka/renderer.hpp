@@ -19,6 +19,7 @@ namespace quokka
 	class GpuTimer;
 	class GraphicsPipeline;
 	class Gui;
+	class HealthBars;
 	class Player;
 	class Swapchain;
 
@@ -32,6 +33,7 @@ namespace quokka
 			GpuTimer& gpu_timer,
 			const Gui& gui,
 			const DamageNumbers& damage_numbers,
+			const HealthBars& health_bars,
 			EnemySimulation& enemy_simulation);
 		~Renderer();
 
@@ -73,7 +75,7 @@ namespace quokka
 			const Player& player,
 			float time_seconds);
 
-		// The damage numbers and the interface, over the finished scene
+		// The health bars, the damage numbers and the interface, over the finished scene
 		// Recorded every frame, since the game's interface is always on screen
 		void record_overlay(
 			const vk::raii::CommandBuffer& command_buffer,
@@ -108,6 +110,7 @@ namespace quokka
 		GpuTimer& gpu_timer_;
 		const Gui& gui_;
 		const DamageNumbers& damage_numbers_;
+		const HealthBars& health_bars_;
 		EnemySimulation& enemy_simulation_;
 
 		// Each one is destroyed before the object it came from, so don't reorder

@@ -24,7 +24,6 @@ namespace quokka
 		r,
 		s,
 		space,
-		t,
 		three,
 		two,
 		w

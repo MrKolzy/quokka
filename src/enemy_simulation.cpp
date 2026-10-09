@@ -10,7 +10,7 @@
 #include <cstdint> // std::uint32_t
 #include <limits> // std::numeric_limits
 #include <span> // std::as_bytes, std::span
-#include <utility> // std::move
+#include <utility> // std::exchange, std::move
 #include <vector> // std::vector
 
 namespace quokka
@@ -32,8 +32,8 @@ namespace quokka
 			glm::vec2 blast_damage;
 			std::uint32_t critical_chance;
 
-			// The shader's struct holds float2 members, so its size is a multiple of 8
-			std::uint32_t padding;
+			// 0 or 1, the enemies stop attacking a dead target
+			std::uint32_t is_target_alive;
 		};
 
 		[[nodiscard]] glm::vec2 damage_range(Ability ability) noexcept
@@ -49,9 +49,10 @@ namespace quokka
 		struct CombatState
 		{
 			// Must match CombatState in enemy.slang
-			// The first two are cleared before every update, the rest are kept between frames
+			// The first three are cleared before every update, the rest are kept between frames
 			std::uint32_t target_key;
 			std::uint32_t frame_damage;
+			std::uint32_t player_damage;
 			std::uint32_t spawned_number_count;
 			std::uint32_t total_damage;
 			std::uint32_t previous_total_damage;
@@ -69,7 +70,8 @@ namespace quokka
 		// The target key keeps the index in 16 bits, and the largest key means no target
 		static_assert(constants::enemy_count < 0xFFFF);
 
-		// The abilities in abilities.hpp are balanced around it
+		// The abilities in abilities.hpp are balanced around it, must match enemy_max_health
+		// in enemy.slang
 		constexpr float enemy_health { 1000.0f };
 
 		// The smallest side whose square holds the count, so the last row may be incomplete
@@ -111,7 +113,10 @@ namespace quokka
 					.is_chasing { 0 },
 					.health { enemy_health },
 					// Never hit, so there's no flash
-					.last_hit_time { -std::numeric_limits<float>::infinity() }
+					.last_hit_time { -std::numeric_limits<float>::infinity() },
+					// Ready to attack as soon as the player is in reach
+					.next_attack_time { 0.0f },
+					.padding { 0.0f }
 				});
 			}
 
@@ -243,11 +248,13 @@ namespace quokka
 	void EnemySimulation::prepare_update(
 		glm::vec2 target,
 		glm::vec2 aim_point,
+		bool is_target_alive,
 		float delta_seconds,
 		float time_seconds) noexcept
 	{
 		target_ = target;
 		aim_point_ = aim_point;
+		is_target_alive_ = is_target_alive;
 		delta_seconds_ = delta_seconds;
 		time_seconds_ = time_seconds;
 	}
@@ -287,7 +294,24 @@ namespace quokka
 		return combat_;
 	}
 
-	void EnemySimulation::record_update(const vk::raii::CommandBuffer& command_buffer)
+	void EnemySimulation::collect(std::uint32_t frame_index) noexcept
+	{
+		auto* const player_damage { static_cast<std::uint32_t*>(mapped_readbacks_[frame_index]) };
+		player_damage_ += *player_damage;
+
+		// A frame that returns before recording leaves its copy unwritten, and the next wait
+		// on the same fence would otherwise count it twice
+		*player_damage = 0;
+	}
+
+	std::uint32_t EnemySimulation::take_player_damage() noexcept
+	{
+		return std::exchange(player_damage_, 0u);
+	}
+
+	void EnemySimulation::record_update(
+		const vk::raii::CommandBuffer& command_buffer,
+		std::uint32_t frame_index)
 	{
 		// The previous frame copied, read the copy and wrote the states and the combat state,
 		// and its vertex shaders read them, so the new copy and clear wait for all of them
@@ -311,7 +335,7 @@ namespace quokka
 		);
 
 		// Nobody bid to be the target yet, and the bids keep the smallest key
-		// No hits yet either, which add their damage to the frame's
+		// No hits or attacks yet either, which add their damage to the frame's
 		command_buffer.fillBuffer(
 			*combat_.handle,
 			offsetof(CombatState, target_key),
@@ -321,7 +345,7 @@ namespace quokka
 		command_buffer.fillBuffer(
 			*combat_.handle,
 			offsetof(CombatState, frame_damage),
-			sizeof(CombatState::frame_damage),
+			sizeof(CombatState::frame_damage) + sizeof(CombatState::player_damage),
 			0
 		);
 
@@ -355,7 +379,8 @@ namespace quokka
 			.casts { (is_blast_cast_ ? blast_cast : 0) | (is_test_cast_ ? test_cast : 0) },
 			.strike_damage { damage_range(Ability::strike) },
 			.blast_damage { damage_range(Ability::blast) },
-			.critical_chance { critical_chance }
+			.critical_chance { critical_chance },
+			.is_target_alive { is_target_alive_ ? 1u : 0u }
 		};
 		command_buffer.pushConstants<SimulationConstants>(
 			*pipeline_layout_,
@@ -392,13 +417,33 @@ namespace quokka
 		is_test_cast_ = false;
 
 		// The scene and the damage numbers read the new states, the numbers spawned and the total
-		// in their vertex shaders
+		// in their vertex shaders, and the copy below reads the damage dealt to the player
 		memory_barrier(
 			command_buffer,
 			vk::PipelineStageFlagBits2::eComputeShader,
 			vk::AccessFlagBits2::eShaderStorageWrite,
-			vk::PipelineStageFlagBits2::eVertexShader,
-			vk::AccessFlagBits2::eShaderStorageRead
+			vk::PipelineStageFlagBits2::eVertexShader | vk::PipelineStageFlagBits2::eTransfer,
+			vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eTransferRead
+		);
+
+		command_buffer.copyBuffer(
+			*combat_.handle,
+			*readback_buffers_[frame_index].handle,
+			vk::BufferCopy {
+				.srcOffset { offsetof(CombatState, player_damage) },
+				.dstOffset { 0 },
+				.size { sizeof(CombatState::player_damage) }
+			}
+		);
+
+		// Read by collect once this frame's fence is signaled, which also needs this barrier
+		// to make the copy visible to the host
+		memory_barrier(
+			command_buffer,
+			vk::PipelineStageFlagBits2::eTransfer,
+			vk::AccessFlagBits2::eTransferWrite,
+			vk::PipelineStageFlagBits2::eHost,
+			vk::AccessFlagBits2::eHostRead
 		);
 	}
 
@@ -444,19 +489,47 @@ namespace quokka
 		const CombatState initial_combat {
 			.target_key { no_target },
 			.frame_damage { 0 },
+			.player_damage { 0 },
 			.spawned_number_count { 0 },
 			.total_damage { 0 },
 			.previous_total_damage { 0 },
 			.last_total_hit_time { -std::numeric_limits<float>::infinity() }
 		};
 
-		// Also a fill destination, which create_device_local_buffer allows for its upload
+		// Also a fill destination, which create_device_local_buffer allows for its upload,
+		// and a copy source for the damage dealt to the player
 		combat_ = create_device_local_buffer(
 			device,
 			command_pool,
 			std::as_bytes(std::span { &initial_combat, 1 }),
-			vk::BufferUsageFlagBits::eStorageBuffer
+			vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc
 		);
+
+		// Host visible to map them, host coherent so the reads need no explicit invalidation
+		constexpr vk::MemoryPropertyFlags readback_properties {
+			vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent
+		};
+
+		readback_buffers_.reserve(constants::max_frames_in_flight);
+		mapped_readbacks_.reserve(constants::max_frames_in_flight);
+
+		for (std::uint32_t index { 0 }; index < constants::max_frames_in_flight; ++index)
+		{
+			readback_buffers_.push_back(create_buffer(
+				device,
+				sizeof(CombatState::player_damage),
+				vk::BufferUsageFlagBits::eTransferDst,
+				readback_properties
+			));
+
+			// Never unmapped explicitly, freeing the memory unmaps it
+			mapped_readbacks_.push_back(readback_buffers_.back().memory.mapMemory(
+				0,
+				sizeof(CombatState::player_damage)));
+
+			// The first collect of each frame in flight comes before any copy into it
+			*static_cast<std::uint32_t*>(mapped_readbacks_.back()) = 0;
+		}
 	}
 
 	void EnemySimulation::record_compute_to_compute_barrier(

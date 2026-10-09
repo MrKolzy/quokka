@@ -1,6 +1,6 @@
 #include "quokka/player.hpp"
 
-#include <algorithm> // std::max
+#include <algorithm> // std::max, std::min
 #include <cmath> // std::atan2
 
 namespace quokka
@@ -13,6 +13,15 @@ namespace quokka
 		// In world units, closer than this the direction to the aim point is too unsteady to face,
 		// for example with the cursor right below the player
 		constexpr float min_aim_distance { 0.3f };
+
+		// The enemies' attacks in enemy_simulation.slang are balanced around it, so the ring
+		// of about 15 that fits around the player kills it in about 15 seconds
+		constexpr float starting_health { 1000.0f };
+
+		// Per second, starting this many seconds after the last hit, so it helps between fights
+		// but not while surrounded
+		constexpr float regeneration_rate { 20.0f };
+		constexpr float regeneration_delay { 3.0f };
 
 		// Yaw 0 faces +z and positive values turn toward +x, so x goes first
 		[[nodiscard]] float yaw_toward(glm::vec2 direction) noexcept
@@ -88,6 +97,47 @@ namespace quokka
 	glm::vec2 Player::last_blast_point() const noexcept
 	{
 		return last_blast_point_;
+	}
+
+	float Player::health() const noexcept
+	{
+		return health_;
+	}
+
+	float Player::max_health() noexcept
+	{
+		return starting_health;
+	}
+
+	bool Player::is_dead() const noexcept
+	{
+		return health_ <= 0.0f;
+	}
+
+	float Player::last_hit_time() const noexcept
+	{
+		return last_hit_time_;
+	}
+
+	void Player::take_damage(float damage, float time_seconds) noexcept
+	{
+		if (is_dead() || damage <= 0.0f)
+		{
+			return;
+		}
+
+		health_ = std::max(health_ - damage, 0.0f);
+		last_hit_time_ = time_seconds;
+	}
+
+	void Player::regenerate(float delta_seconds, float time_seconds) noexcept
+	{
+		if (is_dead() || time_seconds - last_hit_time_ < regeneration_delay)
+		{
+			return;
+		}
+
+		health_ = std::min(health_ + regeneration_rate * delta_seconds, max_health());
 	}
 
 	void Player::face_aim_point() noexcept
