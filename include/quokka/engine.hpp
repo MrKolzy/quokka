@@ -6,6 +6,7 @@
 #include "quokka/gpu_timer.hpp"
 #include "quokka/graphics_pipeline.hpp"
 #include "quokka/gui.hpp"
+#include "quokka/light.hpp"
 #include "quokka/renderer.hpp"
 #include "quokka/stats_overlay.hpp"
 #include "quokka/swapchain.hpp"
@@ -46,6 +47,9 @@ namespace quokka
 		Renderer renderer_ { device_, swapchain_, graphics_pipeline_, gpu_timer_, gui_ };
 
 		Camera camera_ { Renderer::initial_camera() };
+
+		// Edited live from the light panel
+		DirectionalLight light_ {};
 
 		FrameTimer frame_timer_ {};
 		StatsOverlay stats_overlay_ { device_, swapchain_ };

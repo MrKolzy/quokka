@@ -1,6 +1,7 @@
 #include "quokka/engine.hpp"
 
 #include "quokka/constants.hpp"
+#include "quokka/light_panel.hpp"
 
 #include <chrono> // std::chrono::duration, std::chrono::steady_clock
 #include <format> // std::format
@@ -48,13 +49,14 @@ namespace quokka
 			if (gui_.is_visible())
 			{
 				stats_overlay_.show();
+				show_light_panel(light_);
 			}
 
 			gui_.end_frame();
 
 			update_camera(delta_time.count());
 
-			const bool is_swapchain_outdated { renderer_.draw_frame(camera_) };
+			const bool is_swapchain_outdated { renderer_.draw_frame(camera_, light_) };
 
 			// Not every platform reports out of date after a resize
 			if (is_swapchain_outdated || window_.was_resized())

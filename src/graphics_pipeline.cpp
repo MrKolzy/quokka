@@ -14,9 +14,9 @@ namespace quokka
 	{
 		vk::raii::DescriptorSetLayout create_descriptor_set_layout(const vk::raii::Device& device)
 		{
-			// Must match camera in shader.slang
-			// The fragment shader also reads it, since specular light needs the camera position
-			constexpr vk::DescriptorSetLayoutBinding camera_binding {
+			// Must match frame in shader.slang
+			// The fragment shader also reads it, for the light and the camera position
+			constexpr vk::DescriptorSetLayoutBinding frame_binding {
 				.binding { 0 },
 				.descriptorType { vk::DescriptorType::eUniformBuffer },
 				.descriptorCount { 1 },
@@ -33,7 +33,7 @@ namespace quokka
 				.stageFlags { vk::ShaderStageFlagBits::eFragment }
 			};
 
-			constexpr std::array bindings { camera_binding, texture_binding };
+			constexpr std::array bindings { frame_binding, texture_binding };
 
 			const vk::DescriptorSetLayoutCreateInfo create_info {
 				.bindingCount { static_cast<std::uint32_t>(bindings.size()) },

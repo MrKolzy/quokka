@@ -13,6 +13,7 @@ namespace quokka
 {
 	class Camera;
 	class Device;
+	struct DirectionalLight;
 	class GpuTimer;
 	class GraphicsPipeline;
 	class Gui;
@@ -37,7 +38,7 @@ namespace quokka
 		Renderer& operator=(Renderer&&) = delete;
 
 		// Returns true when the swapchain must be recreated before the next frame
-		[[nodiscard]] bool draw_frame(const Camera& camera);
+		[[nodiscard]] bool draw_frame(const Camera& camera, const DirectionalLight& light);
 
 		// Frames the whole grid, which the renderer still owns
 		[[nodiscard]] static Camera initial_camera() noexcept;
@@ -57,7 +58,10 @@ namespace quokka
 		void create_descriptor_sets();
 		void create_frame_sync_objects();
 
-		void update_uniform_buffer(void* mapped_memory, const Camera& camera) const;
+		void update_uniform_buffer(
+			void* mapped_memory,
+			const Camera& camera,
+			const DirectionalLight& light) const;
 		void record_command_buffer(
 			const vk::raii::CommandBuffer& command_buffer,
 			const vk::raii::DescriptorSet& descriptor_set,
@@ -107,7 +111,7 @@ namespace quokka
 		vk::raii::ImageView texture_image_view_ { nullptr };
 		vk::raii::Sampler texture_sampler_ { nullptr };
 
-		// Camera matrices, one per frame in flight so the CPU never overwrites one in use
+		// Camera and light, one per frame in flight so the CPU never overwrites one in use
 		std::vector<Buffer> uniform_buffers_ {};
 
 		// Kept mapped, since they're written every frame

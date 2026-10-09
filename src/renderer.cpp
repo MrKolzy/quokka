@@ -6,6 +6,7 @@
 #include "quokka/gpu_timer.hpp"
 #include "quokka/graphics_pipeline.hpp"
 #include "quokka/gui.hpp"
+#include "quokka/light.hpp"
 #include "quokka/mesh.hpp"
 #include "quokka/one_time_commands.hpp"
 #include "quokka/swapchain.hpp"
@@ -30,16 +31,25 @@ namespace quokka
 {
 	namespace
 	{
-		struct CameraUniforms
+		struct FrameUniforms
 		{
-			// Must match CameraUniforms in shader.slang
-			// Each member is a multiple of 16 bytes, the alignment uniform buffers need
+			// Must match FrameUniforms in shader.slang
+			// Each vec3 is followed by a float, which fills its 16 bytes the same way as there
 			glm::mat4 view;
 			glm::mat4 projection;
 
-			// The w is unused, it's a vec4 so the size matches the shader without padding
-			glm::vec4 position;
+			glm::vec3 camera_position;
+			float ambient_strength;
+
+			glm::vec3 light_direction;
+			float specular_strength;
+
+			glm::vec3 light_color;
+			float shininess;
 		};
+
+		// Two matrices and three groups of 16 bytes, so nothing was padded in between
+		static_assert(sizeof(FrameUniforms) == 2 * sizeof(glm::mat4) + 3 * 16);
 
 		struct Transform
 		{
@@ -279,7 +289,7 @@ namespace quokka
 		}
 	}
 
-	bool Renderer::draw_frame(const Camera& camera)
+	bool Renderer::draw_frame(const Camera& camera, const DirectionalLight& light)
 	{
 		constexpr auto no_timeout { std::numeric_limits<std::uint64_t>::max() };
 
@@ -317,7 +327,7 @@ namespace quokka
 		device_.logical_device().resetFences(*in_flight_fence);
 
 		// The fence wait above guarantees the GPU is no longer reading this frame's uniform buffer
-		update_uniform_buffer(mapped_uniform_buffer, camera);
+		update_uniform_buffer(mapped_uniform_buffer, camera, light);
 
 		// Beginning the command buffer implicitly resets it, since the pool has the reset flag
 		record_command_buffer(command_buffer, descriptor_set, image_index);
@@ -671,7 +681,7 @@ namespace quokka
 
 	void Renderer::create_uniform_buffers()
 	{
-		constexpr vk::DeviceSize buffer_size { sizeof(CameraUniforms) };
+		constexpr vk::DeviceSize buffer_size { sizeof(FrameUniforms) };
 
 		// Written every frame, so the CPU writes them directly instead of using a staging buffer
 		// Host visible to map them, host coherent so the writes need no explicit flushes
@@ -752,12 +762,12 @@ namespace quokka
 			const vk::DescriptorBufferInfo buffer_info {
 				.buffer { *uniform_buffers_[index].handle },
 				.offset { 0 },
-				.range { sizeof(CameraUniforms) }
+				.range { sizeof(FrameUniforms) }
 			};
 
-			const vk::WriteDescriptorSet camera_write {
+			const vk::WriteDescriptorSet frame_write {
 				.dstSet { *descriptor_sets_[index] },
-				// Must match camera_binding in graphics_pipeline.cpp
+				// Must match frame_binding in graphics_pipeline.cpp
 				.dstBinding { 0 },
 				// Not an array, so the first and only element
 				.dstArrayElement { 0 },
@@ -776,7 +786,7 @@ namespace quokka
 				.pImageInfo { &image_info }
 			};
 
-			const std::array descriptor_writes { camera_write, texture_write };
+			const std::array descriptor_writes { frame_write, texture_write };
 
 			// No copies from other descriptor sets
 			device_.logical_device().updateDescriptorSets(descriptor_writes, {});
@@ -801,20 +811,28 @@ namespace quokka
 		}
 	}
 
-	void Renderer::update_uniform_buffer(void* mapped_memory, const Camera& camera) const
+	void Renderer::update_uniform_buffer(
+		void* mapped_memory,
+		const Camera& camera,
+		const DirectionalLight& light) const
 	{
 		const vk::Extent2D extent { swapchain_.extent() };
 		const float aspect_ratio {
 			static_cast<float>(extent.width) / static_cast<float>(extent.height)
 		};
 
-		const CameraUniforms camera_uniforms {
+		const FrameUniforms frame_uniforms {
 			.view { camera.view_matrix() },
 			.projection { camera.projection_matrix(aspect_ratio) },
-			.position { camera.position(), 1.0f }
+			.camera_position { camera.position() },
+			.ambient_strength { light.ambient_strength },
+			.light_direction { light.direction() },
+			.specular_strength { light.specular_strength },
+			.light_color { light.color },
+			.shininess { light.shininess }
 		};
 
-		std::memcpy(mapped_memory, &camera_uniforms, sizeof(camera_uniforms));
+		std::memcpy(mapped_memory, &frame_uniforms, sizeof(frame_uniforms));
 	}
 
 	void Renderer::record_command_buffer(
