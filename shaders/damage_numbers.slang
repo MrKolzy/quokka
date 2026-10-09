@@ -12,11 +12,11 @@ struct DamageNumber
 
 // Read for the position of the enemy each number belongs to, must match enemy_binding
 // in graphics_pipeline.cpp
-[[vk::binding(2, 0)]]
+[[vk::binding(1, 0)]]
 StructuredBuffer<EnemyState> enemies;
 
 // A ring of the latest ones, must match damage_number_binding in graphics_pipeline.cpp
-[[vk::binding(3, 0)]]
+[[vk::binding(2, 0)]]
 StructuredBuffer<DamageNumber> damage_numbers;
 
 // Must match TotalDamageConstants in damage_numbers.cpp
@@ -34,8 +34,8 @@ struct TotalDamageConstants
 [[vk::push_constant]]
 ConstantBuffer<TotalDamageConstants> total;
 
-// Above the enemy's head, since the viking room is about a unit tall
-static const float anchor_height = 1.2;
+// Above the enemy's head, since the skeleton is about 2.2 units tall
+static const float anchor_height = 2.5;
 
 // In seconds, must match damage_number_lifetime in damage_numbers.cpp
 static const float lifetime = 1.0;

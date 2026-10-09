@@ -3,8 +3,9 @@
 #include "quokka/constants.hpp"
 #include "quokka/light_panel.hpp"
 
-#include <algorithm> // std::min
+#include <algorithm> // std::clamp, std::min
 #include <chrono> // std::chrono::duration, std::chrono::steady_clock
+#include <cmath> // std::cos, std::pow, std::sin
 #include <cstdint> // std::uint32_t
 #include <format> // std::format
 #include <random> // std::bernoulli_distribution, std::uniform_int_distribution
@@ -27,6 +28,21 @@ namespace quokka
 
 		// In radians per pixel, without the delta time because the offset already is a distance
 		constexpr float mouse_sensitivity { 0.002f };
+
+		// The follow camera's fixed angle, where yaw -45 degrees looks along -x and -z,
+		// the diagonal from the player's start to the middle of the grid
+		constexpr float follow_yaw { glm::radians(-45.0f) };
+		constexpr float follow_pitch { glm::radians(-50.0f) };
+
+		// In world units, around the chest of the knight, which is about 2.5 units tall
+		constexpr float follow_target_height { 1.2f };
+
+		// In world units, how close and how far the mouse wheel can zoom
+		constexpr float min_camera_distance { 8.0f };
+		constexpr float max_camera_distance { 80.0f };
+
+		// Each wheel notch scales the distance by this, so zooming feels the same at any distance
+		constexpr float zoom_step { 0.9f };
 
 		// 1 or -1, or 0 when both keys or neither are pressed
 		[[nodiscard]] float key_axis(
@@ -80,12 +96,13 @@ namespace quokka
 
 			gui_.end_frame();
 
+			update_player(delta_time.count());
 			update_camera(delta_time.count());
 			update_enemies(delta_time.count());
 			update_test_hits(elapsed_time.count());
 
 			const bool is_swapchain_outdated {
-				renderer_.draw_frame(camera_, light_, elapsed_time.count())
+				renderer_.draw_frame(camera_, light_, player_, elapsed_time.count())
 			};
 
 			// Not every platform reports out of date after a resize
@@ -117,7 +134,81 @@ namespace quokka
 		}
 	}
 
+	void Engine::update_player(float delta_seconds) noexcept
+	{
+		// The free camera takes the movement keys, and typing into the interface mustn't move
+		if (is_camera_free_ || gui_.wants_keyboard())
+		{
+			return;
+		}
+
+		// Along the ground, as world x and z
+		const glm::vec3 view_direction { camera_.forward() };
+		const glm::vec2 forward {
+			glm::normalize(glm::vec2 { view_direction.x, view_direction.z })
+		};
+		const glm::vec2 right { -forward.y, forward.x };
+
+		const glm::vec2 direction {
+			right * key_axis(window_, Key::d, Key::a) + forward * key_axis(window_, Key::w, Key::s)
+		};
+
+		// Normalized, so walking diagonally isn't faster
+		const bool is_walking { direction != glm::vec2 { 0.0f } };
+		player_.move(is_walking ? glm::normalize(direction) : direction, delta_seconds);
+	}
+
 	void Engine::update_camera(float delta_seconds) noexcept
+	{
+		// Ignored while typing into the interface, like the movement keys
+		const bool was_camera_key_just_pressed {
+			is_key_just_pressed(window_, Key::f2, was_camera_key_pressed_)
+		};
+		if (was_camera_key_just_pressed && !gui_.wants_keyboard())
+		{
+			is_camera_free_ = !is_camera_free_;
+		}
+
+		if (is_camera_free_)
+		{
+			update_free_camera(delta_seconds);
+
+			return;
+		}
+
+		// The free camera may have been looking around when it was switched off
+		if (window_.is_cursor_captured())
+		{
+			window_.set_cursor_captured(false);
+		}
+
+		// Scrolling away from the user zooms in, and over the interface it scrolls the interface
+		if (!gui_.wants_mouse())
+		{
+			camera_distance_ = std::clamp(
+				camera_distance_ * std::pow(zoom_step, window_.scroll_offset()),
+				min_camera_distance,
+				max_camera_distance);
+		}
+
+		camera_ = follow_camera(player_.position(), camera_distance_);
+	}
+
+	Camera Engine::follow_camera(glm::vec2 player_position, float distance) noexcept
+	{
+		const glm::vec3 target { player_position.x, follow_target_height, player_position.y };
+
+		// Where the camera looks, from its yaw and pitch the same way as Camera::forward
+		const glm::vec3 view_direction {
+			std::cos(follow_pitch) * std::sin(follow_yaw),
+			std::sin(follow_pitch),
+			-std::cos(follow_pitch) * std::cos(follow_yaw)
+		};
+
+		return { target - view_direction * distance, target };
+	}
+
+	void Engine::update_free_camera(float delta_seconds) noexcept
 	{
 		// Held to look around like in the Unity, Unreal and Godot editors, so the cursor is free
 		// Pressed over the interface it's for the interface, while looking ImGui ignores the mouse
@@ -160,23 +251,16 @@ namespace quokka
 
 	void Engine::update_enemies(float delta_seconds) noexcept
 	{
-		// Where the view meets the ground, which never happens at or above the horizon
-		const glm::vec3 forward { camera_.forward() };
-		if (forward.y < 0.0f)
-		{
-			const glm::vec3 position { camera_.position() };
-			const glm::vec3 ground_point { position - forward * (position.y / forward.y) };
-			chase_target_ = { ground_point.x, ground_point.z };
-		}
-
-		// Ignored while typing into the interface, like the camera keys
+		// Ignored while typing into the interface, like the movement keys
 		if (is_key_just_pressed(window_, Key::r, was_reset_key_pressed_) && !gui_.wants_keyboard())
 		{
+			// The player goes back too, or the enemies would start chasing it right away
 			enemy_simulation_.reset();
+			player_ = Player { EnemySimulation::player_start() };
 		}
 
 		enemy_simulation_.prepare_update(
-			chase_target_,
+			player_.position(),
 			std::min(delta_seconds, max_simulation_delta));
 	}
 

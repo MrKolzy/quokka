@@ -29,6 +29,8 @@ namespace quokka
 				return GLFW_KEY_D;
 			case Key::e:
 				return GLFW_KEY_E;
+			case Key::f2:
+				return GLFW_KEY_F2;
 			case Key::q:
 				return GLFW_KEY_Q;
 			case Key::r:
@@ -81,6 +83,7 @@ namespace quokka
 		// Lets the static callback recover the Window from the GLFW window handle
 		glfwSetWindowUserPointer(handle_, this);
 		glfwSetFramebufferSizeCallback(handle_, &framebuffer_size_callback);
+		glfwSetScrollCallback(handle_, &scroll_callback);
 
 		// Only applies while the cursor is captured, and skips the pointer acceleration of the OS
 		if (glfwRawMouseMotionSupported())
@@ -176,6 +179,11 @@ namespace quokka
 		return cursor_offset_;
 	}
 
+	float Window::scroll_offset() const noexcept
+	{
+		return scroll_offset_;
+	}
+
 	void Window::set_title(const std::string& title) noexcept
 	{
 		glfwSetWindowTitle(handle_, title.c_str());
@@ -183,6 +191,8 @@ namespace quokka
 
 	void Window::poll_events() noexcept
 	{
+		// Before the events, since the callback adds this poll's scrolling to it
+		scroll_offset_ = 0.0f;
 		glfwPollEvents();
 
 		const glm::dvec2 position { cursor_position(handle_) };
@@ -210,5 +220,11 @@ namespace quokka
 		// The engine queries the new size itself when recreating the swapchain
 		auto* self { static_cast<Window*>(glfwGetWindowUserPointer(window)) };
 		self->was_resized_ = true;
+	}
+
+	void Window::scroll_callback(GLFWwindow* window, double, double y_offset) noexcept
+	{
+		auto* self { static_cast<Window*>(glfwGetWindowUserPointer(window)) };
+		self->scroll_offset_ += static_cast<float>(y_offset);
 	}
 }

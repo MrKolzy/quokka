@@ -1,7 +1,6 @@
 #include "quokka/enemy_simulation.hpp"
 
 #include "quokka/barrier.hpp"
-#include "quokka/camera.hpp"
 #include "quokka/constants.hpp"
 #include "quokka/device.hpp"
 #include "quokka/shader_module.hpp"
@@ -154,17 +153,16 @@ namespace quokka
 		create_descriptor_set(device);
 	}
 
-	Camera EnemySimulation::initial_camera() noexcept
+	glm::vec2 EnemySimulation::player_start() noexcept
 	{
-		// Back and above the grid, far enough to see all of it, whatever its size
-		constexpr float grid_size { static_cast<float>(grid_side) * grid_spacing };
-		constexpr glm::vec3 camera_position {
-			0.0f, grid_size * 0.7f + 1.0f, grid_size * 1.3f + 2.0f
+		// Along the diagonal, so the distance to the corner enemy is sqrt 2 times this margin,
+		// which must stay above aggro_radius in enemy_simulation.slang
+		constexpr float corner_margin { 8.0f };
+		constexpr float corner_offset {
+			static_cast<float>(grid_side - 1) * grid_spacing / 2.0f + corner_margin
 		};
 
-		constexpr glm::vec3 grid_center { 0.0f, 0.0f, 0.0f };
-
-		return { camera_position, grid_center };
+		return { corner_offset, corner_offset };
 	}
 
 	void EnemySimulation::prepare_update(glm::vec2 target, float delta_seconds) noexcept

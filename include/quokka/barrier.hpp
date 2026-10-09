@@ -11,4 +11,15 @@ namespace quokka
 		vk::AccessFlags2 src_access_mask,
 		vk::PipelineStageFlags2 dst_stage_mask,
 		vk::AccessFlags2 dst_access_mask) noexcept;
+
+	void transition_image_layout(
+		const vk::raii::CommandBuffer& command_buffer,
+		vk::Image image,
+		vk::ImageSubresourceRange subresource_range,
+		vk::ImageLayout old_layout,
+		vk::ImageLayout new_layout,
+		vk::PipelineStageFlags2 src_stage_mask,
+		vk::AccessFlags2 src_access_mask,
+		vk::PipelineStageFlags2 dst_stage_mask,
+		vk::AccessFlags2 dst_access_mask) noexcept;
 }

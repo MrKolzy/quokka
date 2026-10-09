@@ -42,7 +42,7 @@ namespace quokka
 
 		constexpr vk::DeviceSize ring_size { sizeof(DamageNumber) * DamageNumbers::capacity };
 
-		// The same descriptor set layout as the scene, so the renderer's sets work for both
+		// The scene's frame set layout, so the renderer's frame sets work for both
 		vk::raii::PipelineLayout create_pipeline_layout(
 			const vk::raii::Device& device,
 			const vk::raii::DescriptorSetLayout& descriptor_set_layout)

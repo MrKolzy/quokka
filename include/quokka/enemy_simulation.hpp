@@ -9,7 +9,6 @@
 
 namespace quokka
 {
-	class Camera;
 	class Device;
 
 	struct EnemyState
@@ -37,8 +36,9 @@ namespace quokka
 		EnemySimulation(EnemySimulation&&) = delete;
 		EnemySimulation& operator=(EnemySimulation&&) = delete;
 
-		// Frames the whole grid the enemies start in
-		[[nodiscard]] static Camera initial_camera() noexcept;
+		// Past a corner of the grid the enemies start in, as world x and z, out of their reach
+		// so nobody chases the player until it walks closer
+		[[nodiscard]] static glm::vec2 player_start() noexcept;
 
 		// For the next record_update, the target is a point on the ground as world x and z
 		void prepare_update(glm::vec2 target, float delta_seconds) noexcept;

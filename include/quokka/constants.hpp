@@ -30,8 +30,10 @@ namespace quokka::constants
 	inline constexpr const char* shader_path { "shaders/shader.spv" };
 	inline constexpr const char* damage_number_shader_path { "shaders/damage_numbers.spv" };
 	inline constexpr const char* enemy_simulation_shader_path { "shaders/enemy_simulation.spv" };
-	inline constexpr const char* model_path { "models/viking_room.glb" };
-	inline constexpr const char* texture_path { "textures/viking_room.ktx2" };
+	inline constexpr const char* enemy_model_path { "models/skeleton_minion.glb" };
+	inline constexpr const char* enemy_texture_path { "textures/skeleton.ktx2" };
+	inline constexpr const char* player_model_path { "models/knight.glb" };
+	inline constexpr const char* player_texture_path { "textures/knight.ktx2" };
 
 	// Mailbox has low latency without tearing, Immediate tears but has no frame rate cap,
 	// which suits benchmarks, and Fifo is vertical sync, which saves power

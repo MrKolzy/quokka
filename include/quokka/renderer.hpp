@@ -1,7 +1,7 @@
 #pragma once
 
 #include "quokka/buffer.hpp"
-#include "quokka/image.hpp"
+#include "quokka/model.hpp"
 #include "quokka/worker_threads.hpp"
 
 #include <vulkan/vulkan_raii.hpp>
@@ -19,7 +19,7 @@ namespace quokka
 	class GpuTimer;
 	class GraphicsPipeline;
 	class Gui;
-	struct Mesh;
+	class Player;
 	class Swapchain;
 
 	class Renderer
@@ -46,21 +46,18 @@ namespace quokka
 		[[nodiscard]] bool draw_frame(
 			const Camera& camera,
 			const DirectionalLight& light,
+			const Player& player,
 			float time_seconds);
 
 	private:
 		void create_command_pool();
 		void create_command_buffers();
 		void create_secondary_command_buffers();
-		[[nodiscard]] Mesh load_model() const;
-		void create_vertex_buffer(const Mesh& mesh);
-		void create_index_buffer(const Mesh& mesh);
-		void create_texture_image();
-		void create_texture_image_view();
 		void create_texture_sampler();
 		void create_uniform_buffers();
 		void create_descriptor_pool();
 		void create_descriptor_sets();
+		[[nodiscard]] vk::raii::DescriptorSet create_material_set(const Model& model) const;
 		void create_frame_sync_objects();
 
 		void update_uniform_buffer(
@@ -72,6 +69,7 @@ namespace quokka
 			const vk::raii::CommandBuffer& command_buffer,
 			const vk::raii::DescriptorSet& descriptor_set,
 			std::uint32_t image_index,
+			const Player& player,
 			float time_seconds);
 
 		// The damage numbers and the interface, over the finished scene
@@ -88,6 +86,19 @@ namespace quokka
 			const vk::raii::DescriptorSet& descriptor_set,
 			std::uint32_t first_object,
 			std::uint32_t object_count) const;
+
+		// The model's vertices and indices, and its material set together with the frame's set
+		void bind_model(
+			const vk::raii::CommandBuffer& command_buffer,
+			const vk::raii::DescriptorSet& frame_set,
+			const Model& model,
+			const vk::raii::DescriptorSet& material_set) const;
+
+		// Recorded by the main thread, so it has its own command buffers
+		void record_player_draw(
+			const vk::raii::CommandBuffer& command_buffer,
+			const vk::raii::DescriptorSet& descriptor_set,
+			const Player& player) const;
 
 		const Device& device_;
 		const Swapchain& swapchain_;
@@ -109,18 +120,13 @@ namespace quokka
 		// Indexed by recording thread, then by frame in flight
 		std::vector<std::vector<vk::raii::CommandBuffer>> secondary_command_buffers_ {};
 
-		Buffer vertex_buffer_ {};
+		// One per frame in flight, from command_pool_ because the main thread records them
+		std::vector<vk::raii::CommandBuffer> player_command_buffers_ {};
 
-		// Vertices shared by several triangles are stored only once
-		Buffer index_buffer_ {};
+		Model enemy_model_ {};
+		Model player_model_ {};
 
-		// Kept from the mesh, whose CPU copy is freed once it's uploaded
-		std::uint32_t index_count_ {};
-		// Read from the texture file, which can store its texels in any format
-		vk::Format texture_format_ {};
-
-		Image texture_image_ {};
-		vk::raii::ImageView texture_image_view_ { nullptr };
+		// Shared by every texture, since they're all sampled the same way
 		vk::raii::Sampler texture_sampler_ { nullptr };
 
 		// Camera and light, one per frame in flight so the CPU never overwrites one in use
@@ -133,6 +139,10 @@ namespace quokka
 
 		// One per frame in flight, because each points to its frame's uniform buffer
 		std::vector<vk::raii::DescriptorSet> descriptor_sets_ {};
+
+		// One per model, shared by every frame since textures are never written after loading
+		vk::raii::DescriptorSet enemy_material_set_ { nullptr };
+		vk::raii::DescriptorSet player_material_set_ { nullptr };
 
 		// Signaled by acquireNextImage, waited on by the submission, one per frame in flight
 		std::vector<vk::raii::Semaphore> image_available_semaphores_ {};

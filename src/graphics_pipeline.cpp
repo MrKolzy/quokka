@@ -12,9 +12,10 @@ namespace quokka
 {
 	namespace
 	{
-		vk::raii::DescriptorSetLayout create_descriptor_set_layout(const vk::raii::Device& device)
+		vk::raii::DescriptorSetLayout create_frame_descriptor_set_layout(
+			const vk::raii::Device& device)
 		{
-			// Must match frame in shader.slang
+			// Must match frame in frame.slang
 			// The fragment shader also reads it, for the light and the camera position
 			constexpr vk::DescriptorSetLayoutBinding frame_binding {
 				.binding { 0 },
@@ -25,17 +26,9 @@ namespace quokka
 				}
 			};
 
-			// Must match texture in shader.slang
-			constexpr vk::DescriptorSetLayoutBinding texture_binding {
-				.binding { 1 },
-				.descriptorType { vk::DescriptorType::eCombinedImageSampler },
-				.descriptorCount { 1 },
-				.stageFlags { vk::ShaderStageFlagBits::eFragment }
-			};
-
 			// Must match enemies in shader.slang and damage_numbers.slang
 			constexpr vk::DescriptorSetLayoutBinding enemy_binding {
-				.binding { 2 },
+				.binding { 1 },
 				.descriptorType { vk::DescriptorType::eStorageBuffer },
 				.descriptorCount { 1 },
 				.stageFlags { vk::ShaderStageFlagBits::eVertex }
@@ -43,15 +36,13 @@ namespace quokka
 
 			// Must match damage_numbers in damage_numbers.slang
 			constexpr vk::DescriptorSetLayoutBinding damage_number_binding {
-				.binding { 3 },
+				.binding { 2 },
 				.descriptorType { vk::DescriptorType::eStorageBuffer },
 				.descriptorCount { 1 },
 				.stageFlags { vk::ShaderStageFlagBits::eVertex }
 			};
 
-			constexpr std::array bindings {
-				frame_binding, texture_binding, enemy_binding, damage_number_binding
-			};
+			constexpr std::array bindings { frame_binding, enemy_binding, damage_number_binding };
 
 			const vk::DescriptorSetLayoutCreateInfo create_info {
 				.bindingCount { static_cast<std::uint32_t>(bindings.size()) },
@@ -61,14 +52,47 @@ namespace quokka
 			return device.createDescriptorSetLayout(create_info);
 		}
 
+		vk::raii::DescriptorSetLayout create_material_descriptor_set_layout(
+			const vk::raii::Device& device)
+		{
+			// Must match texture in shader.slang
+			constexpr vk::DescriptorSetLayoutBinding texture_binding {
+				.binding { 0 },
+				.descriptorType { vk::DescriptorType::eCombinedImageSampler },
+				.descriptorCount { 1 },
+				.stageFlags { vk::ShaderStageFlagBits::eFragment }
+			};
+
+			const vk::DescriptorSetLayoutCreateInfo create_info {
+				.bindingCount { 1 },
+				.pBindings { &texture_binding }
+			};
+
+			return device.createDescriptorSetLayout(create_info);
+		}
+
 		vk::raii::PipelineLayout create_pipeline_layout(
 			const vk::raii::Device& device,
-			const vk::raii::DescriptorSetLayout& descriptor_set_layout)
+			const vk::raii::DescriptorSetLayout& frame_descriptor_set_layout,
+			const vk::raii::DescriptorSetLayout& material_descriptor_set_layout)
 		{
-			// A single descriptor set, set 0 in the shader, and no push constants
+			// In set order, so the frame set is set 0 and the material set is set 1
+			const std::array set_layouts {
+				*frame_descriptor_set_layout, *material_descriptor_set_layout
+			};
+
+			// Only the player's draw reads them, the enemies' draws leave them unset
+			constexpr vk::PushConstantRange player_constants_range {
+				.stageFlags { vk::ShaderStageFlagBits::eVertex },
+				.offset { 0 },
+				.size { sizeof(PlayerConstants) }
+			};
+
 			const vk::PipelineLayoutCreateInfo pipeline_layout_info {
-				.setLayoutCount { 1 },
-				.pSetLayouts { &*descriptor_set_layout }
+				.setLayoutCount { static_cast<std::uint32_t>(set_layouts.size()) },
+				.pSetLayouts { set_layouts.data() },
+				.pushConstantRangeCount { 1 },
+				.pPushConstantRanges { &player_constants_range }
 			};
 
 			return device.createPipelineLayout(pipeline_layout_info);
@@ -79,9 +103,10 @@ namespace quokka
 			const vk::raii::PipelineLayout& pipeline_layout,
 			vk::Format color_format,
 			vk::Format depth_format,
-			vk::SampleCountFlagBits sample_count)
+			vk::SampleCountFlagBits sample_count,
+			const char* vertex_entry_point)
 		{
-			// Both entry points live in the same compiled module
+			// Every entry point lives in the same compiled module
 			const auto shader_code { read_shader_file(constants::shader_path) };
 			const auto shader_module { create_shader_module(device, shader_code) };
 
@@ -89,7 +114,7 @@ namespace quokka
 			const vk::PipelineShaderStageCreateInfo vertex_shader_stage_info {
 				.stage { vk::ShaderStageFlagBits::eVertex },
 				.module { *shader_module },
-				.pName { "vert_main" }
+				.pName { vertex_entry_point }
 			};
 
 			const vk::PipelineShaderStageCreateInfo fragment_shader_stage_info {
@@ -219,24 +244,49 @@ namespace quokka
 		vk::Format color_format,
 		vk::Format depth_format,
 		vk::SampleCountFlagBits sample_count)
-		: descriptor_set_layout_ { create_descriptor_set_layout(device.logical_device()) }
-		, pipeline_layout_ {
-			create_pipeline_layout(device.logical_device(), descriptor_set_layout_)
+		: frame_descriptor_set_layout_ {
+			create_frame_descriptor_set_layout(device.logical_device())
 		}
-		, graphics_pipeline_ {
+		, material_descriptor_set_layout_ {
+			create_material_descriptor_set_layout(device.logical_device())
+		}
+		, pipeline_layout_ {
+			create_pipeline_layout(
+				device.logical_device(),
+				frame_descriptor_set_layout_,
+				material_descriptor_set_layout_)
+		}
+		, enemy_pipeline_ {
 			create_graphics_pipeline(
 				device.logical_device(),
 				pipeline_layout_,
 				color_format,
 				depth_format,
-				sample_count)
+				sample_count,
+				"enemy_vert_main")
+		}
+		, player_pipeline_ {
+			create_graphics_pipeline(
+				device.logical_device(),
+				pipeline_layout_,
+				color_format,
+				depth_format,
+				sample_count,
+				"player_vert_main")
 		}
 	{
 	}
 
-	const vk::raii::DescriptorSetLayout& GraphicsPipeline::descriptor_set_layout() const noexcept
+	const vk::raii::DescriptorSetLayout& GraphicsPipeline::frame_descriptor_set_layout()
+		const noexcept
 	{
-		return descriptor_set_layout_;
+		return frame_descriptor_set_layout_;
+	}
+
+	const vk::raii::DescriptorSetLayout& GraphicsPipeline::material_descriptor_set_layout()
+		const noexcept
+	{
+		return material_descriptor_set_layout_;
 	}
 
 	const vk::raii::PipelineLayout& GraphicsPipeline::pipeline_layout() const noexcept
@@ -244,8 +294,13 @@ namespace quokka
 		return pipeline_layout_;
 	}
 
-	const vk::raii::Pipeline& GraphicsPipeline::handle() const noexcept
+	const vk::raii::Pipeline& GraphicsPipeline::enemy_pipeline() const noexcept
 	{
-		return graphics_pipeline_;
+		return enemy_pipeline_;
+	}
+
+	const vk::raii::Pipeline& GraphicsPipeline::player_pipeline() const noexcept
+	{
+		return player_pipeline_;
 	}
 }

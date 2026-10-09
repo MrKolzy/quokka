@@ -9,6 +9,7 @@
 #include "quokka/graphics_pipeline.hpp"
 #include "quokka/gui.hpp"
 #include "quokka/light.hpp"
+#include "quokka/player.hpp"
 #include "quokka/renderer.hpp"
 #include "quokka/stats_overlay.hpp"
 #include "quokka/swapchain.hpp"
@@ -36,9 +37,19 @@ namespace quokka
 		void run();
 
 	private:
-		void update_camera(float delta_seconds) noexcept;
+		// Walks relative to where the camera looks, so W always goes up the screen
+		void update_player(float delta_seconds) noexcept;
 
-		// Until there's a player, the enemies chase the point of the ground the camera looks at
+		// Follows the player, or flies freely after F2
+		void update_camera(float delta_seconds) noexcept;
+		void update_free_camera(float delta_seconds) noexcept;
+
+		// Looks down at the player from a fixed angle, like in Diablo or Path of Exile
+		[[nodiscard]] static Camera follow_camera(
+			glm::vec2 player_position,
+			float distance) noexcept;
+
+		// The enemies chase the player
 		void update_enemies(float delta_seconds) noexcept;
 
 		// A test until there's combat, every enemy takes a hit with its damage number
@@ -57,7 +68,8 @@ namespace quokka
 		GpuTimer gpu_timer_ { device_ };
 		Gui gui_ { window_, device_, swapchain_.surface_format().format };
 		DamageNumbers damage_numbers_ {
-			device_, graphics_pipeline_.descriptor_set_layout(), swapchain_.surface_format().format
+			device_, graphics_pipeline_.frame_descriptor_set_layout(),
+			swapchain_.surface_format().format
 		};
 		EnemySimulation enemy_simulation_ { device_ };
 		Renderer renderer_ {
@@ -65,7 +77,15 @@ namespace quokka
 			enemy_simulation_
 		};
 
-		Camera camera_ { EnemySimulation::initial_camera() };
+		Player player_ { EnemySimulation::player_start() };
+
+		// In world units from the player, changed with the mouse wheel
+		float camera_distance_ { 25.0f };
+
+		// Toggled with F2, to fly around the scene and to take benchmarks from a fixed spot
+		bool is_camera_free_ { false };
+
+		Camera camera_ { follow_camera(player_.position(), camera_distance_) };
 
 		// Edited live from the light panel
 		DirectionalLight light_ {};
@@ -76,7 +96,7 @@ namespace quokka
 		// The animations computed on the GPU, such as damage numbers, are timed from here
 		std::chrono::steady_clock::time_point start_time_ { std::chrono::steady_clock::now() };
 
-		// The camera moves according to the time elapsed since then
+		// The player, the camera and the enemies move according to the time elapsed since then
 		std::chrono::steady_clock::time_point previous_frame_time_ {
 			std::chrono::steady_clock::now()
 		};
@@ -84,10 +104,8 @@ namespace quokka
 		// Default seed, so every run deals the same damage, which keeps benchmarks repeatable
 		std::mt19937 random_engine_ {};
 
-		// On the ground as world x and z, kept while the camera looks above the horizon
-		glm::vec2 chase_target_ {};
-
 		// So these keys act once per press, not every frame while they're held
+		bool was_camera_key_pressed_ { false };
 		bool was_hit_key_pressed_ { false };
 		bool was_reset_key_pressed_ { false };
 	};

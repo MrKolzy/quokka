@@ -2,15 +2,26 @@
 #include "frame.slang"
 
 // Written by the simulation every frame, must match enemy_binding in graphics_pipeline.cpp
-[[vk::binding(2, 0)]]
+[[vk::binding(1, 0)]]
 StructuredBuffer<EnemyState> enemies;
 
-// In radians, turns the viking room so its open side faces along the enemy's yaw
-static const float model_yaw = -1.5707964;
-
-// Image and sampler in one descriptor, must match texture_binding in graphics_pipeline.cpp
-[[vk::binding(1, 0)]]
+// Image and sampler in one descriptor, in the set of the model being drawn
+// Must match texture_binding in graphics_pipeline.cpp
+[[vk::binding(0, 1)]]
 Sampler2D texture;
+
+// Must match PlayerConstants in graphics_pipeline.hpp
+struct PlayerConstants
+{
+	// On the ground, as world x and z
+	float2 position;
+
+	// The same convention as EnemyState
+	float yaw;
+};
+
+[[vk::push_constant]]
+ConstantBuffer<PlayerConstants> player;
 
 // Locations follow declaration order and must match Vertex::attribute_descriptions
 struct VertexInput
@@ -37,17 +48,12 @@ float3 rotate_around_up(float3 value, float angle)
 	return float3(value.x * cosine + value.z * sine, value.y, value.z * cosine - value.x * sine);
 }
 
-// SV_VulkanInstanceID includes the first instance of the draw, unlike SV_InstanceID,
-// which matters because each recording thread draws its own range of instances
-[shader("vertex")]
-VertexOutput vert_main(VertexInput input, uint instance_index : SV_VulkanInstanceID)
+// Turned to face along the yaw, then moved to its spot on the ground
+// glTF models face +z, which is yaw 0, so they need no extra turn
+VertexOutput place_on_ground(VertexInput input, float2 ground_position, float yaw)
 {
-	const EnemyState enemy = enemies[instance_index];
-
-	// Turned to face where the enemy looks, then moved to its spot on the ground
-	const float angle = enemy.yaw + model_yaw;
-	const float3 world_position = rotate_around_up(input.position, angle) +
-		float3(enemy.position.x, 0.0, enemy.position.y);
+	const float3 world_position = rotate_around_up(input.position, yaw) +
+		float3(ground_position.x, 0.0, ground_position.y);
 
 	const float4 view_position = mul(frame.view, float4(world_position, 1.0));
 
@@ -56,11 +62,27 @@ VertexOutput vert_main(VertexInput input, uint instance_index : SV_VulkanInstanc
 	output.world_position = world_position;
 
 	// Only rotated, so the normal stays unit length and needs no inverse transpose
-	output.normal = rotate_around_up(input.normal, angle);
+	output.normal = rotate_around_up(input.normal, yaw);
 
 	output.texture_coordinates = input.texture_coordinates;
 
 	return output;
+}
+
+// SV_VulkanInstanceID includes the first instance of the draw, unlike SV_InstanceID,
+// which matters because each recording thread draws its own range of instances
+[shader("vertex")]
+VertexOutput enemy_vert_main(VertexInput input, uint instance_index : SV_VulkanInstanceID)
+{
+	const EnemyState enemy = enemies[instance_index];
+
+	return place_on_ground(input, enemy.position, enemy.yaw);
+}
+
+[shader("vertex")]
+VertexOutput player_vert_main(VertexInput input)
+{
+	return place_on_ground(input, player.position, player.yaw);
 }
 
 // Texture coordinates arrive interpolated, so each fragment samples its own point

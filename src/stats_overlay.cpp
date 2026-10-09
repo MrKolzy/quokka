@@ -168,8 +168,7 @@ namespace quokka
 			slowest_frame_ms * graph_headroom,
 			graph_size);
 
-		// The enemies chase the point of the ground the camera looks at
-		ImGui::TextDisabled("Look at enemies to pull them, Space hits, R resets");
-		ImGui::TextDisabled("F1 hides the interface");
+		ImGui::TextDisabled("WASD walks, wheel zooms, Space hits, R resets");
+		ImGui::TextDisabled("F1 hides the interface, F2 frees the camera");
 	}
 }

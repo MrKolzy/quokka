@@ -16,6 +16,7 @@ namespace quokka
 		a,
 		d,
 		e,
+		f2,
 		q,
 		r,
 		s,
@@ -60,6 +61,9 @@ namespace quokka
 		// In pixels, since the previous poll_events
 		[[nodiscard]] glm::vec2 cursor_offset() const noexcept;
 
+		// In wheel notches since the previous poll_events, positive when scrolled forward
+		[[nodiscard]] float scroll_offset() const noexcept;
+
 		void set_title(const std::string& title) noexcept;
 
 		// Run event callbacks, wait first blocks until an event arrives and poll doesn't
@@ -72,11 +76,15 @@ namespace quokka
 
 	private:
 		static void framebuffer_size_callback(GLFWwindow* window, int width, int height) noexcept;
+		static void scroll_callback(GLFWwindow* window, double x_offset, double y_offset) noexcept;
 
 		GLFWwindow* handle_ { nullptr };
 		bool was_resized_ { false };
 
 		glm::dvec2 previous_cursor_position_ {};
 		glm::vec2 cursor_offset_ {};
+
+		// Added up by the scroll callback, which can run several times per poll
+		float scroll_offset_ {};
 	};
 }
