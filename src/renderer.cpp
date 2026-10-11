@@ -1,29 +1,31 @@
 #include "quokka/renderer.hpp"
 
-#include "quokka/barrier.hpp"
 #include "quokka/camera.hpp"
 #include "quokka/constants.hpp"
-#include "quokka/damage_numbers.hpp"
 #include "quokka/device.hpp"
-#include "quokka/enemy_simulation.hpp"
 #include "quokka/gpu_timer.hpp"
 #include "quokka/graphics_pipeline.hpp"
 #include "quokka/gui.hpp"
-#include "quokka/health_bars.hpp"
 #include "quokka/light.hpp"
 #include "quokka/mesh.hpp"
-#include "quokka/player.hpp"
+#include "quokka/one_time_commands.hpp"
 #include "quokka/swapchain.hpp"
 
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <ktx.h>
 
+#include <algorithm> // std::max
 #include <array> // std::array
-#include <cstdint> // std::uint32_t, std::uint64_t
+#include <bit> // std::bit_width
+#include <cstdint> // std::int32_t, std::uint32_t, std::uint64_t
 #include <cstring> // std::memcpy
 #include <exception> // std::exception
 #include <limits> // std::numeric_limits
+#include <memory> // std::unique_ptr
+#include <span> // std::as_bytes, std::span
 #include <stdexcept> // std::runtime_error
-#include <utility> // std::move
+#include <string> // std::string
 
 namespace quokka
 {
@@ -31,7 +33,7 @@ namespace quokka
 	{
 		struct FrameUniforms
 		{
-			// Must match FrameUniforms in frame.slang
+			// Must match FrameUniforms in shader.slang
 			// Each vec3 is followed by a float, which fills its 16 bytes the same way as there
 			glm::mat4 view;
 			glm::mat4 projection;
@@ -44,16 +46,59 @@ namespace quokka
 
 			glm::vec3 light_color;
 			float shininess;
-
-			glm::vec2 viewport_size;
-			glm::vec2 blast_center;
-			float time;
-			float last_blast_time;
-			glm::vec2 quake_point;
 		};
 
-		// Two matrices and five groups of 16 bytes, so nothing was padded in between
-		static_assert(sizeof(FrameUniforms) == 2 * sizeof(glm::mat4) + 5 * 16);
+		// Two matrices and three groups of 16 bytes, so nothing was padded in between
+		static_assert(sizeof(FrameUniforms) == 2 * sizeof(glm::mat4) + 3 * 16);
+
+		struct Transform
+		{
+			glm::vec3 position { 0.0f, 0.0f, 0.0f };
+
+			// Euler angles in radians around the x, y and z axes
+			glm::vec3 rotation { 0.0f, 0.0f, 0.0f };
+
+			glm::vec3 scale { 1.0f, 1.0f, 1.0f };
+
+			// Scales, then rotates, then moves, since the matrices apply from right to left
+			[[nodiscard]] glm::mat4 model_matrix() const noexcept
+			{
+				glm::mat4 model { glm::translate(glm::mat4 { 1.0f }, position) };
+				model = glm::rotate(model, rotation.x, glm::vec3 { 1.0f, 0.0f, 0.0f });
+				model = glm::rotate(model, rotation.y, glm::vec3 { 0.0f, 1.0f, 0.0f });
+				model = glm::rotate(model, rotation.z, glm::vec3 { 0.0f, 0.0f, 1.0f });
+
+				return glm::scale(model, scale);
+			}
+		};
+
+		constexpr std::uint32_t grid_object_count {
+			constants::object_grid_side * constants::object_grid_side
+		};
+
+		// Between the centers of neighboring copies, a bit more than the width of the model
+		constexpr float object_spacing { 2.0f };
+
+		// Turns the open side of the viking room toward the initial camera, which looks along -z
+		constexpr float model_yaw { glm::radians(-90.0f) };
+
+		// A square grid on the ground centered at the origin, each copy turned differently
+		[[nodiscard]] constexpr Transform object_transform(std::uint32_t object_index) noexcept
+		{
+			const std::uint32_t row { object_index / constants::object_grid_side };
+			const std::uint32_t column { object_index % constants::object_grid_side };
+			const float grid_offset {
+				static_cast<float>(constants::object_grid_side - 1) * object_spacing / 2.0f
+			};
+			const float x { static_cast<float>(column) * object_spacing - grid_offset };
+			const float z { static_cast<float>(row) * object_spacing - grid_offset };
+			const float yaw { model_yaw + static_cast<float>(object_index) * glm::radians(40.0f) };
+
+			return {
+				.position { x, 0.0f, z },
+				.rotation { 0.0f, yaw, 0.0f }
+			};
+		}
 
 		[[nodiscard]] constexpr vk::Rect2D full_area(vk::Extent2D extent) noexcept
 		{
@@ -61,6 +106,139 @@ namespace quokka
 				.offset { .x { 0 }, .y { 0 } },
 				.extent { extent }
 			};
+		}
+
+		void transition_image_layout(
+			const vk::raii::CommandBuffer& command_buffer,
+			vk::Image image,
+			vk::ImageSubresourceRange subresource_range,
+			vk::ImageLayout old_layout,
+			vk::ImageLayout new_layout,
+			vk::PipelineStageFlags2 src_stage_mask,
+			vk::AccessFlags2 src_access_mask,
+			vk::PipelineStageFlags2 dst_stage_mask,
+			vk::AccessFlags2 dst_access_mask) noexcept
+		{
+			const vk::ImageMemoryBarrier2 barrier {
+				.srcStageMask { src_stage_mask },
+				.srcAccessMask { src_access_mask },
+				.dstStageMask { dst_stage_mask },
+				.dstAccessMask { dst_access_mask },
+				.oldLayout { old_layout },
+				.newLayout { new_layout },
+				// Same queue family, so there's no ownership transfer
+				.srcQueueFamilyIndex { vk::QueueFamilyIgnored },
+				.dstQueueFamilyIndex { vk::QueueFamilyIgnored },
+				.image { image },
+				.subresourceRange { subresource_range }
+			};
+
+			const vk::DependencyInfo dependency_info {
+				.imageMemoryBarrierCount { 1 },
+				.pImageMemoryBarriers { &barrier }
+			};
+
+			command_buffer.pipelineBarrier2(dependency_info);
+		}
+
+		// Blits each level into the next, so every level must start as a transfer destination,
+		// and all of them end up ready for the fragment shader
+		void generate_mipmaps(
+			const vk::raii::CommandBuffer& command_buffer,
+			vk::Image image,
+			vk::Extent2D extent,
+			std::uint32_t mip_levels) noexcept
+		{
+			// Signed, like the blit offsets
+			auto mip_width { static_cast<std::int32_t>(extent.width) };
+			auto mip_height { static_cast<std::int32_t>(extent.height) };
+
+			for (std::uint32_t mip_level { 1 }; mip_level < mip_levels; ++mip_level)
+			{
+				// The copy or the previous blit wrote the previous level, and this blit reads it
+				transition_image_layout(
+					command_buffer,
+					image,
+					mip_level_subresource_range(vk::ImageAspectFlagBits::eColor, mip_level - 1),
+					vk::ImageLayout::eTransferDstOptimal,
+					vk::ImageLayout::eTransferSrcOptimal,
+					vk::PipelineStageFlagBits2::eTransfer,
+					vk::AccessFlagBits2::eTransferWrite,
+					vk::PipelineStageFlagBits2::eTransfer,
+					vk::AccessFlagBits2::eTransferRead
+				);
+
+				// Never below 1, so the longer side of a non-square image keeps shrinking alone
+				const std::int32_t next_mip_width { mip_width > 1 ? mip_width / 2 : 1 };
+				const std::int32_t next_mip_height { mip_height > 1 ? mip_height / 2 : 1 };
+
+				// Each region goes from the origin to the opposite corner of its whole level
+				const std::array source_corners {
+					vk::Offset3D {},
+					vk::Offset3D { .x { mip_width }, .y { mip_height }, .z { 1 } }
+				};
+				const std::array destination_corners {
+					vk::Offset3D {},
+					vk::Offset3D { .x { next_mip_width }, .y { next_mip_height }, .z { 1 } }
+				};
+
+				const vk::ImageBlit blit {
+					.srcSubresource {
+						.aspectMask { vk::ImageAspectFlagBits::eColor },
+						.mipLevel { mip_level - 1 },
+						.baseArrayLayer { 0 },
+						.layerCount { 1 }
+					},
+					.srcOffsets { source_corners },
+					.dstSubresource {
+						.aspectMask { vk::ImageAspectFlagBits::eColor },
+						.mipLevel { mip_level },
+						.baseArrayLayer { 0 },
+						.layerCount { 1 }
+					},
+					.dstOffsets { destination_corners }
+				};
+
+				// Linear filtering averages the texels that shrink into each one
+				command_buffer.blitImage(
+					image,
+					vk::ImageLayout::eTransferSrcOptimal,
+					image,
+					vk::ImageLayout::eTransferDstOptimal,
+					blit,
+					vk::Filter::eLinear
+				);
+
+				// The previous level is final, so it can be sampled once this blit reads it
+				// Waiting for a read needs no source access, only the stage
+				transition_image_layout(
+					command_buffer,
+					image,
+					mip_level_subresource_range(vk::ImageAspectFlagBits::eColor, mip_level - 1),
+					vk::ImageLayout::eTransferSrcOptimal,
+					vk::ImageLayout::eShaderReadOnlyOptimal,
+					vk::PipelineStageFlagBits2::eTransfer,
+					{},
+					vk::PipelineStageFlagBits2::eFragmentShader,
+					vk::AccessFlagBits2::eShaderRead
+				);
+
+				mip_width = next_mip_width;
+				mip_height = next_mip_height;
+			}
+
+			// The last level is never blitted from, so it goes straight to being sampled
+			transition_image_layout(
+				command_buffer,
+				image,
+				mip_level_subresource_range(vk::ImageAspectFlagBits::eColor, mip_levels - 1),
+				vk::ImageLayout::eTransferDstOptimal,
+				vk::ImageLayout::eShaderReadOnlyOptimal,
+				vk::PipelineStageFlagBits2::eTransfer,
+				vk::AccessFlagBits2::eTransferWrite,
+				vk::PipelineStageFlagBits2::eFragmentShader,
+				vk::AccessFlagBits2::eShaderRead
+			);
 		}
 	}
 
@@ -71,43 +249,29 @@ namespace quokka
 		const Swapchain& swapchain,
 		const GraphicsPipeline& graphics_pipeline,
 		GpuTimer& gpu_timer,
-		const Gui& gui,
-		const DamageNumbers& damage_numbers,
-		const HealthBars& health_bars,
-		EnemySimulation& enemy_simulation)
+		const Gui& gui)
 		: device_ { device }
 		, swapchain_ { swapchain }
 		, graphics_pipeline_ { graphics_pipeline }
 		, gpu_timer_ { gpu_timer }
 		, gui_ { gui }
-		, damage_numbers_ { damage_numbers }
-		, health_bars_ { health_bars }
-		, enemy_simulation_ { enemy_simulation }
 		, recording_threads_ { constants::recording_thread_count }
 	{
 		create_command_pool();
 		create_command_buffers();
 		create_secondary_command_buffers();
 
-		enemy_model_ = load_model(
-			device_,
-			command_pool_,
-			constants::enemy_model_path,
-			constants::enemy_texture_path
-		);
-		player_model_ = load_model(
-			device_,
-			command_pool_,
-			constants::player_model_path,
-			constants::player_texture_path
-		);
+		// Only needed until it's uploaded, so the CPU copy is freed when the constructor ends
+		const Mesh mesh { load_model() };
+		create_vertex_buffer(mesh);
+		create_index_buffer(mesh);
 
+		create_texture_image();
+		create_texture_image_view();
 		create_texture_sampler();
 		create_uniform_buffers();
 		create_descriptor_pool();
 		create_descriptor_sets();
-		enemy_material_set_ = create_material_set(enemy_model_);
-		player_material_set_ = create_material_set(player_model_);
 		create_frame_sync_objects();
 	}
 
@@ -125,11 +289,7 @@ namespace quokka
 		}
 	}
 
-	bool Renderer::draw_frame(
-		const Camera& camera,
-		const DirectionalLight& light,
-		const Player& player,
-		float time_seconds)
+	bool Renderer::draw_frame(const Camera& camera, const DirectionalLight& light)
 	{
 		constexpr auto no_timeout { std::numeric_limits<std::uint64_t>::max() };
 
@@ -146,10 +306,8 @@ namespace quokka
 			throw std::runtime_error("Failed to wait for the in flight fence");
 		}
 
-		// The fence wait above also guarantees this frame's previous timestamps are written,
-		// and its copy of the damage dealt to the player
+		// The fence wait above also guarantees this frame's previous timestamps are written
 		gpu_timer_.collect(frame_index_);
-		enemy_simulation_.collect(frame_index_);
 
 		// The semaphore is signaled once the presentation engine stops reading the image
 		// Out of date is returned instead of thrown, here and in presentKHR,
@@ -169,10 +327,10 @@ namespace quokka
 		device_.logical_device().resetFences(*in_flight_fence);
 
 		// The fence wait above guarantees the GPU is no longer reading this frame's uniform buffer
-		update_uniform_buffer(mapped_uniform_buffer, camera, light, player, time_seconds);
+		update_uniform_buffer(mapped_uniform_buffer, camera, light);
 
 		// Beginning the command buffer implicitly resets it, since the pool has the reset flag
-		record_command_buffer(command_buffer, descriptor_set, image_index, player, time_seconds);
+		record_command_buffer(command_buffer, descriptor_set, image_index);
 
 		// Indexed by image, not by frame, since it's tied to the presentation of that image
 		const auto& render_finished_semaphore { swapchain_.render_finished_semaphore(image_index) };
@@ -221,6 +379,21 @@ namespace quokka
 			present_result == vk::Result::eSuboptimalKHR;
 	}
 
+	Camera Renderer::initial_camera() noexcept
+	{
+		// Back and above the grid, far enough to see all of it, whatever its size
+		constexpr float grid_size {
+			static_cast<float>(constants::object_grid_side) * object_spacing
+		};
+		constexpr glm::vec3 camera_position {
+			0.0f, grid_size * 0.7f + 1.0f, grid_size * 1.3f + 2.0f
+		};
+
+		constexpr glm::vec3 grid_center { 0.0f, 0.0f, 0.0f };
+
+		return { camera_position, grid_center };
+	}
+
 	void Renderer::create_command_pool()
 	{
 		const vk::CommandPoolCreateInfo create_info {
@@ -243,16 +416,6 @@ namespace quokka
 		};
 
 		primary_command_buffers_ = device_.logical_device().allocateCommandBuffers(allocate_info);
-
-		// Executed inside the scene's rendering, like the recording threads' ones
-		const vk::CommandBufferAllocateInfo main_thread_allocate_info {
-			.commandPool { *command_pool_ },
-			.level { vk::CommandBufferLevel::eSecondary },
-			.commandBufferCount { constants::max_frames_in_flight }
-		};
-
-		main_thread_command_buffers_ =
-			device_.logical_device().allocateCommandBuffers(main_thread_allocate_info);
 	}
 
 	void Renderer::create_secondary_command_buffers()
@@ -282,6 +445,205 @@ namespace quokka
 			secondary_command_buffers_.push_back(
 				logical_device.allocateCommandBuffers(allocate_info));
 		}
+	}
+
+	Mesh Renderer::load_model() const
+	{
+		// glTF uses y up like the world, so the vertices need no conversion
+		return load_gltf(constants::model_path);
+	}
+
+	void Renderer::create_vertex_buffer(const Mesh& mesh)
+	{
+		vertex_buffer_ = create_device_local_buffer(
+			device_,
+			command_pool_,
+			std::as_bytes(std::span { mesh.vertices }),
+			vk::BufferUsageFlagBits::eVertexBuffer
+		);
+	}
+
+	void Renderer::create_index_buffer(const Mesh& mesh)
+	{
+		index_buffer_ = create_device_local_buffer(
+			device_,
+			command_pool_,
+			std::as_bytes(std::span { mesh.indices }),
+			vk::BufferUsageFlagBits::eIndexBuffer
+		);
+
+		index_count_ = static_cast<std::uint32_t>(mesh.indices.size());
+	}
+
+	void Renderer::create_texture_image()
+	{
+		// Also inflates the texels if the file is supercompressed with zstd
+		ktxTexture2* loaded_texture { nullptr };
+		const auto load_result {
+			ktxTexture2_CreateFromNamedFile(
+				constants::texture_path,
+				KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT,
+				&loaded_texture)
+		};
+		if (load_result != KTX_SUCCESS)
+		{
+			throw std::runtime_error(
+				std::string { "Failed to load texture file: " } + constants::texture_path);
+		}
+
+		// Owned by a unique_ptr, so it's destroyed even if an exception is thrown
+		const std::unique_ptr<ktxTexture2, decltype(&ktxTexture2_Destroy)> texture {
+			loaded_texture, &ktxTexture2_Destroy
+		};
+
+		// Block compressed formats need a GPU feature, and Basis Universal ones need transcoding
+		if (texture->isCompressed || ktxTexture2_NeedsTranscoding(texture.get()))
+		{
+			throw std::runtime_error(
+				std::string { "Compressed textures aren't supported yet: " } +
+				constants::texture_path);
+		}
+
+		texture_format_ = static_cast<vk::Format>(texture->vkFormat);
+
+		const vk::Extent2D extent {
+			.width { texture->baseWidth },
+			.height { texture->baseHeight }
+		};
+
+		// Mipmaps in the file are used as they are, and only generated if it has just one level
+		const bool should_generate_mipmaps { texture->numLevels == 1 };
+
+		// Halving down to 1x1 gives one level per bit needed to write the longest side
+		const auto mip_levels {
+			should_generate_mipmaps
+				? static_cast<std::uint32_t>(std::bit_width(std::max(extent.width, extent.height)))
+				: texture->numLevels
+		};
+
+		// The format comes from the file, so the GPU must be able to sample it,
+		// and to filter it linearly when the blits generate the mipmaps
+		const auto format_features {
+			device_.physical_device().getFormatProperties(texture_format_).optimalTilingFeatures
+		};
+		const bool is_format_supported {
+			(format_features & vk::FormatFeatureFlagBits::eSampledImage) &&
+			(!should_generate_mipmaps ||
+				(format_features & vk::FormatFeatureFlagBits::eSampledImageFilterLinear))
+		};
+		if (!is_format_supported)
+		{
+			throw std::runtime_error(
+				std::string { "The GPU can't sample the format of the texture file: " } +
+				constants::texture_path);
+		}
+
+		// Every level stored in the file, one after another
+		const std::span<const ktx_uint8_t> texels {
+			ktxTexture_GetData(ktxTexture(texture.get())),
+			ktxTexture_GetDataSize(ktxTexture(texture.get()))
+		};
+
+		// Only lives until its contents are copied into the image
+		const auto staging_buffer { create_staging_buffer(device_, std::as_bytes(texels)) };
+
+		// One copy per level stored in the file, each from that level's offset in the buffer
+		std::vector<vk::BufferImageCopy> copy_regions {};
+		copy_regions.reserve(texture->numLevels);
+
+		for (std::uint32_t mip_level { 0 }; mip_level < texture->numLevels; ++mip_level)
+		{
+			ktx_size_t level_offset {};
+			ktxTexture_GetImageOffset(ktxTexture(texture.get()), mip_level, 0, 0, &level_offset);
+
+			const vk::BufferImageCopy copy_region {
+				.bufferOffset { level_offset },
+				// 0 means the texels are tightly packed, without padding between rows
+				.bufferRowLength { 0 },
+				.bufferImageHeight { 0 },
+				.imageSubresource {
+					.aspectMask { vk::ImageAspectFlagBits::eColor },
+					.mipLevel { mip_level },
+					.baseArrayLayer { 0 },
+					.layerCount { 1 }
+				},
+				.imageOffset { .x { 0 }, .y { 0 }, .z { 0 } },
+				// Each level halves the previous one, but never goes below 1 texel
+				.imageExtent {
+					.width { std::max(extent.width >> mip_level, 1u) },
+					.height { std::max(extent.height >> mip_level, 1u) },
+					.depth { 1 }
+				}
+			};
+
+			copy_regions.push_back(copy_region);
+		}
+
+		// Written by the copy and the blits, read by the blits and then sampled by the shaders
+		texture_image_ = create_image(
+			device_,
+			extent,
+			mip_levels,
+			vk::SampleCountFlagBits::e1,
+			texture_format_,
+			vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst |
+			vk::ImageUsageFlagBits::eSampled,
+			vk::MemoryPropertyFlagBits::eDeviceLocal
+		);
+
+		// All in one submission, so the CPU waits for the GPU only once
+		submit_one_time_commands(device_, command_pool_, [&](const auto& command_buffer)
+		{
+			// Every level at once, with nothing to wait for since the old contents are discarded
+			transition_image_layout(
+				command_buffer,
+				*texture_image_.handle,
+				full_subresource_range(vk::ImageAspectFlagBits::eColor),
+				vk::ImageLayout::eUndefined,
+				vk::ImageLayout::eTransferDstOptimal,
+				vk::PipelineStageFlagBits2::eNone,
+				{},
+				vk::PipelineStageFlagBits2::eTransfer,
+				vk::AccessFlagBits2::eTransferWrite
+			);
+
+			command_buffer.copyBufferToImage(
+				*staging_buffer.handle,
+				*texture_image_.handle,
+				vk::ImageLayout::eTransferDstOptimal,
+				copy_regions
+			);
+
+			if (should_generate_mipmaps)
+			{
+				generate_mipmaps(command_buffer, *texture_image_.handle, extent, mip_levels);
+			}
+			else
+			{
+				// Every level came from the file, so they can all be sampled once the copy is done
+				transition_image_layout(
+					command_buffer,
+					*texture_image_.handle,
+					full_subresource_range(vk::ImageAspectFlagBits::eColor),
+					vk::ImageLayout::eTransferDstOptimal,
+					vk::ImageLayout::eShaderReadOnlyOptimal,
+					vk::PipelineStageFlagBits2::eTransfer,
+					vk::AccessFlagBits2::eTransferWrite,
+					vk::PipelineStageFlagBits2::eFragmentShader,
+					vk::AccessFlagBits2::eShaderRead
+				);
+			}
+		});
+	}
+
+	void Renderer::create_texture_image_view()
+	{
+		texture_image_view_ = create_image_view(
+			device_,
+			*texture_image_.handle,
+			texture_format_,
+			vk::ImageAspectFlagBits::eColor
+		);
 	}
 
 	void Renderer::create_texture_sampler()
@@ -347,29 +709,22 @@ namespace quokka
 
 	void Renderer::create_descriptor_pool()
 	{
-		// Per frame in flight, one uniform buffer and the enemy, damage number and combat storage
-		// buffers, and per model one texture and the joint matrix and clip storage buffers
-		constexpr std::uint32_t model_count { 2 };
-
+		// One uniform buffer and one texture descriptor per frame in flight
 		constexpr std::array pool_sizes {
 			vk::DescriptorPoolSize {
 				.type { vk::DescriptorType::eUniformBuffer },
 				.descriptorCount { constants::max_frames_in_flight }
 			},
 			vk::DescriptorPoolSize {
-				.type { vk::DescriptorType::eStorageBuffer },
-				.descriptorCount { 3 * constants::max_frames_in_flight + 2 * model_count }
-			},
-			vk::DescriptorPoolSize {
 				.type { vk::DescriptorType::eCombinedImageSampler },
-				.descriptorCount { model_count }
+				.descriptorCount { constants::max_frames_in_flight }
 			}
 		};
 
 		const vk::DescriptorPoolCreateInfo create_info {
 			// vk::raii::DescriptorSet frees its set when destroyed, which requires this flag
 			.flags { vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet },
-			.maxSets { constants::max_frames_in_flight + model_count },
+			.maxSets { constants::max_frames_in_flight },
 			.poolSizeCount { static_cast<std::uint32_t>(pool_sizes.size()) },
 			.pPoolSizes { pool_sizes.data() }
 		};
@@ -383,7 +738,7 @@ namespace quokka
 		// Parentheses because braces could take the arguments as elements
 		const std::vector<vk::DescriptorSetLayout> layouts(
 			constants::max_frames_in_flight,
-			*graphics_pipeline_.frame_descriptor_set_layout()
+			*graphics_pipeline_.descriptor_set_layout()
 		);
 
 		const vk::DescriptorSetAllocateInfo allocate_info {
@@ -394,26 +749,12 @@ namespace quokka
 
 		descriptor_sets_ = device_.logical_device().allocateDescriptorSets(allocate_info);
 
-		// The simulation updates the enemies in place, and barriers order that with the draws
-		const vk::DescriptorBufferInfo enemy_buffer_info {
-			.buffer { *enemy_simulation_.state_buffer().handle },
-			.offset { 0 },
-			// The whole buffer, however many enemies it holds
-			.range { vk::WholeSize }
-		};
-
-		// A single ring that every frame reads, the copies into it are ordered by barriers
-		const vk::DescriptorBufferInfo damage_number_buffer_info {
-			.buffer { *damage_numbers_.buffer().handle },
-			.offset { 0 },
-			.range { vk::WholeSize }
-		};
-
-		// Rewritten by the simulation every frame, ordered by barriers like the enemies
-		const vk::DescriptorBufferInfo combat_buffer_info {
-			.buffer { *enemy_simulation_.combat_buffer().handle },
-			.offset { 0 },
-			.range { vk::WholeSize }
+		// The same for every frame, since the texture is never written after loading
+		const vk::DescriptorImageInfo image_info {
+			.sampler { *texture_sampler_ },
+			.imageView { *texture_image_view_ },
+			// The layout the texture was left in after the upload
+			.imageLayout { vk::ImageLayout::eShaderReadOnlyOptimal }
 		};
 
 		for (std::uint32_t index { 0 }; index < constants::max_frames_in_flight; ++index)
@@ -435,111 +776,21 @@ namespace quokka
 				.pBufferInfo { &buffer_info }
 			};
 
-			const vk::WriteDescriptorSet enemy_write {
+			const vk::WriteDescriptorSet texture_write {
 				.dstSet { *descriptor_sets_[index] },
-				// Must match enemy_binding in graphics_pipeline.cpp
+				// Must match texture_binding in graphics_pipeline.cpp
 				.dstBinding { 1 },
 				.dstArrayElement { 0 },
 				.descriptorCount { 1 },
-				.descriptorType { vk::DescriptorType::eStorageBuffer },
-				.pBufferInfo { &enemy_buffer_info }
+				.descriptorType { vk::DescriptorType::eCombinedImageSampler },
+				.pImageInfo { &image_info }
 			};
 
-			const vk::WriteDescriptorSet damage_number_write {
-				.dstSet { *descriptor_sets_[index] },
-				// Must match damage_number_binding in graphics_pipeline.cpp
-				.dstBinding { 2 },
-				.dstArrayElement { 0 },
-				.descriptorCount { 1 },
-				.descriptorType { vk::DescriptorType::eStorageBuffer },
-				.pBufferInfo { &damage_number_buffer_info }
-			};
-
-			const vk::WriteDescriptorSet combat_write {
-				.dstSet { *descriptor_sets_[index] },
-				// Must match combat_binding in graphics_pipeline.cpp
-				.dstBinding { 3 },
-				.dstArrayElement { 0 },
-				.descriptorCount { 1 },
-				.descriptorType { vk::DescriptorType::eStorageBuffer },
-				.pBufferInfo { &combat_buffer_info }
-			};
-
-			const std::array descriptor_writes {
-				frame_write, enemy_write, damage_number_write, combat_write
-			};
+			const std::array descriptor_writes { frame_write, texture_write };
 
 			// No copies from other descriptor sets
 			device_.logical_device().updateDescriptorSets(descriptor_writes, {});
 		}
-	}
-
-	vk::raii::DescriptorSet Renderer::create_material_set(const Model& model) const
-	{
-		const vk::DescriptorSetAllocateInfo allocate_info {
-			.descriptorPool { *descriptor_pool_ },
-			.descriptorSetCount { 1 },
-			.pSetLayouts { &*graphics_pipeline_.material_descriptor_set_layout() }
-		};
-
-		auto material_sets { device_.logical_device().allocateDescriptorSets(allocate_info) };
-
-		const vk::DescriptorImageInfo image_info {
-			.sampler { *texture_sampler_ },
-			.imageView { *model.texture_image_view },
-			// The layout the texture was left in after the upload
-			.imageLayout { vk::ImageLayout::eShaderReadOnlyOptimal }
-		};
-
-		const vk::WriteDescriptorSet texture_write {
-			.dstSet { *material_sets[0] },
-			// Must match texture_binding in graphics_pipeline.cpp
-			.dstBinding { 0 },
-			.dstArrayElement { 0 },
-			.descriptorCount { 1 },
-			.descriptorType { vk::DescriptorType::eCombinedImageSampler },
-			.pImageInfo { &image_info }
-		};
-
-		// Never written after loading, like the texture
-		const vk::DescriptorBufferInfo joint_matrix_info {
-			.buffer { *model.joint_matrix_buffer.handle },
-			.offset { 0 },
-			.range { vk::WholeSize }
-		};
-
-		const vk::DescriptorBufferInfo clip_info {
-			.buffer { *model.clip_buffer.handle },
-			.offset { 0 },
-			.range { vk::WholeSize }
-		};
-
-		const vk::WriteDescriptorSet joint_matrix_write {
-			.dstSet { *material_sets[0] },
-			// Must match joint_matrix_binding in graphics_pipeline.cpp
-			.dstBinding { 1 },
-			.dstArrayElement { 0 },
-			.descriptorCount { 1 },
-			.descriptorType { vk::DescriptorType::eStorageBuffer },
-			.pBufferInfo { &joint_matrix_info }
-		};
-
-		const vk::WriteDescriptorSet clip_write {
-			.dstSet { *material_sets[0] },
-			// Must match clip_binding in graphics_pipeline.cpp
-			.dstBinding { 2 },
-			.dstArrayElement { 0 },
-			.descriptorCount { 1 },
-			.descriptorType { vk::DescriptorType::eStorageBuffer },
-			.pBufferInfo { &clip_info }
-		};
-
-		const std::array descriptor_writes { texture_write, joint_matrix_write, clip_write };
-
-		// No copies from other descriptor sets
-		device_.logical_device().updateDescriptorSets(descriptor_writes, {});
-
-		return std::move(material_sets[0]);
 	}
 
 	void Renderer::create_frame_sync_objects()
@@ -563,29 +814,22 @@ namespace quokka
 	void Renderer::update_uniform_buffer(
 		void* mapped_memory,
 		const Camera& camera,
-		const DirectionalLight& light,
-		const Player& player,
-		float time_seconds) const
+		const DirectionalLight& light) const
 	{
 		const vk::Extent2D extent { swapchain_.extent() };
-		const glm::vec2 viewport_size {
-			static_cast<float>(extent.width), static_cast<float>(extent.height)
+		const float aspect_ratio {
+			static_cast<float>(extent.width) / static_cast<float>(extent.height)
 		};
 
 		const FrameUniforms frame_uniforms {
 			.view { camera.view_matrix() },
-			.projection { camera.projection_matrix(viewport_size.x / viewport_size.y) },
+			.projection { camera.projection_matrix(aspect_ratio) },
 			.camera_position { camera.position() },
 			.ambient_strength { light.ambient_strength },
 			.light_direction { light.direction() },
 			.specular_strength { light.specular_strength },
 			.light_color { light.color },
-			.shininess { light.shininess },
-			.viewport_size { viewport_size },
-			.blast_center { player.position() },
-			.time { time_seconds },
-			.last_blast_time { player.last_blast_time() },
-			.quake_point { player.quake_point() }
+			.shininess { light.shininess }
 		};
 
 		std::memcpy(mapped_memory, &frame_uniforms, sizeof(frame_uniforms));
@@ -594,9 +838,7 @@ namespace quokka
 	void Renderer::record_command_buffer(
 		const vk::raii::CommandBuffer& command_buffer,
 		const vk::raii::DescriptorSet& descriptor_set,
-		std::uint32_t image_index,
-		const Player& player,
-		float time_seconds)
+		std::uint32_t image_index)
 	{
 		// Re-recorded every frame, so each recording is submitted only once
 		command_buffer.begin({ .flags { vk::CommandBufferUsageFlagBits::eOneTimeSubmit } });
@@ -657,12 +899,6 @@ namespace quokka
 			depth_accesses
 		);
 
-		// Before the rendering begins, since compute work and copies can't be recorded inside one
-		// The hits also spawn their damage numbers here
-		enemy_simulation_.record_update(command_buffer, frame_index_);
-
-		gpu_timer_.record_timestamp(command_buffer, frame_index_, GpuTimestamp::enemies_updated);
-
 		constexpr vk::ClearValue clear_color {
 			.color { .float32 { std::array { 0.0f, 0.0f, 0.0f, 1.0f } } }
 		};
@@ -716,16 +952,14 @@ namespace quokka
 
 		// Each thread records its share of the objects into its own secondary command buffer,
 		// and run returns once all of them are done
-		// Only the current level's enemies, the slots past them are never used
-		const std::uint32_t enemy_count { enemy_simulation_.enemy_count() };
-		recording_threads_.run([this, &descriptor_set, enemy_count](std::uint32_t thread_index)
+		recording_threads_.run([this, &descriptor_set](std::uint32_t thread_index)
 		{
 			// Contiguous shares, as even as possible
 			const std::uint32_t first_object {
-				enemy_count * thread_index / constants::recording_thread_count
+				grid_object_count * thread_index / constants::recording_thread_count
 			};
 			const std::uint32_t end_object {
-				enemy_count * (thread_index + 1) / constants::recording_thread_count
+				grid_object_count * (thread_index + 1) / constants::recording_thread_count
 			};
 
 			record_object_draws(
@@ -736,26 +970,18 @@ namespace quokka
 			);
 		});
 
-		const auto& main_thread_command_buffer { main_thread_command_buffers_[frame_index_] };
-		record_main_thread_draws(main_thread_command_buffer, descriptor_set, player, time_seconds);
-
-		// In the order of the threads, which is also the order of the objects, then the main
-		// thread's, so the ground comes last
-		constexpr std::uint32_t scene_command_buffer_count {
-			constants::recording_thread_count + 1
-		};
-		std::array<vk::CommandBuffer, scene_command_buffer_count> scene_command_buffers {};
+		// In the order of the threads, which is also the order of the objects
+		std::array<vk::CommandBuffer, constants::recording_thread_count> thread_command_buffers {};
 		for (std::uint32_t index { 0 }; index < constants::recording_thread_count; ++index)
 		{
-			scene_command_buffers[index] = *secondary_command_buffers_[index][frame_index_];
+			thread_command_buffers[index] = *secondary_command_buffers_[index][frame_index_];
 		}
-		scene_command_buffers.back() = *main_thread_command_buffer;
 
-		command_buffer.executeCommands(scene_command_buffers);
+		command_buffer.executeCommands(thread_command_buffers);
 
 		command_buffer.endRendering();
 
-		record_overlay(command_buffer, descriptor_set, image_index, time_seconds);
+		record_gui(command_buffer, image_index);
 
 		// Wait for every color write to finish before the presentation engine reads the image
 		transition_image_layout(
@@ -775,12 +1001,16 @@ namespace quokka
 		command_buffer.end();
 	}
 
-	void Renderer::record_overlay(
+	void Renderer::record_gui(
 		const vk::raii::CommandBuffer& command_buffer,
-		const vk::raii::DescriptorSet& descriptor_set,
-		std::uint32_t image_index,
-		float time_seconds) const
+		std::uint32_t image_index) const
 	{
+		// Hidden, so the frame is the same as without an interface, which benchmarks need
+		if (!gui_.is_visible())
+		{
+			return;
+		}
+
 		// Drawn over the finished scene, so it waits for its color writes, the MSAA resolve too
 		// The layout stays the same, so this barrier only orders the writes
 		transition_image_layout(
@@ -795,7 +1025,7 @@ namespace quokka
 			vk::AccessFlagBits2::eColorAttachmentRead | vk::AccessFlagBits2::eColorAttachmentWrite
 		);
 
-		// Loaded instead of cleared, so the scene stays under the overlay
+		// Loaded instead of cleared, so the scene stays under the interface
 		const vk::RenderingAttachmentInfo color_attachment_info {
 			.imageView { *swapchain_.image_view(image_index) },
 			.imageLayout { vk::ImageLayout::eColorAttachmentOptimal },
@@ -803,7 +1033,7 @@ namespace quokka
 			.storeOp { vk::AttachmentStoreOp::eStore }
 		};
 
-		// One sample and no depth, since the overlay is flat and always on top
+		// One sample and no depth, since the interface is flat and always on top
 		const vk::RenderingInfo rendering_info {
 			.renderArea { full_area(swapchain_.extent()) },
 			.layerCount { 1 },
@@ -812,28 +1042,7 @@ namespace quokka
 		};
 
 		command_buffer.beginRendering(rendering_info);
-
-		// First, so the damage numbers rising from the enemies cover their bars
-		health_bars_.record_draw(
-			command_buffer,
-			descriptor_set,
-			swapchain_.extent(),
-			enemy_simulation_.enemy_count()
-		);
-
-		if (damage_numbers_.has_visible_numbers(time_seconds))
-		{
-			damage_numbers_.record_draw(
-				command_buffer,
-				descriptor_set,
-				swapchain_.extent(),
-				time_seconds
-			);
-		}
-
-		// Last, so the interface stays on top of the damage numbers
 		gui_.record(command_buffer);
-
 		command_buffer.endRendering();
 	}
 
@@ -889,87 +1098,46 @@ namespace quokka
 		begin_secondary_command_buffer(command_buffer);
 
 		// Secondary command buffers inherit no state, so it binds everything it uses
-		command_buffer.bindPipeline(
-			vk::PipelineBindPoint::eGraphics,
-			*graphics_pipeline_.enemy_pipeline());
-		bind_model(command_buffer, descriptor_set, enemy_model_, enemy_material_set_);
+		command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphics_pipeline_.handle());
 
-		// One draw for the whole share, where each instance reads its own enemy state
-		// Every index, starting at the first index and vertex, and at the share's first instance
-		command_buffer.drawIndexed(enemy_model_.index_count, object_count, 0, 0, first_object);
-
-		command_buffer.end();
-	}
-
-	void Renderer::record_main_thread_draws(
-		const vk::raii::CommandBuffer& command_buffer,
-		const vk::raii::DescriptorSet& descriptor_set,
-		const Player& player,
-		float time_seconds) const
-	{
-		begin_secondary_command_buffer(command_buffer);
-
-		command_buffer.bindPipeline(
-			vk::PipelineBindPoint::eGraphics,
-			*graphics_pipeline_.player_pipeline());
-		bind_model(command_buffer, descriptor_set, player_model_, player_material_set_);
-
-		const AnimationState animation { player.animation(time_seconds) };
-
-		// The ground also reads them, for the player's shadow and the sword's range
-		const PlayerConstants player_constants {
-			.position { player.position() },
-			.yaw { player.yaw() },
-			.last_hit_time { player.last_hit_time() },
-			.animation_clip { static_cast<std::uint32_t>(animation.clip) },
-			.animation_time { animation.time },
-			.strike_range_time { player.strike_range_time() }
-		};
-		command_buffer.pushConstants<PlayerConstants>(
-			*graphics_pipeline_.pipeline_layout(),
-			vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
-			0,
-			player_constants
-		);
-
-		// A single instance
-		command_buffer.drawIndexed(player_model_.index_count, 1, 0, 0, 0);
-
-		// Last, so the depth test skips the ground hidden behind the enemies and the player
-		// Same pipeline layout, so the frame set and the push constants stay bound
-		command_buffer.bindPipeline(
-			vk::PipelineBindPoint::eGraphics,
-			*graphics_pipeline_.ground_pipeline());
-
-		// One square of two triangles, made in the vertex shader without a vertex buffer
-		command_buffer.draw(6, 1, 0, 0);
-
-		command_buffer.end();
-	}
-
-	void Renderer::bind_model(
-		const vk::raii::CommandBuffer& command_buffer,
-		const vk::raii::DescriptorSet& frame_set,
-		const Model& model,
-		const vk::raii::DescriptorSet& material_set) const
-	{
 		// Starting at binding 0, with the vertex data at the start of the buffer
-		command_buffer.bindVertexBuffers(0, *model.vertex_buffer.handle, { 0 });
+		command_buffer.bindVertexBuffers(0, *vertex_buffer_.handle, { 0 });
 
 		// Offset 0, with the index type deduced from the element type of the mesh indices
 		command_buffer.bindIndexBuffer(
-			*model.index_buffer.handle,
+			*index_buffer_.handle,
 			0,
 			vk::IndexTypeValue<decltype(Mesh::indices)::value_type>::value
 		);
 
-		// Sets 0 and 1 from the first set on, with no dynamic offsets
+		// Set 0, with no dynamic offsets
 		command_buffer.bindDescriptorSets(
 			vk::PipelineBindPoint::eGraphics,
 			*graphics_pipeline_.pipeline_layout(),
 			0,
-			{ *frame_set, *material_set },
+			*descriptor_set,
 			{}
 		);
+
+		const std::uint32_t end_object { first_object + object_count };
+
+		// The objects share the mesh, texture and camera, so only the model matrix changes
+		for (std::uint32_t object_index { first_object }; object_index < end_object; ++object_index)
+		{
+			const ObjectConstants object_constants {
+				.model { object_transform(object_index).model_matrix() }
+			};
+			command_buffer.pushConstants<ObjectConstants>(
+				*graphics_pipeline_.pipeline_layout(),
+				vk::ShaderStageFlagBits::eVertex,
+				0,
+				object_constants
+			);
+
+			// Every index, 1 instance, starting at the first index, vertex and instance
+			command_buffer.drawIndexed(index_count_, 1, 0, 0, 0);
+		}
+
+		command_buffer.end();
 	}
 }

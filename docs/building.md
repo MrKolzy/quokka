@@ -55,10 +55,7 @@ and **C/C++ > General > Multi-processor Compilation** to `No`.
 
 **Build Events > Pre-Build Event > Command Line:**
 
-	"$(VULKAN_SDK)\Bin\slangc.exe" "$(ProjectDir)shaders\shader.slang" -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name -entry enemy_vert_main -entry player_vert_main -entry frag_main -entry ground_vert_main -entry ground_frag_main -o "$(ProjectDir)shaders\shader.spv"
-	"$(VULKAN_SDK)\Bin\slangc.exe" "$(ProjectDir)shaders\damage_numbers.slang" -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name -entry vert_main -entry total_vert_main -entry frag_main -o "$(ProjectDir)shaders\damage_numbers.spv"
-	"$(VULKAN_SDK)\Bin\slangc.exe" "$(ProjectDir)shaders\enemy_simulation.slang" -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name -entry update_main -entry selection_main -entry strike_main -entry tally_main -o "$(ProjectDir)shaders\enemy_simulation.spv"
-	"$(VULKAN_SDK)\Bin\slangc.exe" "$(ProjectDir)shaders\health_bars.slang" -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name -entry vert_main -entry frag_main -o "$(ProjectDir)shaders\health_bars.spv"
+	"$(VULKAN_SDK)\Bin\slangc.exe" "$(ProjectDir)shaders\shader.slang" -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name -entry vert_main -entry frag_main -o "$(ProjectDir)shaders\shader.spv"
 
 **Build Events > Post-Build Event > Command Line:**
 
@@ -71,16 +68,3 @@ Start Quokka from Visual Studio so the `shaders`, `models` and `textures` folder
 
 - **Debug** enables the validation layers.
 - **Release** is optimized and is the one to measure performance with.
-
-### Enemy selection
-
-- **Left click** selects a living enemy and shows its name and health at the top center.
-  Clicking empty space clears the selection. Interface clicks do not select enemies.
-- **Tab** cycles once per press through living enemies within 12 world units of the player.
-  This is the 8-unit aggro radius plus two 2-unit ground tiles. The first target is the nearest;
-  subsequent presses cycle in a stable order and wrap around, skipping enemies outside the radius.
-- Selection clears when the target dies, when the player dies, or when **R** resets the scene.
-- **TOTAL DAMAGE** appears at the right edge, vertically centered.
-
-Selection is independent of the existing abilities: Strike still hits the closest enemy in its
-forward cone, and Blast still hits the enemies in its area.

@@ -12,10 +12,9 @@ namespace quokka
 {
 	namespace
 	{
-		vk::raii::DescriptorSetLayout create_frame_descriptor_set_layout(
-			const vk::raii::Device& device)
+		vk::raii::DescriptorSetLayout create_descriptor_set_layout(const vk::raii::Device& device)
 		{
-			// Must match frame in frame.slang
+			// Must match frame in shader.slang
 			// The fragment shader also reads it, for the light and the camera position
 			constexpr vk::DescriptorSetLayoutBinding frame_binding {
 				.binding { 0 },
@@ -26,70 +25,15 @@ namespace quokka
 				}
 			};
 
-			// Must match enemies in shader.slang and damage_numbers.slang
-			constexpr vk::DescriptorSetLayoutBinding enemy_binding {
-				.binding { 1 },
-				.descriptorType { vk::DescriptorType::eStorageBuffer },
-				.descriptorCount { 1 },
-				.stageFlags { vk::ShaderStageFlagBits::eVertex }
-			};
-
-			// Must match damage_numbers in damage_numbers.slang
-			constexpr vk::DescriptorSetLayoutBinding damage_number_binding {
-				.binding { 2 },
-				.descriptorType { vk::DescriptorType::eStorageBuffer },
-				.descriptorCount { 1 },
-				.stageFlags { vk::ShaderStageFlagBits::eVertex }
-			};
-
-			// Must match combat in shader.slang
-			constexpr vk::DescriptorSetLayoutBinding combat_binding {
-				.binding { 3 },
-				.descriptorType { vk::DescriptorType::eStorageBuffer },
-				.descriptorCount { 1 },
-				.stageFlags { vk::ShaderStageFlagBits::eVertex }
-			};
-
-			constexpr std::array bindings {
-				frame_binding, enemy_binding, damage_number_binding, combat_binding
-			};
-
-			const vk::DescriptorSetLayoutCreateInfo create_info {
-				.bindingCount { static_cast<std::uint32_t>(bindings.size()) },
-				.pBindings { bindings.data() }
-			};
-
-			return device.createDescriptorSetLayout(create_info);
-		}
-
-		vk::raii::DescriptorSetLayout create_material_descriptor_set_layout(
-			const vk::raii::Device& device)
-		{
 			// Must match texture in shader.slang
 			constexpr vk::DescriptorSetLayoutBinding texture_binding {
-				.binding { 0 },
+				.binding { 1 },
 				.descriptorType { vk::DescriptorType::eCombinedImageSampler },
 				.descriptorCount { 1 },
 				.stageFlags { vk::ShaderStageFlagBits::eFragment }
 			};
 
-			// Must match joint_matrices in shader.slang
-			constexpr vk::DescriptorSetLayoutBinding joint_matrix_binding {
-				.binding { 1 },
-				.descriptorType { vk::DescriptorType::eStorageBuffer },
-				.descriptorCount { 1 },
-				.stageFlags { vk::ShaderStageFlagBits::eVertex }
-			};
-
-			// Must match animation_clips in shader.slang
-			constexpr vk::DescriptorSetLayoutBinding clip_binding {
-				.binding { 2 },
-				.descriptorType { vk::DescriptorType::eStorageBuffer },
-				.descriptorCount { 1 },
-				.stageFlags { vk::ShaderStageFlagBits::eVertex }
-			};
-
-			constexpr std::array bindings { texture_binding, joint_matrix_binding, clip_binding };
+			constexpr std::array bindings { frame_binding, texture_binding };
 
 			const vk::DescriptorSetLayoutCreateInfo create_info {
 				.bindingCount { static_cast<std::uint32_t>(bindings.size()) },
@@ -101,29 +45,21 @@ namespace quokka
 
 		vk::raii::PipelineLayout create_pipeline_layout(
 			const vk::raii::Device& device,
-			const vk::raii::DescriptorSetLayout& frame_descriptor_set_layout,
-			const vk::raii::DescriptorSetLayout& material_descriptor_set_layout)
+			const vk::raii::DescriptorSetLayout& descriptor_set_layout)
 		{
-			// In set order, so the frame set is set 0 and the material set is set 1
-			const std::array set_layouts {
-				*frame_descriptor_set_layout, *material_descriptor_set_layout
-			};
-
-			// Only the player's and the ground's draws read them, the enemies' leave them unset
-			// The ground's fragment shader reads them for the player's shadow
-			constexpr vk::PushConstantRange player_constants_range {
-				.stageFlags {
-					vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment
-				},
+			// Pushed before each draw, so more objects need no extra buffers or descriptor sets
+			constexpr vk::PushConstantRange object_constants_range {
+				.stageFlags { vk::ShaderStageFlagBits::eVertex },
 				.offset { 0 },
-				.size { sizeof(PlayerConstants) }
+				.size { sizeof(ObjectConstants) }
 			};
 
+			// A single descriptor set, set 0 in the shader
 			const vk::PipelineLayoutCreateInfo pipeline_layout_info {
-				.setLayoutCount { static_cast<std::uint32_t>(set_layouts.size()) },
-				.pSetLayouts { set_layouts.data() },
+				.setLayoutCount { 1 },
+				.pSetLayouts { &*descriptor_set_layout },
 				.pushConstantRangeCount { 1 },
-				.pPushConstantRanges { &player_constants_range }
+				.pPushConstantRanges { &object_constants_range }
 			};
 
 			return device.createPipelineLayout(pipeline_layout_info);
@@ -134,12 +70,9 @@ namespace quokka
 			const vk::raii::PipelineLayout& pipeline_layout,
 			vk::Format color_format,
 			vk::Format depth_format,
-			vk::SampleCountFlagBits sample_count,
-			const char* vertex_entry_point,
-			const char* fragment_entry_point,
-			bool reads_vertex_buffer)
+			vk::SampleCountFlagBits sample_count)
 		{
-			// Every entry point lives in the same compiled module
+			// Both entry points live in the same compiled module
 			const auto shader_code { read_shader_file(constants::shader_path) };
 			const auto shader_module { create_shader_module(device, shader_code) };
 
@@ -147,13 +80,13 @@ namespace quokka
 			const vk::PipelineShaderStageCreateInfo vertex_shader_stage_info {
 				.stage { vk::ShaderStageFlagBits::eVertex },
 				.module { *shader_module },
-				.pName { vertex_entry_point }
+				.pName { "vert_main" }
 			};
 
 			const vk::PipelineShaderStageCreateInfo fragment_shader_stage_info {
 				.stage { vk::ShaderStageFlagBits::eFragment },
 				.module { *shader_module },
-				.pName { fragment_entry_point }
+				.pName { "frag_main" }
 			};
 
 			const std::array shader_stages { vertex_shader_stage_info, fragment_shader_stage_info };
@@ -162,16 +95,14 @@ namespace quokka
 			constexpr auto binding_description { Vertex::binding_description() };
 			constexpr auto attribute_descriptions { Vertex::attribute_descriptions() };
 
-			// Without a vertex buffer, the vertex shader makes the vertices from their index
-			vk::PipelineVertexInputStateCreateInfo vertex_input_info {};
-			if (reads_vertex_buffer)
-			{
-				vertex_input_info.vertexBindingDescriptionCount = 1;
-				vertex_input_info.pVertexBindingDescriptions = &binding_description;
-				vertex_input_info.vertexAttributeDescriptionCount =
-					static_cast<std::uint32_t>(attribute_descriptions.size());
-				vertex_input_info.pVertexAttributeDescriptions = attribute_descriptions.data();
-			}
+			const vk::PipelineVertexInputStateCreateInfo vertex_input_info {
+				.vertexBindingDescriptionCount { 1 },
+				.pVertexBindingDescriptions { &binding_description },
+				.vertexAttributeDescriptionCount {
+					static_cast<std::uint32_t>(attribute_descriptions.size())
+				},
+				.pVertexAttributeDescriptions { attribute_descriptions.data() }
+			};
 
 			constexpr vk::PipelineInputAssemblyStateCreateInfo input_assembly_info {
 				.topology { vk::PrimitiveTopology::eTriangleList }
@@ -279,64 +210,24 @@ namespace quokka
 		vk::Format color_format,
 		vk::Format depth_format,
 		vk::SampleCountFlagBits sample_count)
-		: frame_descriptor_set_layout_ {
-			create_frame_descriptor_set_layout(device.logical_device())
-		}
-		, material_descriptor_set_layout_ {
-			create_material_descriptor_set_layout(device.logical_device())
-		}
+		: descriptor_set_layout_ { create_descriptor_set_layout(device.logical_device()) }
 		, pipeline_layout_ {
-			create_pipeline_layout(
-				device.logical_device(),
-				frame_descriptor_set_layout_,
-				material_descriptor_set_layout_)
+			create_pipeline_layout(device.logical_device(), descriptor_set_layout_)
 		}
-		, enemy_pipeline_ {
+		, graphics_pipeline_ {
 			create_graphics_pipeline(
 				device.logical_device(),
 				pipeline_layout_,
 				color_format,
 				depth_format,
-				sample_count,
-				"enemy_vert_main",
-				"frag_main",
-				true)
-		}
-		, player_pipeline_ {
-			create_graphics_pipeline(
-				device.logical_device(),
-				pipeline_layout_,
-				color_format,
-				depth_format,
-				sample_count,
-				"player_vert_main",
-				"frag_main",
-				true)
-		}
-		, ground_pipeline_ {
-			create_graphics_pipeline(
-				device.logical_device(),
-				pipeline_layout_,
-				color_format,
-				depth_format,
-				sample_count,
-				"ground_vert_main",
-				"ground_frag_main",
-				false)
+				sample_count)
 		}
 	{
 	}
 
-	const vk::raii::DescriptorSetLayout& GraphicsPipeline::frame_descriptor_set_layout()
-		const noexcept
+	const vk::raii::DescriptorSetLayout& GraphicsPipeline::descriptor_set_layout() const noexcept
 	{
-		return frame_descriptor_set_layout_;
-	}
-
-	const vk::raii::DescriptorSetLayout& GraphicsPipeline::material_descriptor_set_layout()
-		const noexcept
-	{
-		return material_descriptor_set_layout_;
+		return descriptor_set_layout_;
 	}
 
 	const vk::raii::PipelineLayout& GraphicsPipeline::pipeline_layout() const noexcept
@@ -344,18 +235,8 @@ namespace quokka
 		return pipeline_layout_;
 	}
 
-	const vk::raii::Pipeline& GraphicsPipeline::enemy_pipeline() const noexcept
+	const vk::raii::Pipeline& GraphicsPipeline::handle() const noexcept
 	{
-		return enemy_pipeline_;
-	}
-
-	const vk::raii::Pipeline& GraphicsPipeline::player_pipeline() const noexcept
-	{
-		return player_pipeline_;
-	}
-
-	const vk::raii::Pipeline& GraphicsPipeline::ground_pipeline() const noexcept
-	{
-		return ground_pipeline_;
+		return graphics_pipeline_;
 	}
 }

@@ -49,7 +49,7 @@ namespace quokka
 
 		vk::raii::Device logical_device_;
 
-		// Handles graphics, compute and present, and is implicitly destroyed with the device
+		// Handles graphics and present, and is implicitly destroyed with the device
 		vk::raii::Queue queue_;
 	};
 }

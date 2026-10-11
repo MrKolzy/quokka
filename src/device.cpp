@@ -195,8 +195,6 @@ namespace quokka
 			{
 				// One family for everything means a single queue, and nearly every GPU has one
 				if ((queue_families[index].queueFlags & vk::QueueFlagBits::eGraphics) &&
-					// For the enemy simulation, which runs on the same queue as the drawing
-					(queue_families[index].queueFlags & vk::QueueFlagBits::eCompute) &&
 					// Timestamps without valid bits are meaningless
 					queue_families[index].timestampValidBits > 0 &&
 					physical_device.getSurfaceSupportKHR(index, *surface))

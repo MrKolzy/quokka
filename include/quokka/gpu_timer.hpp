@@ -12,7 +12,6 @@ namespace quokka
 	{
 		// In the order they're written every frame, so each phase lasts until the next one
 		frame_start,
-		enemies_updated,
 		frame_end,
 
 		// Not a timestamp, but how many there are
@@ -21,7 +20,6 @@ namespace quokka
 
 	struct GpuFrameTimes
 	{
-		double enemy_update_ms;
 		double total_ms;
 	};
 

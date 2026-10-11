@@ -29,30 +29,10 @@ namespace quokka
 				return GLFW_KEY_D;
 			case Key::e:
 				return GLFW_KEY_E;
-			case Key::f2:
-				return GLFW_KEY_F2;
-			case Key::f3:
-				return GLFW_KEY_F3;
-			case Key::five:
-				return GLFW_KEY_5;
-			case Key::four:
-				return GLFW_KEY_4;
-			case Key::one:
-				return GLFW_KEY_1;
 			case Key::q:
 				return GLFW_KEY_Q;
-			case Key::r:
-				return GLFW_KEY_R;
 			case Key::s:
 				return GLFW_KEY_S;
-			case Key::space:
-				return GLFW_KEY_SPACE;
-			case Key::tab:
-				return GLFW_KEY_TAB;
-			case Key::three:
-				return GLFW_KEY_3;
-			case Key::two:
-				return GLFW_KEY_2;
 			case Key::w:
 				return GLFW_KEY_W;
 			}
@@ -61,7 +41,7 @@ namespace quokka
 			std::unreachable();
 		}
 
-		[[nodiscard]] glm::dvec2 glfw_cursor_position(GLFWwindow* window) noexcept
+		[[nodiscard]] glm::dvec2 cursor_position(GLFWwindow* window) noexcept
 		{
 			glm::dvec2 position {};
 			glfwGetCursorPos(window, &position.x, &position.y);
@@ -97,7 +77,6 @@ namespace quokka
 		// Lets the static callback recover the Window from the GLFW window handle
 		glfwSetWindowUserPointer(handle_, this);
 		glfwSetFramebufferSizeCallback(handle_, &framebuffer_size_callback);
-		glfwSetScrollCallback(handle_, &scroll_callback);
 
 		// Only applies while the cursor is captured, and skips the pointer acceleration of the OS
 		if (glfwRawMouseMotionSupported())
@@ -166,13 +145,9 @@ namespace quokka
 		return glfwGetKey(handle_, glfw_key(key)) == GLFW_PRESS;
 	}
 
-	bool Window::is_mouse_button_pressed(MouseButton button) const noexcept
+	bool Window::is_right_mouse_button_pressed() const noexcept
 	{
-		const int glfw_button {
-			button == MouseButton::left ? GLFW_MOUSE_BUTTON_LEFT : GLFW_MOUSE_BUTTON_RIGHT
-		};
-
-		return glfwGetMouseButton(handle_, glfw_button) == GLFW_PRESS;
+		return glfwGetMouseButton(handle_, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
 	}
 
 	bool Window::is_cursor_captured() const noexcept
@@ -189,35 +164,12 @@ namespace quokka
 		);
 
 		// Changing the mode moves the cursor, which must not count as an offset
-		previous_cursor_position_ = glfw_cursor_position(handle_);
+		previous_cursor_position_ = cursor_position(handle_);
 	}
 
 	glm::vec2 Window::cursor_offset() const noexcept
 	{
 		return cursor_offset_;
-	}
-
-	glm::vec2 Window::cursor_clip_position() const noexcept
-	{
-		int width {};
-		int height {};
-		glfwGetWindowSize(handle_, &width, &height);
-		if (width <= 0 || height <= 0)
-		{
-			return glm::vec2 { 0.0f };
-		}
-
-		const glm::vec2 position { glfw_cursor_position(handle_) };
-
-		return {
-			2.0f * position.x / static_cast<float>(width) - 1.0f,
-			1.0f - 2.0f * position.y / static_cast<float>(height)
-		};
-	}
-
-	float Window::scroll_offset() const noexcept
-	{
-		return scroll_offset_;
 	}
 
 	void Window::set_title(const std::string& title) noexcept
@@ -227,11 +179,9 @@ namespace quokka
 
 	void Window::poll_events() noexcept
 	{
-		// Before the events, since the callback adds this poll's scrolling to it
-		scroll_offset_ = 0.0f;
 		glfwPollEvents();
 
-		const glm::dvec2 position { glfw_cursor_position(handle_) };
+		const glm::dvec2 position { cursor_position(handle_) };
 		cursor_offset_ = glm::vec2 { position - previous_cursor_position_ };
 		previous_cursor_position_ = position;
 	}
@@ -256,11 +206,5 @@ namespace quokka
 		// The engine queries the new size itself when recreating the swapchain
 		auto* self { static_cast<Window*>(glfwGetWindowUserPointer(window)) };
 		self->was_resized_ = true;
-	}
-
-	void Window::scroll_callback(GLFWwindow* window, double, double y_offset) noexcept
-	{
-		auto* self { static_cast<Window*>(glfwGetWindowUserPointer(window)) };
-		self->scroll_offset_ += static_cast<float>(y_offset);
 	}
 }

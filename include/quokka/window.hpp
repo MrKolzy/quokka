@@ -16,25 +16,9 @@ namespace quokka
 		a,
 		d,
 		e,
-		f2,
-		f3,
-		five,
-		four,
-		one,
 		q,
-		r,
 		s,
-		space,
-		tab,
-		three,
-		two,
 		w
-	};
-
-	enum class MouseButton
-	{
-		left,
-		right
 	};
 
 	class Window
@@ -65,7 +49,7 @@ namespace quokka
 
 		// Held down as of the last poll_events
 		[[nodiscard]] bool is_key_pressed(Key key) const noexcept;
-		[[nodiscard]] bool is_mouse_button_pressed(MouseButton button) const noexcept;
+		[[nodiscard]] bool is_right_mouse_button_pressed() const noexcept;
 
 		// A captured cursor is hidden and moves without limits, so it can turn the camera
 		[[nodiscard]] bool is_cursor_captured() const noexcept;
@@ -73,12 +57,6 @@ namespace quokka
 
 		// In pixels, since the previous poll_events
 		[[nodiscard]] glm::vec2 cursor_offset() const noexcept;
-
-		// In clip coordinates, with y up, independent of framebuffer scaling
-		[[nodiscard]] glm::vec2 cursor_clip_position() const noexcept;
-
-		// In wheel notches since the previous poll_events, positive when scrolled forward
-		[[nodiscard]] float scroll_offset() const noexcept;
 
 		void set_title(const std::string& title) noexcept;
 
@@ -92,15 +70,11 @@ namespace quokka
 
 	private:
 		static void framebuffer_size_callback(GLFWwindow* window, int width, int height) noexcept;
-		static void scroll_callback(GLFWwindow* window, double x_offset, double y_offset) noexcept;
 
 		GLFWwindow* handle_ { nullptr };
 		bool was_resized_ { false };
 
 		glm::dvec2 previous_cursor_position_ {};
 		glm::vec2 cursor_offset_ {};
-
-		// Added up by the scroll callback, which can run several times per poll
-		float scroll_offset_ {};
 	};
 }
