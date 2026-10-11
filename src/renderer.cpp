@@ -46,10 +46,10 @@ namespace quokka
 			float shininess;
 
 			glm::vec2 viewport_size;
-			glm::vec2 aim_point;
+			glm::vec2 blast_center;
 			float time;
 			float last_blast_time;
-			glm::vec2 last_blast_point;
+			glm::vec2 quake_point;
 		};
 
 		// Two matrices and five groups of 16 bytes, so nothing was padded in between
@@ -582,10 +582,10 @@ namespace quokka
 			.light_color { light.color },
 			.shininess { light.shininess },
 			.viewport_size { viewport_size },
-			.aim_point { player.aim_point() },
+			.blast_center { player.position() },
 			.time { time_seconds },
 			.last_blast_time { player.last_blast_time() },
-			.last_blast_point { player.last_blast_point() }
+			.quake_point { player.quake_point() }
 		};
 
 		std::memcpy(mapped_memory, &frame_uniforms, sizeof(frame_uniforms));
@@ -716,14 +716,16 @@ namespace quokka
 
 		// Each thread records its share of the objects into its own secondary command buffer,
 		// and run returns once all of them are done
-		recording_threads_.run([this, &descriptor_set](std::uint32_t thread_index)
+		// Only the current level's enemies, the slots past them are never used
+		const std::uint32_t enemy_count { enemy_simulation_.enemy_count() };
+		recording_threads_.run([this, &descriptor_set, enemy_count](std::uint32_t thread_index)
 		{
 			// Contiguous shares, as even as possible
 			const std::uint32_t first_object {
-				constants::enemy_count * thread_index / constants::recording_thread_count
+				enemy_count * thread_index / constants::recording_thread_count
 			};
 			const std::uint32_t end_object {
-				constants::enemy_count * (thread_index + 1) / constants::recording_thread_count
+				enemy_count * (thread_index + 1) / constants::recording_thread_count
 			};
 
 			record_object_draws(
@@ -812,7 +814,12 @@ namespace quokka
 		command_buffer.beginRendering(rendering_info);
 
 		// First, so the damage numbers rising from the enemies cover their bars
-		health_bars_.record_draw(command_buffer, descriptor_set, swapchain_.extent());
+		health_bars_.record_draw(
+			command_buffer,
+			descriptor_set,
+			swapchain_.extent(),
+			enemy_simulation_.enemy_count()
+		);
 
 		if (damage_numbers_.has_visible_numbers(time_seconds))
 		{
@@ -909,13 +916,14 @@ namespace quokka
 
 		const AnimationState animation { player.animation(time_seconds) };
 
-		// The ground also reads them, for the player's shadow
+		// The ground also reads them, for the player's shadow and the sword's range
 		const PlayerConstants player_constants {
 			.position { player.position() },
 			.yaw { player.yaw() },
 			.last_hit_time { player.last_hit_time() },
 			.animation_clip { static_cast<std::uint32_t>(animation.clip) },
-			.animation_time { animation.time }
+			.animation_time { animation.time },
+			.strike_range_time { player.strike_range_time() }
 		};
 		command_buffer.pushConstants<PlayerConstants>(
 			*graphics_pipeline_.pipeline_layout(),

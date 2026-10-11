@@ -49,17 +49,6 @@ namespace quokka
 		return glm::perspective(field_of_view, aspect_ratio, near_plane, far_plane);
 	}
 
-	glm::vec3 Camera::ray_direction(glm::vec2 point, float aspect_ratio) const noexcept
-	{
-		// Undoes the projection and the view for the point on the far plane, where depth is 1
-		const glm::mat4 inverse_view_projection {
-			glm::inverse(projection_matrix(aspect_ratio) * view_matrix())
-		};
-		const glm::vec4 far_point { inverse_view_projection * glm::vec4 { point, 1.0f, 1.0f } };
-
-		return glm::normalize(glm::vec3 { far_point } / far_point.w - position_);
-	}
-
 	void Camera::move(const glm::vec3& offset) noexcept
 	{
 		position_ += right() * offset.x + world_up * offset.y + forward() * offset.z;

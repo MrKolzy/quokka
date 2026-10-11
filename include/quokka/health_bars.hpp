@@ -2,6 +2,8 @@
 
 #include <vulkan/vulkan_raii.hpp>
 
+#include <cstdint> // std::uint32_t
+
 namespace quokka
 {
 	class Device;
@@ -21,11 +23,13 @@ namespace quokka
 		HealthBars(HealthBars&&) = delete;
 		HealthBars& operator=(HealthBars&&) = delete;
 
-		// Inside a rendering with one sample and no depth, after this frame's simulation
+		// Inside a rendering with one sample and no depth, after this frame's simulation,
+		// for the first enemy_count enemies
 		void record_draw(
 			const vk::raii::CommandBuffer& command_buffer,
 			const vk::raii::DescriptorSet& descriptor_set,
-			vk::Extent2D extent) const;
+			vk::Extent2D extent,
+			std::uint32_t enemy_count) const;
 
 	private:
 		// Each member uses the ones above it and is destroyed before them, so don't reorder

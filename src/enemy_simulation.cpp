@@ -3,6 +3,7 @@
 #include "quokka/barrier.hpp"
 #include "quokka/constants.hpp"
 #include "quokka/device.hpp"
+#include "quokka/level.hpp"
 #include "quokka/shader_module.hpp"
 
 #include <array> // std::array
@@ -22,7 +23,7 @@ namespace quokka
 			glm::vec2 target;
 			float delta_seconds;
 			std::uint32_t enemy_count;
-			glm::vec2 aim_point;
+			glm::vec2 facing;
 			float time;
 			std::uint32_t casts;
 
@@ -33,6 +34,21 @@ namespace quokka
 
 			// 0 or 1, the enemies stop attacking a dead target
 			std::uint32_t is_target_alive;
+
+			// The shader aligns float3 to 16 bytes
+			glm::vec2 selection_alignment;
+			glm::vec3 selection_origin;
+			std::uint32_t selection_mode;
+			glm::vec3 selection_direction;
+			std::uint32_t selection_padding;
+
+			glm::vec2 quake_center;
+			glm::vec2 quake_damage;
+			float quake_front;
+			float quake_advance;
+
+			// From the level's difficulty
+			std::uint32_t attack_damage;
 		};
 
 		[[nodiscard]] glm::vec2 damage_range(Ability ability) noexcept
@@ -40,23 +56,62 @@ namespace quokka
 			return { ability_info(ability).min_damage, ability_info(ability).max_damage };
 		}
 
-		// Cast flags, must match blast_cast and test_cast in enemy_simulation.slang
-		// The strike has no flag, since it's a dispatch of its own
+		// Cast flags, must match the cast flags in enemy_simulation.slang
+		// The throw has no flag, since it's a dispatch of its own, but its landing has one
 		constexpr std::uint32_t blast_cast { 1 };
 		constexpr std::uint32_t test_cast { 2 };
+		constexpr std::uint32_t hook_cast { 4 };
 
 		struct CombatState
 		{
 			// Must match CombatState in enemy.slang
 			// The first three are cleared before every update, the rest are kept between frames
-			std::uint32_t target_key;
 			std::uint32_t frame_damage;
 			std::uint32_t player_damage;
+			std::uint32_t frame_hits;
 			std::uint32_t spawned_number_count;
 			std::uint32_t total_damage;
 			std::uint32_t previous_total_damage;
 			float last_total_hit_time;
+			float hook_time;
+			glm::vec2 selected_position;
+			std::uint32_t selected_index;
+			float selected_health;
+			glm::vec2 hook_point;
+			std::uint32_t hook_index;
+			std::uint32_t alive_count;
 		};
+
+		// Three runs of CombatState, for combat feedback, the target panel and the level's progress
+		struct Readback
+		{
+			std::uint32_t player_damage;
+			std::uint32_t frame_hits;
+			glm::vec2 selected_position;
+			std::uint32_t selected_index;
+			float selected_health;
+			std::uint32_t alive_count;
+		};
+
+		static_assert(
+			offsetof(CombatState, frame_hits) == offsetof(CombatState, player_damage) + 4);
+		static_assert(
+			offsetof(CombatState, selected_index) == offsetof(CombatState, selected_position) + 8);
+		static_assert(
+			offsetof(CombatState, selected_health) == offsetof(CombatState, selected_index) + 4);
+
+		// Within the 128 bytes of push constants every device supports
+		static_assert(sizeof(SimulationConstants) == 124);
+		static_assert(offsetof(SimulationConstants, quake_center) == 96);
+		static_assert(offsetof(SimulationConstants, selection_origin) == 64);
+		static_assert(offsetof(SimulationConstants, selection_mode) == 76);
+		static_assert(offsetof(SimulationConstants, selection_direction) == 80);
+		// The shader aligns float2 to 8 bytes
+		static_assert(sizeof(CombatState) == 64);
+		static_assert(offsetof(CombatState, selected_position) == 32);
+		static_assert(offsetof(CombatState, hook_point) == 48);
+		static_assert(offsetof(CombatState, alive_count) == 60);
+		static_assert(sizeof(Readback) == 28);
 
 		// Must match workgroup_size in enemy_simulation.slang
 		constexpr std::uint32_t workgroup_size { 64 };
@@ -73,51 +128,55 @@ namespace quokka
 		// in enemy.slang
 		constexpr float enemy_health { 1000.0f };
 
-		// The smallest side whose square holds the count, so the last row may be incomplete
-		[[nodiscard]] constexpr std::uint32_t square_side(std::uint32_t count) noexcept
+		// Each pack a square grid on the ground around its center, each enemy turned differently,
+		// then dead enemies up to the buffer's size, which the level never simulates or draws
+		[[nodiscard]] std::vector<EnemyState> level_start_states(const Level& level)
 		{
-			std::uint32_t side { 1 };
-			while (side * side < count)
-			{
-				++side;
-			}
-
-			return side;
-		}
-
-		constexpr std::uint32_t grid_side { square_side(constants::enemy_count) };
-
-		// Between the centers of neighbors at the start, a bit more than the width of the model
-		constexpr float grid_spacing { 2.0f };
-
-		// A square grid on the ground centered at the origin, each enemy turned differently
-		[[nodiscard]] std::vector<EnemyState> initial_grid()
-		{
-			const float grid_offset { static_cast<float>(grid_side - 1) * grid_spacing / 2.0f };
-
 			std::vector<EnemyState> states {};
 			states.reserve(constants::enemy_count);
 
-			for (std::uint32_t index { 0 }; index < constants::enemy_count; ++index)
+			for (const EnemyPack& pack : level.packs)
 			{
-				const std::uint32_t row { index / grid_side };
-				const std::uint32_t column { index % grid_side };
+				const std::uint32_t side { square_side(pack.count) };
+				const float offset { pack_half_size(pack.count) };
 
-				states.push_back({
-					.position {
-						static_cast<float>(column) * grid_spacing - grid_offset,
-						static_cast<float>(row) * grid_spacing - grid_offset
-					},
-					.yaw { static_cast<float>(index) * glm::radians(40.0f) },
-					.flags { 0 },
-					.health { enemy_health },
-					// Never hit, so there's no flash
-					.last_hit_time { constants::long_ago },
-					// Ready to attack as soon as the player is in reach, and never attacked
-					.next_attack_time { 0.0f },
-					.last_attack_time { constants::long_ago }
-				});
+				for (std::uint32_t index { 0 }; index < pack.count; ++index)
+				{
+					const std::uint32_t row { index / side };
+					const std::uint32_t column { index % side };
+					const auto state_index { static_cast<float>(states.size()) };
+
+					states.push_back({
+						.position {
+							pack.center.x + static_cast<float>(column) * pack_spacing - offset,
+							pack.center.y + static_cast<float>(row) * pack_spacing - offset
+						},
+						.yaw { state_index * glm::radians(40.0f) },
+						.flags { 0 },
+						.health { enemy_health },
+						// Never hit, so there's no flash
+						.last_hit_time { constants::long_ago },
+						// Ready to attack as soon as the player is in reach, and never attacked
+						.next_attack_time { 0.0f },
+						.last_attack_time { constants::long_ago },
+						.knockback { 0.0f }
+					});
+				}
 			}
+
+			// Died long ago, so the shaders would show them fully sunk
+			states.resize(
+				constants::enemy_count,
+				EnemyState {
+					.position { 0.0f },
+					.yaw { 0.0f },
+					.flags { 0 },
+					.health { 0.0f },
+					.last_hit_time { constants::long_ago },
+					.next_attack_time { 0.0f },
+					.last_attack_time { constants::long_ago },
+					.knockback { 0.0f }
+				});
 
 			return states;
 		}
@@ -221,6 +280,9 @@ namespace quokka
 		, update_pipeline_ {
 			create_pipeline(device.logical_device(), pipeline_layout_, "update_main")
 		}
+		, selection_pipeline_ {
+			create_pipeline(device.logical_device(), pipeline_layout_, "selection_main")
+		}
 		, strike_pipeline_ {
 			create_pipeline(device.logical_device(), pipeline_layout_, "strike_main")
 		}
@@ -232,30 +294,62 @@ namespace quokka
 		create_descriptor_set(device, damage_number_buffer);
 	}
 
-	glm::vec2 EnemySimulation::player_start() noexcept
+	void EnemySimulation::start_level(std::size_t level_index) noexcept
 	{
-		// Along the diagonal, so the distance to the corner enemy is sqrt 2 times this margin,
-		// which must stay above aggro_radius in enemy_simulation.slang
-		constexpr float corner_margin { 8.0f };
-		constexpr float corner_offset {
-			static_cast<float>(grid_side - 1) * grid_spacing / 2.0f + corner_margin
-		};
+		level_index_ = level_index;
+		should_reset_ = true;
+		selection_mode_ = 3;
+		selected_enemy_ = {};
+		player_damage_ = 0;
+		hit_count_ = 0;
+		alive_count_ = enemy_count();
 
-		return { corner_offset, corner_offset };
+		// The frames in flight still update the previous enemies, so their readbacks are ignored
+		for (std::uint32_t index { 0 }; index < constants::max_frames_in_flight; ++index)
+		{
+			has_readback_[index] = false;
+		}
+	}
+
+	std::uint32_t EnemySimulation::enemy_count() const noexcept
+	{
+		return level_enemy_count(levels[level_index_]);
+	}
+
+	std::uint32_t EnemySimulation::alive_count() const noexcept
+	{
+		return alive_count_;
 	}
 
 	void EnemySimulation::prepare_update(
 		glm::vec2 target,
-		glm::vec2 aim_point,
+		glm::vec2 facing,
 		bool is_target_alive,
 		float delta_seconds,
 		float time_seconds) noexcept
 	{
 		target_ = target;
-		aim_point_ = aim_point;
+		facing_ = facing;
 		is_target_alive_ = is_target_alive;
 		delta_seconds_ = delta_seconds;
 		time_seconds_ = time_seconds;
+	}
+
+	void EnemySimulation::select_enemy(glm::vec3 origin, glm::vec3 direction) noexcept
+	{
+		selection_origin_ = origin;
+		selection_direction_ = direction;
+		selection_mode_ = 1;
+	}
+
+	void EnemySimulation::cycle_enemy() noexcept
+	{
+		selection_mode_ = 2;
+	}
+
+	SelectedEnemy EnemySimulation::selected_enemy() const noexcept
+	{
+		return selected_enemy_;
 	}
 
 	void EnemySimulation::cast(Ability ability) noexcept
@@ -273,14 +367,21 @@ namespace quokka
 		}
 	}
 
+	void EnemySimulation::land_hook() noexcept
+	{
+		is_hook_landing_ = true;
+	}
+
+	void EnemySimulation::spread_quake(glm::vec2 center, float front, float advance) noexcept
+	{
+		quake_center_ = center;
+		quake_front_ = front;
+		quake_advance_ += advance;
+	}
+
 	void EnemySimulation::cast_test_hits() noexcept
 	{
 		is_test_cast_ = true;
-	}
-
-	void EnemySimulation::reset() noexcept
-	{
-		should_reset_ = true;
 	}
 
 	const Buffer& EnemySimulation::state_buffer() const noexcept
@@ -295,17 +396,33 @@ namespace quokka
 
 	void EnemySimulation::collect(std::uint32_t frame_index) noexcept
 	{
-		auto* const player_damage { static_cast<std::uint32_t*>(mapped_readbacks_[frame_index]) };
-		player_damage_ += *player_damage;
+		if (!has_readback_[frame_index])
+		{
+			return;
+		}
+		has_readback_[frame_index] = false;
+
+		auto* const readback { static_cast<Readback*>(mapped_readbacks_[frame_index]) };
+		player_damage_ += readback->player_damage;
+		hit_count_ += readback->frame_hits;
+		selected_enemy_ = {
+			readback->selected_index, readback->selected_health, readback->selected_position
+		};
+		alive_count_ = readback->alive_count;
 
 		// A frame that returns before recording leaves its copy unwritten, and the next wait
 		// on the same fence would otherwise count it twice
-		*player_damage = 0;
+		*readback = Readback {};
 	}
 
 	std::uint32_t EnemySimulation::take_player_damage() noexcept
 	{
 		return std::exchange(player_damage_, 0u);
+	}
+
+	std::uint32_t EnemySimulation::take_hit_count() noexcept
+	{
+		return std::exchange(hit_count_, 0u);
 	}
 
 	void EnemySimulation::record_update(
@@ -323,8 +440,8 @@ namespace quokka
 			vk::AccessFlagBits2::eTransferRead | vk::AccessFlagBits2::eTransferWrite
 		);
 
-		// From the starting grid after a reset, so the update starts over from there
-		const Buffer& source { should_reset_ ? initial_states_ : states_ };
+		// From where the level starts after start_level, so the update starts over from there
+		const Buffer& source { should_reset_ ? level_states_[level_index_] : states_ };
 		should_reset_ = false;
 
 		command_buffer.copyBuffer(
@@ -333,18 +450,20 @@ namespace quokka
 			vk::BufferCopy { .srcOffset { 0 }, .dstOffset { 0 }, .size { states_size } }
 		);
 
-		// Nobody bid to be the target yet, and the bids keep the smallest key
-		// No hits or attacks yet either, which add their damage to the frame's
-		command_buffer.fillBuffer(
-			*combat_.handle,
-			offsetof(CombatState, target_key),
-			sizeof(CombatState::target_key),
-			no_target
-		);
+		// No hits or attacks yet, which add their damage to the frame's
 		command_buffer.fillBuffer(
 			*combat_.handle,
 			offsetof(CombatState, frame_damage),
-			sizeof(CombatState::frame_damage) + sizeof(CombatState::player_damage),
+			sizeof(CombatState::frame_damage) + sizeof(CombatState::player_damage) +
+				sizeof(CombatState::frame_hits),
+			0
+		);
+
+		// Every living enemy adds itself during the update
+		command_buffer.fillBuffer(
+			*combat_.handle,
+			offsetof(CombatState, alive_count),
+			sizeof(CombatState::alive_count),
 			0
 		);
 
@@ -369,17 +488,33 @@ namespace quokka
 			{}
 		);
 
+		const Level& level { levels[level_index_] };
+		const std::uint32_t enemy_count { level_enemy_count(level) };
+
 		const SimulationConstants simulation_constants {
 			.target { target_ },
 			.delta_seconds { delta_seconds_ },
-			.enemy_count { constants::enemy_count },
-			.aim_point { aim_point_ },
+			.enemy_count { enemy_count },
+			.facing { facing_ },
 			.time { time_seconds_ },
-			.casts { (is_blast_cast_ ? blast_cast : 0) | (is_test_cast_ ? test_cast : 0) },
+			.casts {
+				(is_blast_cast_ ? blast_cast : 0) | (is_test_cast_ ? test_cast : 0) |
+				(is_hook_landing_ ? hook_cast : 0)
+			},
 			.strike_damage { damage_range(Ability::strike) },
 			.blast_damage { damage_range(Ability::blast) },
 			.critical_chance { critical_chance },
-			.is_target_alive { is_target_alive_ ? 1u : 0u }
+			.is_target_alive { is_target_alive_ ? 1u : 0u },
+			.selection_alignment { 0.0f },
+			.selection_origin { selection_origin_ },
+			.selection_mode { selection_mode_ },
+			.selection_direction { selection_direction_ },
+			.selection_padding { 0 },
+			.quake_center { quake_center_ },
+			.quake_damage { quake_min_damage, quake_max_damage },
+			.quake_front { quake_front_ },
+			.quake_advance { quake_advance_ },
+			.attack_damage { enemy_attack_damage(level.difficulty) }
 		};
 		command_buffer.pushConstants<SimulationConstants>(
 			*pipeline_layout_,
@@ -389,10 +524,15 @@ namespace quokka
 		);
 
 		// One thread per enemy, rounded up to whole workgroups
-		constexpr std::uint32_t workgroup_count {
-			(constants::enemy_count + workgroup_size - 1) / workgroup_size
+		const std::uint32_t workgroup_count {
+			(enemy_count + workgroup_size - 1) / workgroup_size
 		};
 		command_buffer.dispatch(workgroup_count, 1, 1);
+
+		record_compute_to_compute_barrier(command_buffer);
+		command_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, *selection_pipeline_);
+		command_buffer.dispatch(1, 1, 1);
+		selection_mode_ = 0;
 
 		// Only once every enemy has moved and bid, so the strike reads the final target
 		// The push constants and the set stay bound, since the layout is the same
@@ -403,17 +543,16 @@ namespace quokka
 			command_buffer.dispatch(1, 1, 1);
 		}
 
-		// Without a cast nothing was hit, so there's nothing to add to the total
-		if (is_blast_cast_ || is_strike_cast_ || is_test_cast_)
-		{
-			record_compute_to_compute_barrier(command_buffer);
-			command_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, *tally_pipeline_);
-			command_buffer.dispatch(1, 1, 1);
-		}
+		// Also refreshes the selected health after the strike, even on frames without a hit
+		record_compute_to_compute_barrier(command_buffer);
+		command_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, *tally_pipeline_);
+		command_buffer.dispatch(1, 1, 1);
 
 		is_blast_cast_ = false;
 		is_strike_cast_ = false;
 		is_test_cast_ = false;
+		is_hook_landing_ = false;
+		quake_advance_ = 0.0f;
 
 		// The scene and the damage numbers read the new states, the numbers spawned and the total
 		// in their vertex shaders, and the copy below reads the damage dealt to the player
@@ -425,15 +564,29 @@ namespace quokka
 			vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eTransferRead
 		);
 
-		command_buffer.copyBuffer(
-			*combat_.handle,
-			*readback_buffers_[frame_index].handle,
+		const std::array readback_regions {
 			vk::BufferCopy {
 				.srcOffset { offsetof(CombatState, player_damage) },
 				.dstOffset { 0 },
-				.size { sizeof(CombatState::player_damage) }
+				.size { 2 * sizeof(std::uint32_t) }
+			},
+			vk::BufferCopy {
+				.srcOffset { offsetof(CombatState, selected_position) },
+				.dstOffset { offsetof(Readback, selected_position) },
+				.size { sizeof(glm::vec2) + sizeof(std::uint32_t) + sizeof(float) }
+			},
+			vk::BufferCopy {
+				.srcOffset { offsetof(CombatState, alive_count) },
+				.dstOffset { offsetof(Readback, alive_count) },
+				.size { sizeof(std::uint32_t) }
 			}
+		};
+		command_buffer.copyBuffer(
+			*combat_.handle,
+			*readback_buffers_[frame_index].handle,
+			readback_regions
 		);
+		has_readback_[frame_index] = true;
 
 		// Read by collect once this frame's fence is signaled, which also needs this barrier
 		// to make the copy visible to the host
@@ -456,24 +609,30 @@ namespace quokka
 
 		const auto command_pool { device.logical_device().createCommandPool(pool_info) };
 
-		const std::vector<EnemyState> grid { initial_grid() };
-		const auto grid_bytes { std::as_bytes(std::span { grid }) };
-
 		// Only ever copied from
-		initial_states_ = create_device_local_buffer(
-			device,
-			command_pool,
-			grid_bytes,
-			vk::BufferUsageFlagBits::eTransferSrc
-		);
+		level_states_.reserve(levels.size());
+		for (const Level& level : levels)
+		{
+			const std::vector<EnemyState> start_states { level_start_states(level) };
+
+			level_states_.push_back(create_device_local_buffer(
+				device,
+				command_pool,
+				std::as_bytes(std::span { start_states }),
+				vk::BufferUsageFlagBits::eTransferSrc
+			));
+		}
 
 		// Updated by the compute shader, read by the vertex shaders and copied every frame
+		// It starts as the first level, which is where the game starts
+		const std::vector<EnemyState> first_states { level_start_states(levels[level_index_]) };
 		states_ = create_device_local_buffer(
 			device,
 			command_pool,
-			grid_bytes,
+			std::as_bytes(std::span { first_states }),
 			vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc
 		);
+		alive_count_ = enemy_count();
 
 		// Filled by the first update's copy, so it needs no contents yet
 		previous_states_ = create_buffer(
@@ -486,13 +645,20 @@ namespace quokka
 		// No numbers spawned and no total yet, which no hit ever reached
 		// The fields cleared every update are filled again before they're read
 		const CombatState initial_combat {
-			.target_key { no_target },
 			.frame_damage { 0 },
 			.player_damage { 0 },
+			.frame_hits { 0 },
 			.spawned_number_count { 0 },
 			.total_damage { 0 },
 			.previous_total_damage { 0 },
-			.last_total_hit_time { constants::long_ago }
+			.last_total_hit_time { constants::long_ago },
+			.hook_time { constants::long_ago },
+			.selected_position { 0.0f },
+			.selected_index { no_target },
+			.selected_health { 0.0f },
+			.hook_point { 0.0f },
+			.hook_index { no_target },
+			.alive_count { 0 }
 		};
 
 		// Also a fill destination, which create_device_local_buffer allows for its upload,
@@ -509,6 +675,7 @@ namespace quokka
 			vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent
 		};
 
+		has_readback_.resize(constants::max_frames_in_flight, false);
 		readback_buffers_.reserve(constants::max_frames_in_flight);
 		mapped_readbacks_.reserve(constants::max_frames_in_flight);
 
@@ -516,7 +683,7 @@ namespace quokka
 		{
 			readback_buffers_.push_back(create_buffer(
 				device,
-				sizeof(CombatState::player_damage),
+				sizeof(Readback),
 				vk::BufferUsageFlagBits::eTransferDst,
 				readback_properties
 			));
@@ -524,10 +691,10 @@ namespace quokka
 			// Never unmapped explicitly, freeing the memory unmaps it
 			mapped_readbacks_.push_back(readback_buffers_.back().memory.mapMemory(
 				0,
-				sizeof(CombatState::player_damage)));
+				sizeof(Readback)));
 
 			// The first collect of each frame in flight comes before any copy into it
-			*static_cast<std::uint32_t*>(mapped_readbacks_.back()) = 0;
+			*static_cast<Readback*>(mapped_readbacks_.back()) = Readback {};
 		}
 	}
 

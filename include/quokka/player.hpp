@@ -22,7 +22,7 @@ namespace quokka
 	class Player
 	{
 	public:
-		// Starts aiming at the world origin, where the enemies start
+		// Starts facing the world origin, where the enemies start
 		explicit Player(glm::vec2 position) noexcept;
 
 		// On the ground, as world x and z
@@ -31,14 +31,12 @@ namespace quokka
 		// In radians, with the convention of EnemyState
 		[[nodiscard]] float yaw() const noexcept;
 
-		// On the ground, as world x and z, where the abilities will be cast
-		[[nodiscard]] glm::vec2 aim_point() const noexcept;
+		// Unit length on the ground, as world x and z
+		[[nodiscard]] glm::vec2 facing() const noexcept;
 
 		// The direction is on the ground, unit length, or zero to stand still
-		// Walking keeps the player facing the aim point, so it can back away while attacking
+		// Walking turns the player to face where it goes, and standing still keeps the facing
 		void move(glm::vec2 direction, float delta_seconds) noexcept;
-
-		void aim_at(glm::vec2 point) noexcept;
 
 		// True when the ability is ready at this time, in seconds since the start,
 		// which casts it and starts its cooldown
@@ -47,9 +45,20 @@ namespace quokka
 		// In seconds, 0 once the ability is ready
 		[[nodiscard]] float cooldown_left(Ability ability, float time_seconds) const noexcept;
 
-		// For the shock wave, in seconds since the start and on the ground as world x and z
+		// For Whirlwind's spin and shock wave, in seconds since the start
 		[[nodiscard]] float last_blast_time() const noexcept;
-		[[nodiscard]] glm::vec2 last_blast_point() const noexcept;
+
+		// For when the thrown sword lands, in seconds since the start
+		[[nodiscard]] float last_strike_time() const noexcept;
+
+		// Trying to throw the sword without a target in reach marks its range on the ground for
+		// a moment, and holding the key keeps it there, with the time in seconds since the start
+		void mark_strike_range(float time_seconds) noexcept;
+		[[nodiscard]] float strike_range_time() const noexcept;
+
+		// Whirlwind's landing, which marks where its quake spreads from as world x and z
+		void slam() noexcept;
+		[[nodiscard]] glm::vec2 quake_point() const noexcept;
 
 		[[nodiscard]] float health() const noexcept;
 		[[nodiscard]] static float max_health() noexcept;
@@ -69,10 +78,7 @@ namespace quokka
 		[[nodiscard]] AnimationState animation(float time_seconds) const noexcept;
 
 	private:
-		void face_aim_point() noexcept;
-
 		glm::vec2 position_;
-		glm::vec2 aim_point_ { 0.0f };
 		float yaw_ {};
 
 		// In seconds since the start, when each ability can be cast again, indexed by Ability
@@ -80,7 +86,9 @@ namespace quokka
 
 		// Never cast yet, so there's no shock wave
 		float last_blast_time_ { constants::long_ago };
-		glm::vec2 last_blast_point_ { 0.0f };
+		float last_strike_time_ { constants::long_ago };
+		float strike_range_time_ { constants::long_ago };
+		glm::vec2 quake_point_ { 0.0f };
 
 		float health_ { max_health() };
 

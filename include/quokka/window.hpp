@@ -17,6 +17,7 @@ namespace quokka
 		d,
 		e,
 		f2,
+		f3,
 		five,
 		four,
 		one,
@@ -24,6 +25,7 @@ namespace quokka
 		r,
 		s,
 		space,
+		tab,
 		three,
 		two,
 		w
@@ -69,11 +71,11 @@ namespace quokka
 		[[nodiscard]] bool is_cursor_captured() const noexcept;
 		void set_cursor_captured(bool is_captured) noexcept;
 
-		// From 0 to 1 across the window, with 0, 0 at the top left corner
-		[[nodiscard]] glm::vec2 cursor_position() const noexcept;
-
 		// In pixels, since the previous poll_events
 		[[nodiscard]] glm::vec2 cursor_offset() const noexcept;
+
+		// In clip coordinates, with y up, independent of framebuffer scaling
+		[[nodiscard]] glm::vec2 cursor_clip_position() const noexcept;
 
 		// In wheel notches since the previous poll_events, positive when scrolled forward
 		[[nodiscard]] float scroll_offset() const noexcept;

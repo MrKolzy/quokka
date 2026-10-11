@@ -44,6 +44,8 @@ static const uint walk_clip = 1;
 static const uint run_clip = 2;
 static const uint attack_clip = 3;
 static const uint death_clip = 4;
+static const uint jump_clip = 5;
+static const uint land_clip = 6;
 
 // Must match animation_frame_rate in animation.hpp
 static const float animation_frame_rate = 30.0;
@@ -63,6 +65,9 @@ struct PlayerConstants
 	// One of the clip constants, and how far into it the player is, in seconds
 	uint animation_clip;
 	float animation_time;
+
+	// In seconds since the start, when the ground last marked how far the sword reaches
+	float strike_range_time;
 };
 
 [[vk::push_constant]]
@@ -90,7 +95,7 @@ struct VertexOutput
 	nointerpolation float target_highlight;
 };
 
-// Linear, the color that marks what the player aims at, on the ground and around the target
+// Linear, the color that marks what the player aims at, around the targets
 static const float3 aim_color = float3(1.0, 0.55, 0.12);
 
 // In seconds, how long a hit turns an enemy white
@@ -104,6 +109,11 @@ static const float sink_depth = 3.0;
 
 // The enemies' attack swings faster than the clip, which is a throw
 static const float enemy_attack_speed = 1.5;
+
+// In world units per second, the walk clip's steps match a chase at 3, so it plays faster with
+// a quicker chase and the feet don't slide, must match chase_speed in enemy_simulation.slang
+static const float chase_speed = 5.0;
+static const float enemy_walk_speed = chase_speed / 3.0;
 
 // In seconds, spreads the enemies over each looping clip so a crowd doesn't move in step
 static const float max_animation_offset = 2.0;
@@ -222,6 +232,7 @@ VertexOutput enemy_vert_main(VertexInput input, uint instance_index : SV_VulkanI
 	else if ((enemy.flags & moving_flag) != 0)
 	{
 		clip = walk_clip;
+		clip_time *= enemy_walk_speed;
 	}
 
 	VertexOutput output = place_on_ground(
@@ -233,9 +244,10 @@ VertexOutput enemy_vert_main(VertexInput input, uint instance_index : SV_VulkanI
 		-sink_depth * sink_amount * sink_amount);
 	output.hit_flash = saturate(1.0 - time_since_hit / hit_flash_duration);
 
-	// Everyone the blast would hit is selected, and the strike's target the most
-	const bool is_in_blast = !is_dead && distance(enemy.position, frame.aim_point) < blast_radius;
-	output.target_highlight = is_target(combat[0].target_key, instance_index)
+	// Everyone the blast would hit is highlighted, and the selected enemy the most
+	const float blast_distance = distance(enemy.position, frame.blast_center);
+	const bool is_in_blast = !is_dead && blast_distance < blast_radius;
+	output.target_highlight = !is_dead && combat[0].selected_index == instance_index
 		? 1.0
 		: (is_in_blast ? 0.5 : 0.0);
 
@@ -249,23 +261,101 @@ VertexOutput enemy_vert_main(VertexInput input, uint instance_index : SV_VulkanI
 	return output;
 }
 
+// Whirlwind turns this many times, each one the other way, and each turn takes this long in
+// seconds, must match whirlwind_turns and whirlwind_turn_duration in abilities.hpp
+static const uint whirlwind_turns = 6;
+static const float whirlwind_turn_duration = 0.13;
+
+// The fraction of a turn that the white impact flash lasts after each change of direction,
+// while the game also freezes for a moment
+static const float reversal_flash_fraction = 0.25;
+
+// After the last turn the player leaps this high in world units for this long in seconds,
+// must match whirlwind_jump_duration in abilities.hpp
+static const float whirlwind_jump_height = 2.5;
+static const float whirlwind_jump_duration = 0.45;
+static const float whirlwind_land_time =
+	float(whirlwind_turns) * whirlwind_turn_duration + whirlwind_jump_duration;
+
+// In seconds, the white flash of the landing's impact frame, while the game freezes
+static const float landing_flash_duration = 0.08;
+
+// In seconds since Whirlwind's landing, negative before it and long after it when never cast
+float time_since_landing()
+{
+	return frame.time - frame.last_blast_time - whirlwind_land_time;
+}
+
+struct WhirlwindSpin
+{
+	bool is_spinning;
+
+	// 1 or -1, the first turn goes the same way as yaw grows
+	float direction;
+
+	// From 0 to 1, within the current turn and within the whole spin
+	float turn_progress;
+	float progress;
+
+	// From 0 to 1, bright right after the spin changes direction
+	float reversal_flash;
+};
+
+WhirlwindSpin whirlwind_spin()
+{
+	// Never cast is long ago, which is past the last turn
+	const float age = frame.time - frame.last_blast_time;
+	const float turn_position = age / whirlwind_turn_duration;
+	const float turn = floor(turn_position);
+
+	WhirlwindSpin spin;
+	spin.is_spinning = age >= 0.0 && turn < float(whirlwind_turns);
+	spin.direction = fmod(turn, 2.0) < 0.5 ? 1.0 : -1.0;
+	spin.turn_progress = frac(turn_position);
+	spin.progress = saturate(turn_position / float(whirlwind_turns));
+	spin.reversal_flash = spin.is_spinning && turn >= 1.0
+		? 1.0 - saturate(spin.turn_progress / reversal_flash_fraction)
+		: 0.0;
+
+	return spin;
+}
+
 [shader("vertex")]
 VertexOutput player_vert_main(VertexInput input)
 {
+	// A full turn each way while Whirlwind's golden slash circles the player
+	const WhirlwindSpin spin = whirlwind_spin();
+	const float spin_yaw = player.yaw +
+		(spin.is_spinning ? spin.direction * spin.turn_progress * 2.0 * 3.14159265 : 0.0);
+
+	// Then up and down along a parabola, falling fastest right before the slam
+	const float landing_time = time_since_landing();
+	const float jump_progress = 1.0 + landing_time / whirlwind_jump_duration;
+	const float jump_height = jump_progress >= 0.0 && jump_progress < 1.0
+		? whirlwind_jump_height * 4.0 * jump_progress * (1.0 - jump_progress)
+		: 0.0;
+
 	VertexOutput output = place_on_ground(
 		input,
 		player.animation_clip,
 		player.animation_time,
 		player.position,
-		player.yaw,
-		0.0);
+		spin_yaw,
+		jump_height);
 
-	// Weaker than an enemy's, since a surrounded player is hit several times a second
+	// Weaker than an enemy's, since a surrounded player is hit several times a second,
+	// but full white for the impact frames of each reversal and of the landing
 	const float time_since_hit = frame.time - player.last_hit_time;
-	output.hit_flash = 0.5 * saturate(1.0 - time_since_hit / hit_flash_duration);
+	const float landing_flash = landing_time >= 0.0
+		? saturate(1.0 - landing_time / landing_flash_duration)
+		: 0.0;
+	output.hit_flash = max(
+		0.5 * saturate(1.0 - time_since_hit / hit_flash_duration),
+		max(spin.reversal_flash, landing_flash));
 
 	return output;
 }
+
 // In world units, half the side of the ground square, which is centered below the camera
 static const float ground_half_size = 200.0;
 
@@ -293,21 +383,58 @@ static const float tile_variation = 0.3;
 static const float shadow_radius = 0.9;
 static const float shadow_strength = 0.6;
 
-// In world units, the ring around the aim point is as wide as the blast, so it shows who it hits,
-// and it glows so it reads on any tile
-static const float aim_ring_width = 0.08;
-static const float aim_fill_opacity = 0.08;
-
-// The blast's shock wave spreads to blast_radius over its duration in seconds, fading out,
-// with a hot linear color, brighter than the aim color
+// The first impact spreads outward beneath the longer sword spin
 static const float shock_wave_duration = 0.35;
 static const float shock_wave_width = 0.3;
-static const float3 shock_wave_color = float3(1.0, 0.35, 0.08);
+static const float3 shock_wave_color = float3(1.0, 0.55, 0.08);
+
+// A curved golden blade trail, which turns white for the impact frame of each reversal
+static const float slash_inner_radius = 1.0;
+static const float slash_outer_radius = 4.4;
+static const float slash_angular_width = 0.16;
+static const float3 slash_color = float3(1.0, 0.72, 0.12);
+
+// In world units, the front of each seismic wave, with a trail of dust behind it
+static const float quake_wave_width = 0.35;
+static const float3 quake_wave_color = float3(1.0, 0.45, 0.12);
+
+// Glowing cracks out from where the sword went in, which reach this far in world units and cool
+// down over this many seconds
+static const uint crack_count = 9;
+static const float crack_radius = 5.0;
+static const float crack_width = 0.14;
+static const float crack_growth_duration = 0.12;
+static const float crack_duration = 1.6;
+static const float3 crack_color = float3(1.0, 0.35, 0.05);
+
+// In world units, the thrown sword's glowing blade and the streak it leaves behind
+static const float thrown_blade_length = 1.8;
+static const float thrown_blade_half_width = 0.14;
+static const float thrown_trail_length = 3.0;
+static const float3 thrown_sword_color = float3(0.45, 0.8, 1.0);
+
+// In world units, the black hole's dark core and the swirl around it, and in seconds how long
+// it takes to open and to collapse
+static const float black_hole_core_radius = 0.9;
+static const float black_hole_swirl_radius = 2.4;
+static const float black_hole_open_duration = 0.08;
+static const float black_hole_close_duration = 0.15;
+static const float3 black_hole_color = float3(0.6, 0.2, 1.0);
+
+// In seconds, how long the sword's range stays marked after the key is let go and how long it
+// then takes to fade, and in world units the width of its ring
+static const float strike_range_hold = 0.5;
+static const float strike_range_fade = 0.4;
+static const float strike_range_width = 0.12;
 
 struct GroundOutput
 {
 	float4 position : SV_Position;
 	float3 world_position;
+
+	// From the combat state, which only the vertex stage can read, the same for the whole ground
+	nointerpolation float2 hook_point;
+	nointerpolation float hook_time;
 };
 
 // The square follows the camera while the tiles stay put, since they come from world positions
@@ -322,6 +449,8 @@ GroundOutput ground_vert_main(uint vertex_index : SV_VulkanVertexID)
 	GroundOutput output;
 	output.position = mul(frame.projection, mul(frame.view, float4(world_position, 1.0)));
 	output.world_position = world_position;
+	output.hook_point = combat[0].hook_point;
+	output.hook_time = combat[0].hook_time;
 
 	return output;
 }
@@ -347,19 +476,28 @@ float grout_amount(float2 tile_coordinates, float2 pixel_size)
 	return max(grout.x, grout.y);
 }
 
-// 1 on the ring around the aim point and 0 away from it, with a faint fill inside
-float aim_marker_amount(float2 ground_position)
+// 1 on a ring around the player as far as the sword reaches and a little inside it, shown after
+// trying to throw it without a target in reach
+float strike_range_amount(float2 ground_position)
 {
-	const float distance_to_aim = distance(ground_position, frame.aim_point);
-	const float pixel_size = fwidth(distance_to_aim);
-	const float half_width = 0.5 * aim_ring_width;
+	// Never marked is long ago, which is past the fade
+	const float age = frame.time - player.strike_range_time;
+	const float player_distance = distance(ground_position, player.position);
+	const float pixel_size = fwidth(player_distance);
+	if (age < 0.0 || age >= strike_range_hold + strike_range_fade)
+	{
+		return 0.0;
+	}
 
+	const float half_width = 0.5 * strike_range_width;
 	const float ring = 1.0 - smoothstep(
-		half_width - pixel_size, half_width + pixel_size, abs(distance_to_aim - blast_radius));
-	const float fill = aim_fill_opacity * (1.0 - smoothstep(
-		blast_radius - pixel_size, blast_radius + pixel_size, distance_to_aim));
+		half_width - pixel_size, half_width + pixel_size, abs(player_distance - strike_range));
+	const float inside = 0.07 * (1.0 - smoothstep(
+		strike_range - pixel_size, strike_range + pixel_size, player_distance));
+	const float fade = 1.0 - smoothstep(
+		strike_range_hold, strike_range_hold + strike_range_fade, age);
 
-	return max(ring, fill);
+	return max(ring, inside) * fade;
 }
 
 // 1 on the shock wave's front and less inside it, all of it fading out as it spreads
@@ -375,7 +513,7 @@ float shock_wave_amount(float2 ground_position)
 	// Fast at first and slowing down, like an explosion
 	const float radius = blast_radius * (1.0 - (1.0 - progress) * (1.0 - progress));
 
-	const float distance_to_blast = distance(ground_position, frame.last_blast_point);
+	const float distance_to_blast = distance(ground_position, frame.blast_center);
 	const float pixel_size = fwidth(distance_to_blast);
 	const float half_width = 0.5 * shock_wave_width;
 
@@ -385,6 +523,206 @@ float shock_wave_amount(float2 ground_position)
 		radius - pixel_size, radius + pixel_size, distance_to_blast));
 
 	return max(front, inside) * (1.0 - progress);
+}
+
+// The shortest signed distance between two angles, in radians
+float angular_distance(float first, float second)
+{
+	return atan2(sin(first - second), cos(first - second));
+}
+
+// A curved sword trail with four fading copies behind it, following the spin's direction
+float sword_slash_amount(float2 ground_position, WhirlwindSpin spin)
+{
+	if (!spin.is_spinning)
+	{
+		return 0.0;
+	}
+
+	const float2 from_center = ground_position - frame.blast_center;
+	const float radius = length(from_center);
+
+	// From the position, since the angle jumps by a full turn behind the center and fwidth
+	// of it would draw a straight line there, and before the early return, which splits the quad
+	const float angular_pixel = length(fwidth(from_center)) / max(radius, 1.0e-3);
+	if (radius < slash_inner_radius || radius > slash_outer_radius)
+	{
+		return 0.0;
+	}
+
+	const float angle = atan2(from_center.x, from_center.y);
+	const float radial_progress =
+		(radius - slash_inner_radius) / (slash_outer_radius - slash_inner_radius);
+	const float head =
+		spin.direction * (spin.turn_progress * 2.0 * 3.14159265 - 0.75 * radial_progress);
+
+	float trail = 0.0;
+	for (uint copy = 0; copy < 5; ++copy)
+	{
+		const float copy_offset = spin.direction * float(copy) * 0.12;
+		const float distance_to_slash = abs(angular_distance(angle, head - copy_offset));
+		const float line = 1.0 - smoothstep(
+			slash_angular_width - angular_pixel,
+			slash_angular_width + angular_pixel,
+			distance_to_slash);
+		trail = max(trail, line * (1.0 - float(copy) / 5.0));
+	}
+
+	const float radial_fade = smoothstep(slash_inner_radius, slash_inner_radius + 0.5, radius) *
+		(1.0 - smoothstep(slash_outer_radius - 0.7, slash_outer_radius, radius));
+	const float time_fade = 1.0 - smoothstep(0.78, 1.0, spin.progress);
+
+	return trail * radial_fade * time_fade;
+}
+
+// 1 on the front of each seismic wave and less in the dust behind it, all of them fading as they
+// near the quake radius, where they stop hitting
+float quake_wave_amount(float2 ground_position)
+{
+	const float landing_time = time_since_landing();
+	const float quake_distance = distance(ground_position, frame.quake_point);
+	const float pixel_size = fwidth(quake_distance);
+	if (landing_time < 0.0)
+	{
+		return 0.0;
+	}
+
+	// Never cast is long ago, which puts every wave past the radius
+	const float first_front = landing_time * quake_wave_speed;
+	float amount = 0.0;
+	for (uint wave = 0; wave < quake_wave_count; ++wave)
+	{
+		const float radius = first_front - float(wave) * quake_wave_spacing;
+		if (radius <= 0.0 || radius >= quake_radius)
+		{
+			continue;
+		}
+
+		const float behind = radius - quake_distance;
+		const float front = 1.0 - smoothstep(
+			quake_wave_width - pixel_size, quake_wave_width + pixel_size, abs(behind));
+		const float dust = behind > 0.0 ? 0.35 * exp(-1.5 * behind) : 0.0;
+		amount = max(amount, max(front, dust) * (1.0 - radius / quake_radius));
+	}
+
+	return amount;
+}
+
+// 1 on jagged lines out from where the sword went in, which grow out at once and taper
+// toward their ends, then cool down
+float quake_crack_amount(float2 ground_position)
+{
+	const float landing_time = time_since_landing();
+	const float2 from_center = ground_position - frame.quake_point;
+	const float radius = length(from_center);
+	const float pixel_size = length(fwidth(from_center));
+	if (landing_time < 0.0 || landing_time >= crack_duration || radius >= crack_radius)
+	{
+		return 0.0;
+	}
+
+	// Bent by the radius so each crack wanders sideways, and every crack is a whole sector,
+	// so the full turn of the angle behind the center leaves no seam
+	const float angle = atan2(from_center.x, from_center.y) +
+		0.25 * sin(2.3 * radius) + 0.12 * sin(6.1 * radius);
+	const float sector = angle / (2.0 * 3.14159265) * float(crack_count);
+
+	// In world units along the circle
+	const float distance_to_crack =
+		abs(frac(sector + 0.5) - 0.5) * 2.0 * 3.14159265 * radius / float(crack_count);
+	const float half_width = 0.5 * crack_width * (1.0 - radius / crack_radius);
+	const float line = 1.0 - smoothstep(
+		half_width - pixel_size, half_width + pixel_size, distance_to_crack);
+
+	const float reach = crack_radius * saturate(landing_time / crack_growth_duration);
+	const float grown = 1.0 - smoothstep(reach - 0.3, reach, radius);
+	const float cooling = 1.0 - smoothstep(0.3, 1.0, landing_time / crack_duration);
+
+	return line * grown * cooling;
+}
+
+// 1 on the blade flying from the player to where it was thrown, and less on its streak
+float thrown_sword_amount(float2 ground_position, float2 hook_point, float hook_time)
+{
+	// Never thrown is long ago, which is past the flight
+	const float flight_progress = (frame.time - hook_time) / hook_flight_duration;
+	const float2 path = hook_point - player.position;
+	const float path_length = length(path);
+	const float2 direction = path_length > 1.0e-3 ? path / path_length : float2(0.0, 1.0);
+	const float2 tip = player.position + path * saturate(flight_progress);
+
+	// Along the blade backward from its tip, and across it
+	const float2 from_tip = ground_position - tip;
+	const float along = -dot(from_tip, direction);
+	const float across = abs(dot(from_tip, float2(-direction.y, direction.x)));
+	const float pixel_size = length(fwidth(from_tip));
+	if (flight_progress < 0.0 || flight_progress >= 1.0)
+	{
+		return 0.0;
+	}
+
+	// Pointed at the tip, then as wide as the blade up to the hilt
+	const float half_width = thrown_blade_half_width * saturate(along / 0.4);
+	const float width_mask =
+		1.0 - smoothstep(half_width - pixel_size, half_width + pixel_size, across);
+	const float length_mask = step(0.0, along) * (1.0 - smoothstep(
+		thrown_blade_length - pixel_size, thrown_blade_length + pixel_size, along));
+	const float blade = width_mask * length_mask;
+
+	// Thin and fading behind the hilt, never longer than the way flown so far
+	const float behind = along - thrown_blade_length;
+	const float flown = path_length * saturate(flight_progress);
+	const float streak = behind > 0.0 && behind < min(thrown_trail_length, flown)
+		? 0.6 * (1.0 - behind / thrown_trail_length) *
+			(1.0 - smoothstep(0.03 - pixel_size, 0.05 + pixel_size, across))
+		: 0.0;
+
+	return max(blade, streak);
+}
+
+// Darkens the black hole's core, adds its spinning purple swirl, and shrinks a ring from the
+// pull radius toward it while it pulls the enemies in
+float3 apply_black_hole(float3 color, float2 ground_position, float2 hook_point, float hook_time)
+{
+	const float since_impact = frame.time - hook_time - hook_flight_duration;
+	const float lifetime = hook_lifetime(hook_point, player.position);
+	const float2 center = hook_center(hook_point, player.position, since_impact);
+	const float2 from_center = ground_position - center;
+	const float radius = length(from_center);
+	const float pixel_size = length(fwidth(from_center));
+	if (since_impact < 0.0 || since_impact >= lifetime)
+	{
+		return color;
+	}
+
+	const float size = saturate(since_impact / black_hole_open_duration) *
+		(1.0 - smoothstep(lifetime - black_hole_close_duration, lifetime, since_impact));
+	const float core_radius = black_hole_core_radius * size;
+	const float swirl_radius = black_hole_swirl_radius * size;
+
+	// Arms that wind inward over time, and three of them, so the angle's full turn behind the
+	// center leaves no seam
+	const float angle = atan2(from_center.x, from_center.y);
+	const float winding = 6.0 * log(max(radius, 0.05)) + 14.0 * frame.time;
+	const float arms = 0.5 + 0.5 * sin(3.0 * angle + winding);
+	const float swirl_mask = smoothstep(core_radius, core_radius + 0.25, radius) *
+		(1.0 - smoothstep(0.5 * swirl_radius, swirl_radius, radius));
+	const float core = 1.0 - smoothstep(core_radius - pixel_size, core_radius + pixel_size, radius);
+
+	// From the pull radius down to the core, only while it holds the enemies in place
+	const float hold_progress = saturate(since_impact / hook_hold_duration);
+	const float pull_ring_radius = lerp(hook_radius, black_hole_core_radius, hold_progress);
+	const float pull_ring = (1.0 - smoothstep(0.06 - pixel_size, 0.06 + pixel_size,
+		abs(distance(ground_position, hook_point) - pull_ring_radius))) * (1.0 - hold_progress);
+
+	color = lerp(color, float3(0.0, 0.0, 0.0), 0.95 * core);
+	color += black_hole_color * (1.5 * arms * arms * swirl_mask + 1.2 * pull_ring);
+
+	// A thin bright rim right at the edge of the core
+	const float rim = 1.0 - smoothstep(0.05 - pixel_size, 0.05 + pixel_size,
+		abs(radius - core_radius));
+
+	return color + black_hole_color * 2.0 * rim * size;
 }
 
 [shader("fragment")]
@@ -416,8 +754,20 @@ float4 ground_frag_main(GroundOutput input) : SV_Target
 	color *= 1.0 - shadow_strength * shadow;
 
 	// Unlit, so it's equally visible in light and in shadow
-	color = lerp(color, aim_color, aim_marker_amount(ground_position));
 	color = lerp(color, shock_wave_color, shock_wave_amount(ground_position));
+
+	const WhirlwindSpin spin = whirlwind_spin();
+	const float3 blade_color = lerp(slash_color * 1.4, float3(3.0, 3.0, 3.0), spin.reversal_flash);
+	color += blade_color * sword_slash_amount(ground_position, spin);
+
+	color = lerp(color, quake_wave_color, quake_wave_amount(ground_position));
+	color = lerp(color, crack_color * 2.0, quake_crack_amount(ground_position));
+
+	color = lerp(color, thrown_sword_color, strike_range_amount(ground_position));
+
+	color = apply_black_hole(color, ground_position, input.hook_point, input.hook_time);
+	color += thrown_sword_color * 2.0 *
+		thrown_sword_amount(ground_position, input.hook_point, input.hook_time);
 
 	const float camera_distance = distance(ground_position, frame.camera_position.xz);
 	color *= 1.0 - smoothstep(fade_start_distance, fade_end_distance, camera_distance);

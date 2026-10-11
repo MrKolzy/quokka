@@ -1,11 +1,14 @@
 #include "quokka/hud.hpp"
 
 #include "quokka/abilities.hpp"
+#include "quokka/enemy_simulation.hpp"
 #include "quokka/gui.hpp"
+#include "quokka/level.hpp"
 #include "quokka/player.hpp"
 
 #include <imgui.h>
 
+#include <algorithm> // std::clamp, std::min
 #include <cfloat> // FLT_MAX
 #include <cmath> // std::cos, std::sin
 #include <cstddef> // std::size_t
@@ -37,9 +40,9 @@ namespace quokka
 		// In pixels, as wide as the slots below it
 		constexpr float health_bar_height { 18.0f };
 
-		// In pixels, the death screen's title and the hint below it
-		constexpr float death_title_size { 64.0f };
-		constexpr float death_hint_size { 22.0f };
+		// In pixels, the title of the death and clear screens and the hints below it
+		constexpr float end_title_size { 64.0f };
+		constexpr float end_hint_size { 22.0f };
 
 		// In sRGB, as image editors show colors, converted for the sRGB swapchain
 		[[nodiscard]] ImVec4 srgb_color(float red, float green, float blue, float alpha = 1.0f)
@@ -164,13 +167,10 @@ namespace quokka
 		void show_tooltip(Ability ability, const HotbarSlot& slot)
 		{
 			const AbilityInfo& info { ability_info(ability) };
-			const char* const mouse_button {
-				info.mouse_button == MouseButton::left ? "left" : "right"
-			};
 
 			ImGui::TextColored(ability_color(ability), "%s", info.name);
-			ImGui::TextDisabled("%s", std::format(
-				"Key {} or {} click, hold to repeat", slot.key_label, mouse_button).c_str());
+			const std::string key_hint { std::format("Key {}, hold to repeat", slot.key_label) };
+			ImGui::TextDisabled("%s", key_hint.c_str());
 			ImGui::Separator();
 
 			ImGui::PushTextWrapPos(ImGui::GetFontSize() * tooltip_wrap_width);
@@ -181,16 +181,26 @@ namespace quokka
 				std::format("Damage: {:.0f} to {:.0f}", info.min_damage, info.max_damage).c_str());
 			ImGui::TextUnformatted(std::format("Cooldown: {:.1f} s", info.cooldown).c_str());
 
-			if (ability == Ability::blast)
+			if (ability == Ability::strike)
 			{
-				ImGui::TextUnformatted(std::format("Radius: {:.0f} m", blast_radius).c_str());
+				ImGui::TextUnformatted(std::format("Range: {:.0f} m", strike_range).c_str());
+				ImGui::TextUnformatted(std::format("Pull radius: {:.0f} m", hook_radius).c_str());
+				ImGui::TextDisabled("Needs a selected enemy in range");
+			}
+			else if (ability == Ability::blast)
+			{
+				ImGui::TextUnformatted(std::format("Radius: {:.1f} m", blast_radius).c_str());
 			}
 
 			ImGui::TextDisabled("%s", std::format(
 				"{}% chance of a critical hit for double damage", critical_chance).c_str());
 		}
 
-		void show_slot(const HotbarSlot& slot, const Player& player, float time_seconds)
+		void show_slot(
+			const HotbarSlot& slot,
+			const Player& player,
+			float time_seconds,
+			const SelectedEnemy& selected)
 		{
 			// Takes the slot's place in the layout and reports hovering, without drawing
 			ImGui::InvisibleButton(slot.key_label, { slot_size, slot_size });
@@ -207,6 +217,13 @@ namespace quokka
 			{
 				const Ability ability { *slot.ability };
 				draw_icon(draw_list, ability, center);
+
+				// Dimmed while there's nothing in reach to throw the sword at
+				if (ability == Ability::strike && !can_throw_at(selected, player.position()))
+				{
+					const ImU32 dim_color { to_u32(srgb_color(0.0f, 0.0f, 0.0f, 0.6f)) };
+					draw_list.AddRectFilled(min, max, dim_color, slot_rounding);
+				}
 
 				const float cooldown_left { player.cooldown_left(ability, time_seconds) };
 				if (cooldown_left > 0.0f)
@@ -237,14 +254,37 @@ namespace quokka
 				slot.key_label);
 		}
 
+		// In pixels, the row of slots, which the lines above it span too
+		[[nodiscard]] float hotbar_width()
+		{
+			const auto slot_count { static_cast<float>(hotbar_slots.size()) };
+
+			return slot_size * slot_count + slot_spacing * (slot_count - 1.0f);
+		}
+
+		// The level and its difficulty on the left, the enemies still alive on the right
+		void show_level_line(const Level& level, const LevelProgress& progress)
+		{
+			const std::string name {
+				std::format("{}, {}", level.name, difficulty_name(level.difficulty))
+			};
+			const std::string enemies {
+				std::format("Enemies {} / {}", progress.enemies_left, level_enemy_count(level))
+			};
+
+			ImGui::TextUnformatted(name.c_str());
+			ImGui::SameLine();
+			ImGui::SetCursorPosX(
+				ImGui::GetCursorStartPos().x + hotbar_width() -
+				ImGui::CalcTextSize(enemies.c_str()).x);
+			ImGui::TextUnformatted(enemies.c_str());
+		}
+
 		// As wide as the row of slots, red like the enemies' bars, with the exact health on it
 		void show_health_bar(const Player& player)
 		{
-			const auto slot_count { static_cast<float>(hotbar_slots.size()) };
-			const float width { slot_size * slot_count + slot_spacing * (slot_count - 1.0f) };
-
 			// Takes the bar's place in the layout, without drawing
-			ImGui::Dummy({ width, health_bar_height });
+			ImGui::Dummy({ hotbar_width(), health_bar_height });
 
 			const ImVec2 min { ImGui::GetItemRectMin() };
 			const ImVec2 max { ImGui::GetItemRectMax() };
@@ -267,8 +307,60 @@ namespace quokka
 				text.c_str());
 		}
 
-		// Darkens the whole screen behind the message, over every window
-		void show_death_screen()
+		void show_selected_enemy(const SelectedEnemy& selected, glm::vec2 player_position)
+		{
+			if (!is_alive(selected))
+			{
+				return;
+			}
+
+			const ImGuiViewport& viewport { *ImGui::GetMainViewport() };
+			ImGui::SetNextWindowPos(
+				{ viewport.WorkPos.x + viewport.WorkSize.x / 2.0f, viewport.WorkPos.y + 18.0f },
+				ImGuiCond_Always,
+				{ 0.5f, 0.0f });
+			ImGui::SetNextWindowBgAlpha(background_alpha);
+
+			constexpr ImGuiWindowFlags flags {
+				ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+				ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+				ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+				ImGuiWindowFlags_NoInputs
+			};
+			if (ImGui::Begin("Selected enemy", nullptr, flags))
+			{
+				const float width { std::min(280.0f, viewport.WorkSize.x * 0.7f) };
+				const std::string name { std::format("Skeleton Minion #{}", selected.index + 1) };
+				const float text_width { ImGui::CalcTextSize(name.c_str()).x };
+				ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (width - text_width) / 2.0f);
+				ImGui::TextUnformatted(name.c_str());
+
+				// Must match enemy_max_health in enemy.slang
+				constexpr float max_health { 1000.0f };
+				const float health { std::clamp(selected.health, 0.0f, max_health) };
+				const std::string label { std::format("{:.0f} / {:.0f}", health, max_health) };
+				ImGui::PushStyleColor(ImGuiCol_PlotHistogram, srgb_color(0.8f, 0.1f, 0.08f));
+				ImGui::ProgressBar(health / max_health, { width, 22.0f }, label.c_str());
+				ImGui::PopStyleColor();
+
+				// Centered under the bar, so it's clear why the sword can't be thrown
+				if (!is_in_strike_range(selected, player_position))
+				{
+					constexpr const char* out_of_range { "Out of range" };
+					const float warning_width { ImGui::CalcTextSize(out_of_range).x };
+					ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (width - warning_width) / 2.0f);
+					ImGui::TextColored(srgb_color(1.0f, 0.35f, 0.3f), "%s", out_of_range);
+				}
+			}
+			ImGui::End();
+		}
+
+		// Darkens the whole screen behind the title and the hints below it, over every window
+		void show_end_screen(
+			const char* title,
+			const ImVec4& title_color,
+			const char* hint,
+			const char* second_hint = nullptr)
 		{
 			const ImGuiViewport& viewport { *ImGui::GetMainViewport() };
 			const ImVec2 min { viewport.Pos };
@@ -280,21 +372,43 @@ namespace quokka
 
 			add_centered_text(
 				draw_list,
-				death_title_size,
-				{ center.x, center.y - death_title_size / 2.0f },
-				"YOU DIED",
-				to_u32(srgb_color(0.8f, 0.1f, 0.08f)));
+				end_title_size,
+				{ center.x, center.y - end_title_size / 2.0f },
+				title,
+				to_u32(title_color));
 			add_centered_text(
 				draw_list,
-				death_hint_size,
-				{ center.x, center.y + death_hint_size },
-				"Press R to try again");
+				end_hint_size,
+				{ center.x, center.y + end_hint_size },
+				hint);
+
+			if (second_hint)
+			{
+				add_centered_text(
+					draw_list,
+					end_hint_size,
+					{ center.x, center.y + 2.5f * end_hint_size },
+					second_hint);
+			}
+		}
+
+		// As minutes and seconds, like 1:05
+		[[nodiscard]] std::string clear_time_text(float seconds)
+		{
+			const auto whole_seconds { static_cast<int>(seconds) };
+
+			return std::format("Cleared in {}:{:02}", whole_seconds / 60, whole_seconds % 60);
 		}
 	}
 
 	// ***
 
-	void show_hud(const Player& player, float time_seconds)
+	void show_hud(
+		const Player& player,
+		float time_seconds,
+		const SelectedEnemy& selected,
+		const Level& level,
+		const LevelProgress& progress)
 	{
 		const ImGuiViewport& viewport { *ImGui::GetMainViewport() };
 
@@ -318,6 +432,7 @@ namespace quokka
 
 		if (ImGui::Begin("Hotbar", nullptr, window_flags))
 		{
+			show_level_line(level, progress);
 			show_health_bar(player);
 
 			for (std::size_t index { 0 }; index < hotbar_slots.size(); ++index)
@@ -327,7 +442,7 @@ namespace quokka
 					ImGui::SameLine();
 				}
 
-				show_slot(hotbar_slots[index], player, time_seconds);
+				show_slot(hotbar_slots[index], player, time_seconds, selected);
 			}
 		}
 		ImGui::End();
@@ -336,7 +451,21 @@ namespace quokka
 
 		if (player.is_dead())
 		{
-			show_death_screen();
+			show_end_screen("YOU DIED", srgb_color(0.8f, 0.1f, 0.08f), "Press R to try again");
+
+			return;
+		}
+
+		show_selected_enemy(selected, player.position());
+
+		if (progress.clear_seconds)
+		{
+			const std::string time_text { clear_time_text(*progress.clear_seconds) };
+			show_end_screen(
+				"LEVEL CLEARED",
+				srgb_color(1.0f, 0.8f, 0.3f),
+				time_text.c_str(),
+				"R plays it again, F3 goes to the next level");
 		}
 	}
 }

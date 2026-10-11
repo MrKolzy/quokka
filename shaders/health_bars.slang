@@ -58,7 +58,7 @@ VertexOutput vert_main(
 	const EnemyState enemy = enemies[instance_index];
 	const float health_fraction = saturate(enemy.health / enemy_max_health);
 	const bool is_wounded = health_fraction < 1.0;
-	const bool is_in_blast = distance(enemy.position, frame.aim_point) < blast_radius;
+	const bool is_in_blast = distance(enemy.position, frame.blast_center) < blast_radius;
 
 	if (enemy.health <= 0.0 || (!is_wounded && !is_in_blast))
 	{

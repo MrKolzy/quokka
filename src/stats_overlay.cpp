@@ -7,6 +7,7 @@
 #include <imgui.h>
 
 #include <algorithm> // std::clamp, std::ranges::max
+#include <cstdint> // std::uint32_t
 #include <format> // std::format
 #include <ratio> // std::milli
 
@@ -87,7 +88,7 @@ namespace quokka
 		averages_ = averages;
 	}
 
-	void StatsOverlay::show() const
+	void StatsOverlay::show(std::uint32_t enemy_count) const
 	{
 		const ImGuiViewport& viewport { *ImGui::GetMainViewport() };
 
@@ -106,12 +107,12 @@ namespace quokka
 		// Begin returns false while collapsed, but End must be called either way
 		if (ImGui::Begin("Stats", nullptr, window_flags))
 		{
-			show_contents();
+			show_contents(enemy_count);
 		}
 		ImGui::End();
 	}
 
-	void StatsOverlay::show_contents() const
+	void StatsOverlay::show_contents(std::uint32_t enemy_count) const
 	{
 		ImGui::TextUnformatted(gpu_name_.c_str());
 
@@ -123,7 +124,7 @@ namespace quokka
 			table_row("Present mode", vk::to_string(swapchain_.present_mode()));
 			table_row("MSAA", msaa_text(swapchain_.sample_count()));
 			table_row(recording_threads_label, std::format("{}", constants::recording_thread_count));
-			table_row("Enemies", std::format("{}", constants::enemy_count));
+			table_row("Enemies", std::format("{}", enemy_count));
 			ImGui::EndTable();
 		}
 
@@ -168,9 +169,9 @@ namespace quokka
 			slowest_frame_ms * graph_headroom,
 			graph_size);
 
-		ImGui::TextDisabled("WASD walks, the mouse aims, the wheel zooms");
-		ImGui::TextDisabled("1 or left click strikes, 2 or right click blasts");
-		ImGui::TextDisabled("Space shows test hits, R resets");
+		ImGui::TextDisabled("WASD walks, right drag turns the camera, wheel zooms");
+		ImGui::TextDisabled("1 throws the sword, 2 spins all around");
+		ImGui::TextDisabled("Space shows test hits, R restarts, F3 changes level");
 		ImGui::TextDisabled("F1 hides these panels, F2 frees the camera");
 	}
 }

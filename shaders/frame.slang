@@ -20,15 +20,17 @@ struct FrameUniforms
 	// In pixels, for what keeps its size on screen whatever the distance, like damage numbers
 	float2 viewport_size;
 
-	// On the ground as world x and z, where the player aims, marked on the ground
-	float2 aim_point;
+	// On the ground as world x and z, the player's position, where Whirlwind's effects are centered
+	float2 blast_center;
 
 	// In seconds since the start, for animations computed on the GPU
 	float time;
 
-	// The blast's shock wave spreads on the ground from here, in seconds and as world x and z
+	// In seconds since the start, when Whirlwind was last cast
 	float last_blast_time;
-	float2 last_blast_point;
+
+	// On the ground as world x and z, where Whirlwind landed and its quake spreads from
+	float2 quake_point;
 };
 
 // Must match frame_binding in graphics_pipeline.cpp

@@ -31,6 +31,8 @@ namespace quokka
 				return GLFW_KEY_E;
 			case Key::f2:
 				return GLFW_KEY_F2;
+			case Key::f3:
+				return GLFW_KEY_F3;
 			case Key::five:
 				return GLFW_KEY_5;
 			case Key::four:
@@ -45,6 +47,8 @@ namespace quokka
 				return GLFW_KEY_S;
 			case Key::space:
 				return GLFW_KEY_SPACE;
+			case Key::tab:
+				return GLFW_KEY_TAB;
 			case Key::three:
 				return GLFW_KEY_3;
 			case Key::two:
@@ -188,26 +192,27 @@ namespace quokka
 		previous_cursor_position_ = glfw_cursor_position(handle_);
 	}
 
-	glm::vec2 Window::cursor_position() const noexcept
-	{
-		// Both in screen coordinates, which on high DPI displays aren't pixels
-		int width {};
-		int height {};
-		glfwGetWindowSize(handle_, &width, &height);
-
-		// Minimized, so there's no window to be across
-		if (width == 0 || height == 0)
-		{
-			return {};
-		}
-
-		return glm::vec2 { previous_cursor_position_ } /
-			glm::vec2 { static_cast<float>(width), static_cast<float>(height) };
-	}
-
 	glm::vec2 Window::cursor_offset() const noexcept
 	{
 		return cursor_offset_;
+	}
+
+	glm::vec2 Window::cursor_clip_position() const noexcept
+	{
+		int width {};
+		int height {};
+		glfwGetWindowSize(handle_, &width, &height);
+		if (width <= 0 || height <= 0)
+		{
+			return glm::vec2 { 0.0f };
+		}
+
+		const glm::vec2 position { glfw_cursor_position(handle_) };
+
+		return {
+			2.0f * position.x / static_cast<float>(width) - 1.0f,
+			1.0f - 2.0f * position.y / static_cast<float>(height)
+		};
 	}
 
 	float Window::scroll_offset() const noexcept

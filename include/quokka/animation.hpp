@@ -17,6 +17,8 @@ namespace quokka
 		run,
 		attack,
 		death,
+		jump,
+		land,
 		count
 	};
 

@@ -95,9 +95,9 @@ static const uint max_total_digits = 10;
 // In seconds, how long it takes to count up to the value after a hit
 static const float count_up_time = 0.4;
 
-// Bigger than the damage numbers, and its top edge this many screen pixels below the screen's
+// Bigger than the damage numbers, with a margin from the right edge in screen pixels
 static const float total_pixel_scale = 3.0;
-static const float total_top_margin = 24.0;
+static const float total_right_margin = 24.0;
 
 // In screen pixels, how far it rises while it fades out
 static const float total_rise_distance = 20.0;
@@ -294,10 +294,9 @@ VertexOutput total_vert_main(uint vertex_index : SV_VulkanVertexID)
 	const float2 offset = (cell_origin + corner * float2(cell_width, cell_height)) * scale +
 		float2(0.0, total_rise_distance * fade);
 
-	// The center of the line without the pop, so it grows around that point
-	// The flipped viewport puts the top of the screen at clip space y 1
-	const float anchor_distance = total_top_margin + float(cell_height) * total_pixel_scale / 2.0;
-	const float2 anchor = float2(0.0, 1.0 - anchor_distance * 2.0 / frame.viewport_size.y);
+	// Right aligned even during the pop, halfway from the center to the top
+	const float anchor_distance = total_right_margin + (line_width / 2.0 + 1.0) * scale;
+	const float2 anchor = float2(1.0 - anchor_distance * 2.0 / frame.viewport_size.x, 0.5);
 
 	output.position = float4(anchor + offset * 2.0 / frame.viewport_size, 0.0, 1.0);
 	output.cell_coordinates = float2(corner.x, 1.0 - corner.y);

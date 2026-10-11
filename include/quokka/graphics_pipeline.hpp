@@ -22,6 +22,9 @@ namespace quokka
 		// An AnimationClip, and how far into it the player is, in seconds
 		std::uint32_t animation_clip;
 		float animation_time;
+
+		// In seconds since the start, when the ground last marked how far the sword reaches
+		float strike_range_time;
 	};
 
 	class GraphicsPipeline
@@ -57,7 +60,7 @@ namespace quokka
 		// The player is a single draw whose state comes in PlayerConstants
 		[[nodiscard]] const vk::raii::Pipeline& player_pipeline() const noexcept;
 
-		// A square around the camera, with no vertex buffer, that also marks the aim point
+		// A square around the camera, with no vertex buffer, that also marks the blast circle
 		[[nodiscard]] const vk::raii::Pipeline& ground_pipeline() const noexcept;
 
 	private:

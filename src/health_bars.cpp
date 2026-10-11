@@ -46,7 +46,8 @@ namespace quokka
 	void HealthBars::record_draw(
 		const vk::raii::CommandBuffer& command_buffer,
 		const vk::raii::DescriptorSet& descriptor_set,
-		vk::Extent2D extent) const
+		vk::Extent2D extent,
+		std::uint32_t enemy_count) const
 	{
 		set_overlay_viewport(command_buffer, extent);
 
@@ -62,6 +63,6 @@ namespace quokka
 		);
 
 		// A quad per enemy, and the vertex shader drops the ones that need no bar
-		command_buffer.draw(6, constants::enemy_count, 0, 0);
+		command_buffer.draw(6, enemy_count, 0, 0);
 	}
 }

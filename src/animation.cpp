@@ -36,7 +36,9 @@ namespace quokka
 			ClipSource { AnimationClip::walk, constants::movement_rig_path, "Walking_A", true },
 			ClipSource { AnimationClip::run, constants::movement_rig_path, "Running_A", true },
 			ClipSource { AnimationClip::attack, constants::general_rig_path, "Throw", false },
-			ClipSource { AnimationClip::death, constants::general_rig_path, "Death_A", false }
+			ClipSource { AnimationClip::death, constants::general_rig_path, "Death_A", false },
+			ClipSource { AnimationClip::jump, constants::movement_rig_path, "Jump_Idle", false },
+			ClipSource { AnimationClip::land, constants::movement_rig_path, "Jump_Land", false }
 		};
 
 		// In AnimationClip order, so a clip's index is its place in the buffer
